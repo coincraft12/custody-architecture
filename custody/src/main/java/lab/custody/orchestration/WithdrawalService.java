@@ -32,6 +32,7 @@ public class WithdrawalService {
     public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
         ChainType chainType = parseChainType(req.chainType());
         return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
+                .map(existing -> validateIdempotentRequest(existing, chainType, req))
                 .orElseGet(() -> {
                     Withdrawal w = Withdrawal.requested(
                             idempotencyKey,
@@ -61,6 +62,20 @@ public class WithdrawalService {
 
                     return policyPassed;
                 });
+    }
+
+    private Withdrawal validateIdempotentRequest(Withdrawal existing, ChainType chainType, CreateWithdrawalRequest req) {
+        boolean matches = existing.getChainType() == chainType
+                && existing.getFromAddress().equals(req.fromAddress())
+                && existing.getToAddress().equals(req.toAddress())
+                && existing.getAsset().equals(req.asset())
+                && existing.getAmount() == req.amount();
+
+        if (!matches) {
+            throw new IdempotencyConflictException("same Idempotency-Key cannot be used with a different request body");
+        }
+
+        return existing;
     }
 
     @Transactional(readOnly = true)
