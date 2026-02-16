@@ -85,6 +85,122 @@ password: (빈 값)
 
 ------------------------------------------------------------------------
 
+## Basic Policy Engine 테스트 가이드
+
+`PolicyEngine`은 현재 아래 2가지를 검사합니다.
+
+-   출금 금액이 `policy.max-amount` 이내인지
+-   `policy.whitelist-to-addresses` 에 수신 주소가 포함되는지
+
+기본 설정(`src/main/resources/application.yaml`):
+
+-   `policy.max-amount: 1000`
+-   `policy.whitelist-to-addresses: 0xto,0xtrusted`
+
+### 1) 자동 테스트(권장)
+
+Policy reject + audit log 동작은 통합 테스트로 바로 검증 가능합니다.
+
+```bash
+./gradlew test --tests "lab.custody.orchestration.WithdrawalControllerIntegrationTest"
+```
+
+테스트 포인트:
+
+-   허용 케이스: status = `W4_SIGNING`
+-   비허용 케이스: status = `W0_POLICY_REJECTED`
+-   감사 로그: `/withdrawals/{id}/policy-audits` 에 reject reason 기록
+
+### 2) 수동 API 테스트
+
+#### 2-1. 서버 실행
+
+```bash
+./gradlew bootRun
+```
+
+#### 2-2. 허용 케이스(화이트리스트 주소 + 금액 제한 이내)
+
+```bash
+curl -i -X POST http://localhost:8080/withdrawals \
+  -H "Idempotency-Key: idem-allow-1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "chainType":"evm",
+    "fromAddress":"0xfrom",
+    "toAddress":"0xto",
+    "asset":"USDC",
+    "amount":100
+  }'
+```
+
+확인 포인트:
+
+-   HTTP 200
+-   응답 `status` 가 `W4_SIGNING`
+
+#### 2-3. 거절 케이스 #1 (화이트리스트 미포함)
+
+```bash
+curl -i -X POST http://localhost:8080/withdrawals \
+  -H "Idempotency-Key: idem-reject-whitelist-1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "chainType":"evm",
+    "fromAddress":"0xfrom",
+    "toAddress":"0xnot-allowed",
+    "asset":"USDC",
+    "amount":100
+  }'
+```
+
+확인 포인트:
+
+-   HTTP 200
+-   응답 `status` 가 `W0_POLICY_REJECTED`
+-   응답 본문의 `id` 값을 복사
+
+감사 로그 확인:
+
+```bash
+curl -i http://localhost:8080/withdrawals/{복사한_id}/policy-audits
+```
+
+예상 reason:
+
+-   `TO_ADDRESS_NOT_WHITELISTED: 0xnot-allowed`
+
+#### 2-4. 거절 케이스 #2 (금액 제한 초과)
+
+```bash
+curl -i -X POST http://localhost:8080/withdrawals \
+  -H "Idempotency-Key: idem-reject-amount-1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "chainType":"evm",
+    "fromAddress":"0xfrom",
+    "toAddress":"0xto",
+    "asset":"USDC",
+    "amount":1001
+  }'
+```
+
+예상 reason:
+
+-   `AMOUNT_LIMIT_EXCEEDED: max=1000, requested=1001`
+
+### 3) 정책 값 바꿔서 검증하기
+
+실행 시점에 정책 파라미터를 바꿔 다양한 테스트를 할 수 있습니다.
+
+```bash
+./gradlew bootRun --args='--policy.max-amount=500 --policy.whitelist-to-addresses=0xaaa,0xbbb'
+```
+
+이후 동일한 `curl` 요청으로 allow/reject 경계값을 빠르게 점검할 수 있습니다.
+
+------------------------------------------------------------------------
+
 ## 주요 API
 
 ### Withdrawal 생성
