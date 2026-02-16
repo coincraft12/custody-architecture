@@ -75,6 +75,17 @@ class WithdrawalControllerIntegrationTest {
                 .andExpect(jsonPath("$.status").value("W4_SIGNING"));
     }
 
+
+    @Test
+    void create_withMalformedJson_returnsHelpfulBadRequestMessage() throws Exception {
+        mockMvc.perform(post("/withdrawals")
+                        .header("Idempotency-Key", "idem-malformed-json-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{'chainType':'evm','fromAddress':'0xfrom','toAddress':'0xto','asset':'USDC','amount':100}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Invalid JSON body. If you are using PowerShell, use double quotes for JSON (or send --data-binary from a file)."));
+    }
+
     @Test
     void create_withNonWhitelistedAddress_isRejectedAndAuditLogged() throws Exception {
         String response = mockMvc.perform(post("/withdrawals")
