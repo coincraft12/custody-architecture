@@ -113,6 +113,12 @@ Policy reject + audit log 동작은 통합 테스트로 바로 검증 가능합�
 
 ### 2) 수동 API 테스트
 
+> Windows PowerShell에서는 `curl` 이 `Invoke-WebRequest` 별칭이라, Bash 스타일 옵션(`-H`, `-d`)이 그대로 동작하지 않습니다.
+> 아래 둘 중 하나를 사용하세요.
+>
+> - `curl.exe` 로 실행 (Git for Windows / 시스템 curl)
+> - PowerShell 네이티브 `Invoke-RestMethod` 사용
+
 #### 2-1. 서버 실행
 
 ```bash
@@ -132,6 +138,33 @@ curl -i -X POST http://localhost:8080/withdrawals \
     "asset":"USDC",
     "amount":100
   }'
+```
+
+PowerShell (`curl.exe`) 예시:
+
+```powershell
+curl.exe -i -X POST "http://localhost:8080/withdrawals" `
+  -H "Idempotency-Key: idem-allow-1" `
+  -H "Content-Type: application/json" `
+  -d '{"chainType":"evm","fromAddress":"0xfrom","toAddress":"0xto","asset":"USDC","amount":100}'
+```
+
+PowerShell (`Invoke-RestMethod`) 예시:
+
+```powershell
+$headers = @{
+  "Idempotency-Key" = "idem-allow-1"
+}
+
+$body = @{
+  chainType   = "evm"
+  fromAddress = "0xfrom"
+  toAddress   = "0xto"
+  asset       = "USDC"
+  amount      = 100
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri "http://localhost:8080/withdrawals" -Headers $headers -ContentType "application/json" -Body $body
 ```
 
 확인 포인트:
