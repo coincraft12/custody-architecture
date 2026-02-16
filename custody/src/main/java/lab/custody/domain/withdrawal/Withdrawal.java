@@ -51,6 +51,9 @@ public class Withdrawal {
     private ChainType chainType;
 
     public void transitionTo(WithdrawalStatus next) {
+        if (next.ordinal() < this.status.ordinal()) {
+            throw new IllegalStateException("invalid withdrawal status transition: " + this.status + " -> " + next);
+        }
         this.status = next;
         this.updatedAt = Instant.now();
     }
