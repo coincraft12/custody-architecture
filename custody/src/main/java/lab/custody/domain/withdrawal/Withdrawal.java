@@ -46,15 +46,26 @@ public class Withdrawal {
     @Column(nullable = false)
     private Instant updatedAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private ChainType chainType;
+
     public void transitionTo(WithdrawalStatus next) {
         this.status = next;
         this.updatedAt = Instant.now();
     }
 
-    public static Withdrawal requested(String idempotencyKey, String from, String to, String asset, long amount) {
+    public static Withdrawal requested(
+        String idempotencyKey, 
+        ChainType chainType, 
+        String from, 
+        String to, 
+        String asset, 
+        long amount) {
         Instant now = Instant.now();
         return Withdrawal.builder()
                 .idempotencyKey(idempotencyKey)
+                .chainType(chainType)
                 .fromAddress(from)
                 .toAddress(to)
                 .asset(asset)

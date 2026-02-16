@@ -1,5 +1,8 @@
 package lab.custody.orchestration;
 
+
+import lab.custody.domain.withdrawal.ChainType;
+
 import lab.custody.domain.withdrawal.Withdrawal;
 import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lab.custody.domain.withdrawal.WithdrawalStatus;
@@ -19,11 +22,13 @@ public class WithdrawalService {
 
     @Transactional
     public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
+        ChainType chainType = ChainType.EVM;
         return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
                 .orElseGet(() -> {
                     // 1) Withdrawal 생성
                     Withdrawal w = Withdrawal.requested(
                             idempotencyKey,
+                            chainType,
                             req.fromAddress(),
                             req.toAddress(),
                             req.asset(),

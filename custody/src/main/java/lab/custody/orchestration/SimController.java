@@ -1,9 +1,6 @@
 package lab.custody.orchestration;
 
-import lab.custody.domain.withdrawal.Withdrawal;
-import lab.custody.sim.fakechain.FakeChain;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
@@ -16,14 +13,18 @@ public class SimController {
     private final RetryReplaceService retryReplaceService;
 
     @PostMapping("/withdrawals/{id}/next-outcome/{outcome}")
-    public ResponseEntity<Void> setNextOutcome(@PathVariable UUID id, @PathVariable String outcome) {
-        FakeChain.NextOutcome o = FakeChain.NextOutcome.valueOf(outcome.toUpperCase());
+    public void setNextOutcome(
+            @PathVariable UUID id,
+            @PathVariable String outcome
+    ) {
+        RetryReplaceService.NextOutcome o =
+                RetryReplaceService.NextOutcome.valueOf(outcome.toUpperCase());
+
         retryReplaceService.setNextOutcome(id, o);
-        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/withdrawals/{id}/broadcast")
-    public ResponseEntity<Withdrawal> broadcast(@PathVariable UUID id) {
-        return ResponseEntity.ok(retryReplaceService.simulateBroadcast(id));
+    public Object broadcast(@PathVariable UUID id) {
+        return retryReplaceService.simulateBroadcast(id);
     }
 }
