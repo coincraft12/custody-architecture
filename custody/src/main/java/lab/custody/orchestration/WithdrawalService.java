@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -22,7 +23,7 @@ public class WithdrawalService {
 
     @Transactional
     public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
-        ChainType chainType = ChainType.EVM;
+        ChainType chainType = parseChainType(req.chainType());
         return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
                 .orElseGet(() -> {
                     // 1) Withdrawal 생성
@@ -52,5 +53,17 @@ public class WithdrawalService {
     public Withdrawal get(UUID id) {
         return withdrawalRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("withdrawal not found: " + id));
+    }
+
+    private ChainType parseChainType(String chainType) {
+        if (chainType == null || chainType.isBlank()) {
+            throw new InvalidRequestException("chainType must not be blank");
+        }
+
+        try {
+            return ChainType.valueOf(chainType.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new InvalidRequestException("invalid chainType: " + chainType);
+        }
     }
 }
