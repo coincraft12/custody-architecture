@@ -76,6 +76,39 @@ class WithdrawalControllerIntegrationTest {
     }
 
 
+
+    @Test
+    void create_withSameIdempotencyKeyAndDifferentBody_returnsConflict() throws Exception {
+        mockMvc.perform(post("/withdrawals")
+                        .header("Idempotency-Key", "idem-conflict-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "chainType": "evm",
+                                  "fromAddress": "0xfrom",
+                                  "toAddress": "0xto",
+                                  "asset": "USDC",
+                                  "amount": 100
+                                }
+                                """))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/withdrawals")
+                        .header("Idempotency-Key", "idem-conflict-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "chainType": "bft",
+                                  "fromAddress": "0xfrom",
+                                  "toAddress": "0xto",
+                                  "asset": "USDC",
+                                  "amount": 100
+                                }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("same Idempotency-Key cannot be used with a different request body"));
+    }
+
     @Test
     void create_withMalformedJson_returnsHelpfulBadRequestMessage() throws Exception {
         mockMvc.perform(post("/withdrawals")
