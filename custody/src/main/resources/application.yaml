@@ -15,3 +15,7 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+policy:
+  max-amount: 1000
+  whitelist-to-addresses: 0xto,0xtrusted

@@ -2,6 +2,7 @@ package lab.custody.domain.withdrawal;
 
 public enum WithdrawalStatus {
     W0_REQUESTED,
+    W0_POLICY_REJECTED,
     W1_POLICY_CHECKED,
     W2_APPROVAL_PENDING,
     W3_APPROVED,

@@ -1,15 +1,20 @@
 package lab.custody.orchestration;
 
 
+import lab.custody.domain.policy.PolicyAuditLog;
+import lab.custody.domain.policy.PolicyAuditLogRepository;
 import lab.custody.domain.withdrawal.ChainType;
 
 import lab.custody.domain.withdrawal.Withdrawal;
 import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lab.custody.domain.withdrawal.WithdrawalStatus;
+import lab.custody.orchestration.policy.PolicyDecision;
+import lab.custody.orchestration.policy.PolicyEngine;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
@@ -20,13 +25,14 @@ public class WithdrawalService {
     private final WithdrawalRepository withdrawalRepository;
     private final NonceAllocator nonceAllocator;
     private final AttemptService attemptService;
+    private final PolicyEngine policyEngine;
+    private final PolicyAuditLogRepository policyAuditLogRepository;
 
     @Transactional
     public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
         ChainType chainType = parseChainType(req.chainType());
         return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
                 .orElseGet(() -> {
-                    // 1) Withdrawal 생성
                     Withdrawal w = Withdrawal.requested(
                             idempotencyKey,
                             chainType,
@@ -36,16 +42,24 @@ public class WithdrawalService {
                             req.amount()
                     );
 
-                    // 실습 1에서는 "정책/승인"을 생략하고 SIGNING까지 당겨서 체감시키자
-                    w.transitionTo(WithdrawalStatus.W4_SIGNING);
-
                     Withdrawal saved = withdrawalRepository.save(w);
 
-                    // 2) 첫 Attempt 생성 (nonce 예약)
-                    long nonce = nonceAllocator.reserve(req.fromAddress());
-                    attemptService.createAttempt(saved.getId(), req.fromAddress(), nonce);
+                    PolicyDecision decision = policyEngine.evaluate(req);
+                    policyAuditLogRepository.save(PolicyAuditLog.of(saved.getId(), decision.allowed(), decision.reason()));
 
-                    return saved;
+                    if (!decision.allowed()) {
+                        saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
+                        return withdrawalRepository.save(saved);
+                    }
+
+                    saved.transitionTo(WithdrawalStatus.W1_POLICY_CHECKED);
+                    saved.transitionTo(WithdrawalStatus.W4_SIGNING);
+                    Withdrawal policyPassed = withdrawalRepository.save(saved);
+
+                    long nonce = nonceAllocator.reserve(req.fromAddress());
+                    attemptService.createAttempt(policyPassed.getId(), req.fromAddress(), nonce);
+
+                    return policyPassed;
                 });
     }
 
@@ -53,6 +67,11 @@ public class WithdrawalService {
     public Withdrawal get(UUID id) {
         return withdrawalRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("withdrawal not found: " + id));
+    }
+
+    @Transactional(readOnly = true)
+    public List<PolicyAuditLog> getPolicyAudits(UUID withdrawalId) {
+        return policyAuditLogRepository.findByWithdrawalIdOrderByCreatedAtAsc(withdrawalId);
     }
 
     private ChainType parseChainType(String chainType) {

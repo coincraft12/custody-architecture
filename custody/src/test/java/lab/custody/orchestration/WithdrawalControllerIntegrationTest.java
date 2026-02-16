@@ -7,6 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -17,6 +18,7 @@ class WithdrawalControllerIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
 
     @Test
     void create_withValidChainType_returnsCreatedWithdrawalWithParsedChainType() throws Exception {
@@ -33,7 +35,8 @@ class WithdrawalControllerIntegrationTest {
                                 }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.chainType").value("BFT"));
+                .andExpect(jsonPath("$.chainType").value("BFT"))
+                .andExpect(jsonPath("$.status").value("W4_SIGNING"));
     }
 
     @Test
@@ -52,5 +55,33 @@ class WithdrawalControllerIntegrationTest {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("invalid chainType: unknown"));
+    }
+
+    @Test
+    void create_withNonWhitelistedAddress_isRejectedAndAuditLogged() throws Exception {
+        String response = mockMvc.perform(post("/withdrawals")
+                        .header("Idempotency-Key", "idem-policy-reject-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "chainType": "evm",
+                                  "fromAddress": "0xfrom",
+                                  "toAddress": "0xnot-allowed",
+                                  "asset": "USDC",
+                                  "amount": 100
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("W0_POLICY_REJECTED"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        String withdrawalId = response.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1");
+
+        mockMvc.perform(get("/withdrawals/{id}/policy-audits", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].allowed").value(false))
+                .andExpect(jsonPath("$[0].reason").value("TO_ADDRESS_NOT_WHITELISTED: 0xnot-allowed"));
     }
 }
