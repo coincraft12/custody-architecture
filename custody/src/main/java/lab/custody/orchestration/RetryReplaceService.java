@@ -69,10 +69,8 @@ public class RetryReplaceService {
         // 2) Withdrawal은 끊기지 않고 진행(실습2 체감용)
         w.transitionTo(WithdrawalStatus.W6_BROADCASTED);
 
-        // 3) Adapter 선택 (Withdrawal에 chainType이 있다고 가정)
-        // - Withdrawal.getChainType()이 "EVM"/"BFT" 형태 enum 또는 string이어야 한다.
-        ChainAdapter.ChainType chainType = ChainAdapter.ChainType.valueOf(w.getChainType().name());
-        ChainAdapter adapter = router.resolve(chainType);
+        // 3) Adapter 선택
+        ChainAdapter adapter = router.resolve(w.getChainType());
 
         // 4) 동일한 명령으로 broadcast 호출
         ChainAdapter.BroadcastResult result = adapter.broadcast(

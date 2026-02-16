@@ -1,5 +1,6 @@
 package lab.custody.adapter;
 
+import lab.custody.domain.withdrawal.ChainType;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -13,7 +14,7 @@ public class ChainAdapterRouter {
         this.adapters = adapters;
     }
 
-    public ChainAdapter resolve(ChainAdapter.ChainType type) {
+    public ChainAdapter resolve(ChainType type) {
         return adapters.stream()
                 .filter(a -> a.getChainType() == type)
                 .findFirst()

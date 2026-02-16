@@ -1,5 +1,6 @@
 package lab.custody.adapter;
 
+import lab.custody.domain.withdrawal.ChainType;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
