@@ -1,5 +1,6 @@
 package lab.custody.adapter;
 
+import lab.custody.domain.withdrawal.ChainType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -18,7 +19,7 @@ public class AdapterDemoController {
             @PathVariable String type,
             @RequestBody DemoRequest req
     ) {
-        ChainAdapter.ChainType chainType = ChainAdapter.ChainType.valueOf(type.toUpperCase());
+        ChainType chainType = ChainType.valueOf(type.toUpperCase());
         ChainAdapter adapter = router.resolve(chainType);
 
         ChainAdapter.BroadcastResult result = adapter.broadcast(

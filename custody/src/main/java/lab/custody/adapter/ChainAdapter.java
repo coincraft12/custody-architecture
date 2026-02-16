@@ -1,5 +1,7 @@
 package lab.custody.adapter;
 
+import lab.custody.domain.withdrawal.ChainType;
+
 import java.util.UUID;
 
 public interface ChainAdapter {
@@ -7,11 +9,6 @@ public interface ChainAdapter {
     BroadcastResult broadcast(BroadcastCommand command);
 
     ChainType getChainType();
-
-    enum ChainType {
-        EVM,
-        BFT
-    }
 
     record BroadcastCommand(
             UUID withdrawalId,
