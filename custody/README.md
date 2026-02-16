@@ -113,11 +113,8 @@ Policy reject + audit log 동작은 통합 테스트로 바로 검증 가능합�
 
 ### 2) 수동 API 테스트
 
-> Windows PowerShell에서는 `curl` 이 `Invoke-WebRequest` 별칭이라, Bash 스타일 옵션(`-H`, `-d`)이 그대로 동작하지 않습니다.
-> 아래 둘 중 하나를 사용하세요.
->
-> - `curl.exe` 로 실행 (Git for Windows / 시스템 curl)
-> - PowerShell 네이티브 `Invoke-RestMethod` 사용
+> Windows PowerShell 기준으로 `curl`(`Invoke-WebRequest` 별칭) 문법을 사용합니다.
+> 아래 예시는 모두 같은 형식으로 통일했습니다.
 
 #### 2-1. 서버 실행
 
@@ -127,44 +124,10 @@ Policy reject + audit log 동작은 통합 테스트로 바로 검증 가능합�
 
 #### 2-2. 허용 케이스(화이트리스트 주소 + 금액 제한 이내)
 
-```bash
-curl -i -X POST http://localhost:8080/withdrawals \
-  -H "Idempotency-Key: idem-allow-1" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "chainType":"evm",
-    "fromAddress":"0xfrom",
-    "toAddress":"0xto",
-    "asset":"USDC",
-    "amount":100
-  }'
-```
-
-PowerShell (`curl.exe`) 예시:
-
 ```powershell
-curl.exe -i -X POST "http://localhost:8080/withdrawals" `
-  -H "Idempotency-Key: idem-allow-1" `
-  -H "Content-Type: application/json" `
-  -d '{"chainType":"evm","fromAddress":"0xfrom","toAddress":"0xto","asset":"USDC","amount":100}'
-```
-
-PowerShell (`Invoke-RestMethod`) 예시:
-
-```powershell
-$headers = @{
-  "Idempotency-Key" = "idem-allow-1"
-}
-
-$body = @{
-  chainType   = "evm"
-  fromAddress = "0xfrom"
-  toAddress   = "0xto"
-  asset       = "USDC"
-  amount      = 100
-} | ConvertTo-Json
-
-Invoke-RestMethod -Method Post -Uri "http://localhost:8080/withdrawals" -Headers $headers -ContentType "application/json" -Body $body
+curl -Method POST "http://localhost:8080/withdrawals" `
+     -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-allow-1" } `
+     -Body '{ "chainType":"evm", "fromAddress":"0xfrom", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
 ```
 
 확인 포인트:
@@ -174,17 +137,10 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8080/withdrawals" -Headers
 
 #### 2-3. 거절 케이스 #1 (화이트리스트 미포함)
 
-```bash
-curl -i -X POST http://localhost:8080/withdrawals \
-  -H "Idempotency-Key: idem-reject-whitelist-1" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "chainType":"evm",
-    "fromAddress":"0xfrom",
-    "toAddress":"0xnot-allowed",
-    "asset":"USDC",
-    "amount":100
-  }'
+```powershell
+curl -Method POST "http://localhost:8080/withdrawals" `
+     -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-reject-whitelist-1" } `
+     -Body '{ "chainType":"evm", "fromAddress":"0xfrom", "toAddress":"0xnot-allowed", "asset":"USDC", "amount":100 }'
 ```
 
 확인 포인트:
@@ -195,8 +151,8 @@ curl -i -X POST http://localhost:8080/withdrawals \
 
 감사 로그 확인:
 
-```bash
-curl -i http://localhost:8080/withdrawals/{복사한_id}/policy-audits
+```powershell
+curl -Method GET "http://localhost:8080/withdrawals/{복사한_id}/policy-audits"
 ```
 
 예상 reason:
@@ -205,17 +161,10 @@ curl -i http://localhost:8080/withdrawals/{복사한_id}/policy-audits
 
 #### 2-4. 거절 케이스 #2 (금액 제한 초과)
 
-```bash
-curl -i -X POST http://localhost:8080/withdrawals \
-  -H "Idempotency-Key: idem-reject-amount-1" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "chainType":"evm",
-    "fromAddress":"0xfrom",
-    "toAddress":"0xto",
-    "asset":"USDC",
-    "amount":1001
-  }'
+```powershell
+curl -Method POST "http://localhost:8080/withdrawals" `
+     -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-reject-amount-1" } `
+     -Body '{ "chainType":"evm", "fromAddress":"0xfrom", "toAddress":"0xto", "asset":"USDC", "amount":1001 }'
 ```
 
 예상 reason:
@@ -230,7 +179,7 @@ curl -i -X POST http://localhost:8080/withdrawals \
 ./gradlew bootRun --args='--policy.max-amount=500 --policy.whitelist-to-addresses=0xaaa,0xbbb'
 ```
 
-이후 동일한 `curl` 요청으로 allow/reject 경계값을 빠르게 점검할 수 있습니다.
+이후 동일한 `curl -Method ... -Headers @{...} -Body '...'` 요청으로 allow/reject 경계값을 빠르게 점검할 수 있습니다.
 
 ------------------------------------------------------------------------
 
