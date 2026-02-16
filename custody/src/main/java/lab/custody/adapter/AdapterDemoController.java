@@ -16,11 +16,10 @@ public class AdapterDemoController {
 
     @PostMapping("/broadcast/{type}")
     public ResponseEntity<ChainAdapter.BroadcastResult> broadcast(
-            @PathVariable String type,
+            @PathVariable ChainType type,
             @RequestBody DemoRequest req
     ) {
-        ChainType chainType = ChainType.valueOf(type.toUpperCase());
-        ChainAdapter adapter = router.resolve(chainType);
+        ChainAdapter adapter = router.resolve(type);
 
         ChainAdapter.BroadcastResult result = adapter.broadcast(
                 new ChainAdapter.BroadcastCommand(
