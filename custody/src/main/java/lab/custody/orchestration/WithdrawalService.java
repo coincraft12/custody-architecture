@@ -76,7 +76,7 @@ public class WithdrawalService {
 
     private ChainType parseChainType(String chainType) {
         if (chainType == null || chainType.isBlank()) {
-            throw new InvalidRequestException("chainType must not be blank");
+            return ChainType.EVM;
         }
 
         try {

@@ -58,6 +58,24 @@ class WithdrawalControllerIntegrationTest {
     }
 
     @Test
+    void create_withoutChainType_defaultsToEvm() throws Exception {
+        mockMvc.perform(post("/withdrawals")
+                        .header("Idempotency-Key", "idem-default-chain-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fromAddress": "0xfrom",
+                                  "toAddress": "0xto",
+                                  "asset": "USDC",
+                                  "amount": 100
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.chainType").value("EVM"))
+                .andExpect(jsonPath("$.status").value("W4_SIGNING"));
+    }
+
+    @Test
     void create_withNonWhitelistedAddress_isRejectedAndAuditLogged() throws Exception {
         String response = mockMvc.perform(post("/withdrawals")
                         .header("Idempotency-Key", "idem-policy-reject-1")
