@@ -14,9 +14,25 @@ import java.util.UUID;
 public class AttemptController {
 
     private final AttemptService attemptService;
+    private final RetryReplaceService retryReplaceService;
 
     @GetMapping("/{id}/attempts")
     public ResponseEntity<List<TxAttempt>> listAttempts(@PathVariable UUID id) {
         return ResponseEntity.ok(attemptService.listAttempts(id));
+    }
+
+    @PostMapping("/{id}/retry")
+    public ResponseEntity<TxAttempt> retry(@PathVariable UUID id) {
+        return ResponseEntity.ok(retryReplaceService.retry(id));
+    }
+
+    @PostMapping("/{id}/replace")
+    public ResponseEntity<TxAttempt> replace(@PathVariable UUID id) {
+        return ResponseEntity.ok(retryReplaceService.replace(id));
+    }
+
+    @PostMapping("/{id}/sync")
+    public ResponseEntity<TxAttempt> sync(@PathVariable UUID id) {
+        return ResponseEntity.ok(retryReplaceService.sync(id));
     }
 }

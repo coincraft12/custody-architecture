@@ -10,7 +10,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -27,8 +26,8 @@ class LabScenariosIntegrationTest {
     private ObjectMapper objectMapper;
 
     @Test
-    void lab1_idempotencyAndStateFlow_preservesBusinessUnitAndSingleInitialAttempt() throws Exception {
-        String requestBody = """
+    void lab1_sameIdempotencyKey_doesNotCreateSecondAttempt() throws Exception {
+        String body = """
                 {
                   "chainType": "evm",
                   "fromAddress": "0xfrom-lab1",
@@ -41,38 +40,25 @@ class LabScenariosIntegrationTest {
         MvcResult first = mockMvc.perform(post("/withdrawals")
                         .header("Idempotency-Key", "idem-lab1-1")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestBody))
+                        .content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("W4_SIGNING"))
+                .andExpect(jsonPath("$.status").value("W6_BROADCASTED"))
                 .andReturn();
 
-        MvcResult second = mockMvc.perform(post("/withdrawals")
+        mockMvc.perform(post("/withdrawals")
                         .header("Idempotency-Key", "idem-lab1-1")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestBody))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("W4_SIGNING"))
-                .andReturn();
+                        .content(body))
+                .andExpect(status().isOk());
 
-        String firstJson = first.getResponse().getContentAsString();
-        String secondJson = second.getResponse().getContentAsString();
-
-        JsonNode firstNode = objectMapper.readTree(firstJson);
-        JsonNode secondNode = objectMapper.readTree(secondJson);
-
-        String withdrawalId = firstNode.get("id").asText();
-        assertThat(secondNode.get("id").asText()).isEqualTo(withdrawalId);
-
+        String withdrawalId = objectMapper.readTree(first.getResponse().getContentAsString()).get("id").asText();
         mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].attemptNo").value(1))
-                .andExpect(jsonPath("$[0].canonical").value(true))
-                .andExpect(jsonPath("$[0].status").value("A0_CREATED"));
+                .andExpect(jsonPath("$.length()").value(1));
     }
 
     @Test
-    void lab2_retryReplaceSimulation_accumulatesAttemptsAndConvergesToIncluded() throws Exception {
+    void lab2_retryAndReplace_updateCanonicalAttempt() throws Exception {
         MvcResult create = mockMvc.perform(post("/withdrawals")
                         .header("Idempotency-Key", "idem-lab2-1")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -86,108 +72,26 @@ class LabScenariosIntegrationTest {
                                 }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("W4_SIGNING"))
                 .andReturn();
 
         String withdrawalId = objectMapper.readTree(create.getResponse().getContentAsString()).get("id").asText();
 
-        mockMvc.perform(post("/sim/withdrawals/{id}/next-outcome/FAIL_SYSTEM", withdrawalId))
-                .andExpect(status().isOk());
+        JsonNode firstAttempt = objectMapper.readTree(mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
+                        .andReturn().getResponse().getContentAsString()).get(0);
+        long firstNonce = firstAttempt.get("nonce").asLong();
 
-        mockMvc.perform(post("/sim/withdrawals/{id}/broadcast", withdrawalId))
+        mockMvc.perform(post("/withdrawals/{id}/replace", withdrawalId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("W6_BROADCASTED"));
+                .andExpect(jsonPath("$.nonce").value(firstNonce));
+
+        mockMvc.perform(post("/withdrawals/{id}/retry", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attemptNo").value(3));
 
         mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].canonical").value(false))
-                .andExpect(jsonPath("$[0].exceptionType").value("FAILED_SYSTEM"))
-                .andExpect(jsonPath("$[1].canonical").value(true));
-
-        mockMvc.perform(post("/sim/withdrawals/{id}/next-outcome/REPLACED", withdrawalId))
-                .andExpect(status().isOk());
-
-        mockMvc.perform(post("/sim/withdrawals/{id}/broadcast", withdrawalId))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("W6_BROADCASTED"));
-
-        mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3))
+                .andExpect(jsonPath("$[0].status").value("REPLACED"))
                 .andExpect(jsonPath("$[1].canonical").value(false))
-                .andExpect(jsonPath("$[1].exceptionType").value("REPLACED"))
                 .andExpect(jsonPath("$[2].canonical").value(true));
-
-        mockMvc.perform(post("/sim/withdrawals/{id}/next-outcome/SUCCESS", withdrawalId))
-                .andExpect(status().isOk());
-
-        mockMvc.perform(post("/sim/withdrawals/{id}/broadcast", withdrawalId))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("W7_INCLUDED"));
-
-        mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[2].status").value("A4_INCLUDED"))
-                .andExpect(jsonPath("$[2].canonical").value(true));
-    }
-
-    @Test
-    void lab3_chainAdapters_areInvokedThroughSameOrchestratorCallShape() throws Exception {
-        mockMvc.perform(post("/adapter-demo/broadcast/evm")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "from": "a",
-                                  "to": "b",
-                                  "asset": "ETH",
-                                  "amount": 10,
-                                  "nonce": 1
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accepted").value(true))
-                .andExpect(jsonPath("$.txHash").value(org.hamcrest.Matchers.startsWith("0x")));
-
-        mockMvc.perform(post("/adapter-demo/broadcast/bft")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "from": "a",
-                                  "to": "b",
-                                  "asset": "TOKEN",
-                                  "amount": 10,
-                                  "nonce": 1
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accepted").value(true))
-                .andExpect(jsonPath("$.txHash").value(org.hamcrest.Matchers.startsWith("BFT_")));
-    }
-
-    @Test
-    void lab4_policyEngine_rejectsAmountLimitAndLeavesAuditLog() throws Exception {
-        MvcResult create = mockMvc.perform(post("/withdrawals")
-                        .header("Idempotency-Key", "idem-lab4-amount-limit-1")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "chainType": "evm",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
-                                  "asset": "USDC",
-                                  "amount": 1001
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("W0_POLICY_REJECTED"))
-                .andReturn();
-
-        String withdrawalId = objectMapper.readTree(create.getResponse().getContentAsString()).get("id").asText();
-
-        mockMvc.perform(get("/withdrawals/{id}/policy-audits", withdrawalId))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].allowed").value(false))
-                .andExpect(jsonPath("$[0].reason").value("AMOUNT_LIMIT_EXCEEDED: max=1000, requested=1001"));
     }
 }

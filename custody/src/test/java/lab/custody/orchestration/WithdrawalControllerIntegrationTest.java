@@ -36,7 +36,7 @@ class WithdrawalControllerIntegrationTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.chainType").value("BFT"))
-                .andExpect(jsonPath("$.status").value("W4_SIGNING"));
+                .andExpect(jsonPath("$.status").value("W6_BROADCASTED"));
     }
 
     @Test
@@ -72,7 +72,7 @@ class WithdrawalControllerIntegrationTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.chainType").value("EVM"))
-                .andExpect(jsonPath("$.status").value("W4_SIGNING"));
+                .andExpect(jsonPath("$.status").value("W6_BROADCASTED"));
     }
 
 

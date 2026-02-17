@@ -12,10 +12,13 @@ import org.web3j.protocol.core.DefaultBlockParameterName;
 import org.web3j.protocol.core.methods.response.EthChainId;
 import org.web3j.protocol.core.methods.response.EthGetTransactionCount;
 import org.web3j.protocol.core.methods.response.EthSendTransaction;
+import org.web3j.protocol.core.methods.response.EthTransaction;
+import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import org.web3j.utils.Numeric;
 
 import java.io.IOException;
 import java.math.BigInteger;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 @Component
@@ -53,15 +56,9 @@ public class EvmRpcAdapter implements ChainAdapter {
         ensureConnectedChainIdMatchesConfigured();
 
         try {
-            EthGetTransactionCount txCountResponse = web3j.ethGetTransactionCount(
-                    credentials.getAddress(),
-                    DefaultBlockParameterName.PENDING
-            ).send();
-            if (txCountResponse.hasError()) {
-                throw new IllegalStateException("Failed to fetch nonce from RPC: " + txCountResponse.getError().getMessage());
-            }
-
-            BigInteger nonce = txCountResponse.getTransactionCount();
+            BigInteger nonce = command.nonce() >= 0
+                    ? BigInteger.valueOf(command.nonce())
+                    : getPendingNonce(credentials.getAddress());
             BigInteger valueWei = BigInteger.valueOf(command.amount());
 
             RawTransaction rawTransaction = RawTransaction.createEtherTransaction(
@@ -117,11 +114,40 @@ public class EvmRpcAdapter implements ChainAdapter {
         return ChainType.EVM;
     }
 
-    public String senderAddress() {
+    public String getSenderAddress() {
         return credentials.getAddress();
     }
 
-    public long chainId() {
+    public long getChainId() {
         return configuredChainId;
+    }
+
+    public BigInteger getPendingNonce(String address) {
+        try {
+            EthGetTransactionCount txCountResponse = web3j.ethGetTransactionCount(address, DefaultBlockParameterName.PENDING).send();
+            if (txCountResponse.hasError()) {
+                throw new IllegalStateException("Failed to fetch nonce from RPC: " + txCountResponse.getError().getMessage());
+            }
+            return txCountResponse.getTransactionCount();
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to fetch pending nonce", e);
+        }
+    }
+
+    public Optional<TransactionReceipt> getReceipt(String txHash) {
+        try {
+            return web3j.ethGetTransactionReceipt(txHash).send().getTransactionReceipt();
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to fetch receipt", e);
+        }
+    }
+
+    public Optional<org.web3j.protocol.core.methods.response.Transaction> getTransaction(String txHash) {
+        try {
+            EthTransaction response = web3j.ethGetTransactionByHash(txHash).send();
+            return response.getTransaction();
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to fetch transaction", e);
+        }
     }
 }

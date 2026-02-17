@@ -22,17 +22,17 @@
 
 ## 1) 실습 전체 지도
 
-### 실습 1 — Withdrawal / TxAttempt 분리 + 멱등성
+### 실습 1 — RPC Full Mode Withdrawal + 멱등성
 
-- 업무 단위인 `Withdrawal`은 1개로 유지
-- 체인 시도 단위인 `TxAttempt`는 실패/재시도에 따라 누적
-- `Idempotency-Key`로 중복 요청 방지
+- `POST /withdrawals`는 DB 저장 + 실제 RPC 브로드캐스트까지 수행
+- 동일 `Idempotency-Key` 재호출 시 재브로드캐스트 없이 기존 canonical `txHash` 유지
+- `GET /evm/tx/{txHash}/wait`로 포함 여부 확인
 
-### 실습 2 — Retry / Replace 시뮬레이션
+### 실습 2 — Retry / Replace (실체인 규칙)
 
-- 실패(`FAIL_SYSTEM`) 시 새로운 attempt 생성
-- 교체(`REPLACED`) 시 canonical attempt 전환
-- 성공(`SUCCESS`)까지 수렴하는 흐름 확인
+- `POST /withdrawals/{id}/retry`: 새 nonce로 새 attempt 브로드캐스트
+- `POST /withdrawals/{id}/replace`: 같은 nonce fee bump로 canonical 교체
+- `GET /withdrawals/{id}/attempts`로 누적/전환 확인
 
 ### 실습 3 — Chain Adapter + EVM RPC(Sepolia/Hoodi) 연동
 
@@ -58,7 +58,7 @@
 - Java 21+
 - Gradle Wrapper (`./gradlew`)
 - 기본 포트: `8080`
-- 체인 모드 환경변수: `CUSTODY_CHAIN_MODE` (`mock`/`rpc`, 기본값 `mock`)
+- 권장 프로파일: `SPRING_PROFILES_ACTIVE=labs-rpc` (내부적으로 `custody.chain.mode=rpc`)
 - EVM RPC URL 환경변수: `CUSTODY_EVM_RPC_URL` (기본값: `https://ethereum-sepolia-rpc.publicnode.com`)
 - EVM 체인 ID 환경변수: `CUSTODY_EVM_CHAIN_ID` (Sepolia: `11155111`, Hoodi는 해당 체인 ID 값 사용)
 - 송신 지갑 개인키 환경변수: `CUSTODY_EVM_PRIVATE_KEY`
@@ -632,3 +632,10 @@ public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req
 - 동시 요청의 핵심은 “같은 키로 정말 1건만 생기느냐”입니다.
 - 그래서 검증 포인트가 `id 동일성` + `attempt 1개 유지`입니다.
 - 실무에서는 DB 유니크 제약(`idempotency_key`)까지 함께 두면 안전성이 더 높아집니다.
+
+
+## 보안/안전 가드
+
+- `custody.evm.chain-id=1`(mainnet)은 부팅 시 차단됩니다.
+- `CUSTODY_EVM_PRIVATE_KEY`, `CUSTODY_EVM_RPC_URL` 미설정 시 부팅 실패합니다.
+- 개인키는 절대 커밋하지 마세요.
