@@ -1,19 +1,23 @@
 package lab.custody.common;
 
 import lab.custody.domain.withdrawal.ChainType;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Pattern;
 
-@ControllerAdvice
+@RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Pattern SENSITIVE_HEX_PATTERN = Pattern.compile("0x[a-fA-F0-9]{64,}");
 
     @ExceptionHandler({MethodArgumentTypeMismatchException.class, IllegalArgumentException.class})
     public ResponseEntity<ErrorResponse> handleBadRequest(Exception ex) {
@@ -47,6 +51,24 @@ public class GlobalExceptionHandler {
                 .body(body);
     }
 
+    @ExceptionHandler({IllegalStateException.class, RuntimeException.class})
+    public ResponseEntity<RuntimeErrorResponse> handleRuntimeException(Exception ex, HttpServletRequest request) {
+        RuntimeErrorResponse body = new RuntimeErrorResponse(
+                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                sanitizeMessage(ex.getMessage()),
+                request.getRequestURI()
+        );
+
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
+    }
+
+    private String sanitizeMessage(String message) {
+        if (message == null || message.isBlank()) {
+            return "Unexpected server error";
+        }
+        return SENSITIVE_HEX_PATTERN.matcher(message).replaceAll("0x[REDACTED]");
+    }
+
     private List<String> allowedChainTypes() {
         return Arrays.stream(ChainType.values())
                 .map(Enum::name)
@@ -58,4 +80,11 @@ public class GlobalExceptionHandler {
             String message,
             List<String> allowedTypes
     ) {}
+
+    public record RuntimeErrorResponse(
+            int status,
+            String message,
+            String path
+    ) {
+    }
 }

@@ -253,6 +253,47 @@ $env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_SEPOLIA_OR_HOODI_PRIVATE_KEY>"
 
 서버를 재시작한 뒤 아래를 호출하세요.
 
+RPC 데모 한 줄 플로우
+
+1. `GET /evm/wallet`로 송신 지갑 주소/잔고/체인 정보를 확인
+2. 위 주소에 Sepolia faucet으로 테스트 ETH 입금
+3. `POST /adapter-demo/broadcast/evm`로 트랜잭션 브로드캐스트 후 `txHash` 확보
+4. `GET /evm/tx/{txHash}/wait?timeoutMs=30000&pollMs=1500`로 포함(영수증) 확인
+5. 필요 시 Etherscan에서 `txHash` 검색해 보조 검증
+
+`GET /evm/wallet` 응답 예시:
+
+```json
+{
+  "mode": "rpc",
+  "chainId": 11155111,
+  "rpc": "https://ethereum-sepolia-rpc.publicnode.com",
+  "address": "0x...",
+  "balanceWei": "12300000000000000",
+  "balanceEth": "0.0123"
+}
+```
+
+`GET /evm/tx/{txHash}` 응답 예시(미포함):
+
+```json
+{
+  "txHash": "0x...",
+  "seen": true,
+  "receipt": null
+}
+```
+
+`GET /evm/tx/{txHash}/wait` 응답 예시(타임아웃):
+
+```json
+{
+  "txHash": "0x...",
+  "receipt": null,
+  "timeout": true
+}
+```
+
 ```powershell
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/adapter-demo/broadcast/evm" `
@@ -427,6 +468,9 @@ Withdrawal API 통합 테스트만:
 - `POST /sim/withdrawals/{id}/next-outcome/{FAIL_SYSTEM|REPLACED|SUCCESS}`
 - `POST /sim/withdrawals/{id}/broadcast`
 - `POST /adapter-demo/broadcast/{evm|bft}`
+- `GET /evm/wallet` (rpc 모드에서만 활성화)
+- `GET /evm/tx/{txHash}` (rpc 모드에서만 활성화)
+- `GET /evm/tx/{txHash}/wait?timeoutMs=30000&pollMs=1500` (rpc 모드에서만 활성화)
 
 ---
 
