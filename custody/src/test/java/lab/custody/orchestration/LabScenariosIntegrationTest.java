@@ -54,7 +54,8 @@ class LabScenariosIntegrationTest {
         String withdrawalId = objectMapper.readTree(first.getResponse().getContentAsString()).get("id").asText();
         mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1));
+                .andExpect(jsonPath("$.attemptCount").value(1))
+                .andExpect(jsonPath("$.attempts.length()").value(1));
     }
 
     @Test
@@ -77,7 +78,7 @@ class LabScenariosIntegrationTest {
         String withdrawalId = objectMapper.readTree(create.getResponse().getContentAsString()).get("id").asText();
 
         JsonNode firstAttempt = objectMapper.readTree(mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
-                        .andReturn().getResponse().getContentAsString()).get(0);
+                        .andReturn().getResponse().getContentAsString()).get("attempts").get(0);
         long firstNonce = firstAttempt.get("nonce").asLong();
 
         mockMvc.perform(post("/withdrawals/{id}/replace", withdrawalId))
@@ -90,9 +91,10 @@ class LabScenariosIntegrationTest {
 
         mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].status").value("REPLACED"))
-                .andExpect(jsonPath("$[1].canonical").value(false))
-                .andExpect(jsonPath("$[2].canonical").value(true));
+                .andExpect(jsonPath("$.attemptCount").value(3))
+                .andExpect(jsonPath("$.attempts[0].status").value("REPLACED"))
+                .andExpect(jsonPath("$.attempts[1].canonical").value(false))
+                .andExpect(jsonPath("$.attempts[2].canonical").value(true));
     }
 
     @Test
@@ -121,10 +123,10 @@ class LabScenariosIntegrationTest {
 
         mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].canonical").value(false))
-                .andExpect(jsonPath("$[0].exceptionType").value("FAILED_SYSTEM"))
-                .andExpect(jsonPath("$[1].canonical").value(true));
+                .andExpect(jsonPath("$.attemptCount").value(2))
+                .andExpect(jsonPath("$.attempts[0].canonical").value(false))
+                .andExpect(jsonPath("$.attempts[0].exceptionType").value("FAILED_SYSTEM"))
+                .andExpect(jsonPath("$.attempts[1].canonical").value(true));
 
         mockMvc.perform(post("/sim/withdrawals/{id}/next-outcome/REPLACED", withdrawalId))
                 .andExpect(status().isOk());
@@ -133,11 +135,11 @@ class LabScenariosIntegrationTest {
 
         mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3))
-                .andExpect(jsonPath("$[1].canonical").value(false))
-                .andExpect(jsonPath("$[1].status").value("REPLACED"))
-                .andExpect(jsonPath("$[1].exceptionType").value("REPLACED"))
-                .andExpect(jsonPath("$[2].canonical").value(true));
+                .andExpect(jsonPath("$.attemptCount").value(3))
+                .andExpect(jsonPath("$.attempts[1].canonical").value(false))
+                .andExpect(jsonPath("$.attempts[1].status").value("REPLACED"))
+                .andExpect(jsonPath("$.attempts[1].exceptionType").value("REPLACED"))
+                .andExpect(jsonPath("$.attempts[2].canonical").value(true));
 
         mockMvc.perform(post("/sim/withdrawals/{id}/next-outcome/SUCCESS", withdrawalId))
                 .andExpect(status().isOk());
@@ -150,6 +152,6 @@ class LabScenariosIntegrationTest {
 
         mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[2].status").value("INCLUDED"));
+                .andExpect(jsonPath("$.attempts[2].status").value("INCLUDED"));
     }
 }
