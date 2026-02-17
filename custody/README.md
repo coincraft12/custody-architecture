@@ -212,6 +212,8 @@ Invoke-RestMethod -Method GET `
 - attempt 3개
 - 이전 canonical attempt가 `REPLACED`, `canonical=false`
 - 최신 attempt `canonical=true` (같은 nonce로 교체 전송)
+- 단, retry 이후 이미 해당 nonce가 블록에 포함된 상태라면 replace는 `nonce too low` 상황이므로
+  안내 메시지와 함께 거절됩니다. 이 경우 새 nonce를 사용하는 retry를 다시 수행하세요.
 
 ### 6-4. sync로 실제 포함 수렴 확인
 
@@ -294,14 +296,14 @@ RPC 데모 한 줄 플로우
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/adapter-demo/broadcast/evm" `
   -Headers @{ "Content-Type"="application/json" } `
-  -Body '{ "from":"ignored", "to":"0x1111111111111111111111111111111111111111", "asset":"ETH", "amount":1, "nonce":0 }'
+  -Body '{ "from":"ignored", "to":"0x1111111111111111111111111111111111111111", "asset":"ETH", "amount":1 }'
 ```
 
 기대 결과
 
 - `accepted = true`
 - 설정한 `custody.evm.chain-id`와 RPC의 `eth_chainId`가 일치하는지 확인
-- nonce는 `eth_getTransactionCount(..., "pending")`로 조회
+- nonce를 생략하면 서버가 현재 `eth_getTransactionCount(..., "pending")` 값을 조회해 사용
 - 고정 가스값 사용: `gasLimit=21000`, `maxPriorityFee=2 gwei`, `maxFee=20 gwei`
 - `txHash`는 실제 EVM 해시(예: `0x...`)
 
