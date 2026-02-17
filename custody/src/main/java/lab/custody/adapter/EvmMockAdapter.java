@@ -87,6 +87,7 @@ public class EvmMockAdapter implements ChainAdapter {
             throw new IllegalStateException("Sepolia RPC returned empty tx hash");
         }
 
+        String txHash = "0xSEPOLIA_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         return new BroadcastResult(txHash, true);
     }
 
