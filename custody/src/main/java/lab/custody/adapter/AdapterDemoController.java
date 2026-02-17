@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
+import java.util.Locale;
 
 @RestController
 @RequiredArgsConstructor
@@ -16,10 +17,11 @@ public class AdapterDemoController {
 
     @PostMapping("/broadcast/{type}")
     public ResponseEntity<ChainAdapter.BroadcastResult> broadcast(
-            @PathVariable ChainType type,
+            @PathVariable String type,
             @RequestBody DemoRequest req
     ) {
-        ChainAdapter adapter = router.resolve(type);
+        ChainType normalizedType = ChainType.valueOf(type.toUpperCase(Locale.ROOT));
+        ChainAdapter adapter = router.resolve(normalizedType);
 
         ChainAdapter.BroadcastResult result = adapter.broadcast(
                 new ChainAdapter.BroadcastCommand(
