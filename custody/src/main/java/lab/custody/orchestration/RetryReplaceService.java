@@ -23,6 +23,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class RetryReplaceService {
 
+    private static final long DEFAULT_PRIORITY_FEE = 2_000_000_000L;
+    private static final long DEFAULT_MAX_FEE = 20_000_000_000L;
+
     private final WithdrawalRepository withdrawalRepository;
     private final TxAttemptRepository txAttemptRepository;
     private final AttemptService attemptService;
@@ -58,7 +61,10 @@ public class RetryReplaceService {
         txAttemptRepository.save(canonical);
 
         TxAttempt replaced = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), canonical.getNonce());
-        replaced.setFeeParams(4_000_000_000L, 40_000_000_000L);
+        replaced.setFeeParams(
+                bumpedFee(canonical.getMaxPriorityFeePerGas(), DEFAULT_PRIORITY_FEE),
+                bumpedFee(canonical.getMaxFeePerGas(), DEFAULT_MAX_FEE)
+        );
         broadcast(w, replaced);
         return txAttemptRepository.save(replaced);
     }
@@ -121,6 +127,13 @@ public class RetryReplaceService {
         }
     }
 
+    private long bumpedFee(Long previous, long fallback) {
+        long base = previous != null ? previous : fallback;
+        // Geth replacement rule(약 +10%)를 만족하도록 12.5% 상향 + 최소 1 wei 증가 보장
+        long increased = Math.max(base + 1, Math.addExact(base, Math.floorDiv(base, 8)));
+        return increased;
+    }
+
     private void broadcast(Withdrawal withdrawal, TxAttempt attempt) {
         ChainAdapter.BroadcastResult result = router.resolve(withdrawal.getChainType()).broadcast(
                 new ChainAdapter.BroadcastCommand(
@@ -129,7 +142,9 @@ public class RetryReplaceService {
                         withdrawal.getToAddress(),
                         withdrawal.getAsset(),
                         withdrawal.getAmount(),
-                        attempt.getNonce()
+                        attempt.getNonce(),
+                        attempt.getMaxPriorityFeePerGas(),
+                        attempt.getMaxFeePerGas()
                 )
         );
         attempt.setTxHash(result.txHash());

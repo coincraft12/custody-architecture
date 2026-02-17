@@ -82,7 +82,9 @@ public class WithdrawalService {
                         withdrawal.getToAddress(),
                         withdrawal.getAsset(),
                         withdrawal.getAmount(),
-                        attempt.getNonce()
+                        attempt.getNonce(),
+                        attempt.getMaxPriorityFeePerGas(),
+                        attempt.getMaxFeePerGas()
                 )
         );
 
