@@ -1,5 +1,6 @@
 package lab.custody.common;
 
+import lab.custody.adapter.BroadcastRejectedException;
 import lab.custody.domain.withdrawal.ChainType;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
@@ -34,6 +35,18 @@ public class GlobalExceptionHandler {
                 HttpStatus.BAD_REQUEST.value(),
                 message,
                 allowedTypes
+        );
+
+        return ResponseEntity.badRequest().body(body);
+    }
+
+
+    @ExceptionHandler(BroadcastRejectedException.class)
+    public ResponseEntity<ErrorResponse> handleBroadcastRejected(BroadcastRejectedException ex) {
+        ErrorResponse body = new ErrorResponse(
+                HttpStatus.BAD_REQUEST.value(),
+                sanitizeMessage(ex.getMessage()),
+                allowedChainTypes()
         );
 
         return ResponseEntity.badRequest().body(body);

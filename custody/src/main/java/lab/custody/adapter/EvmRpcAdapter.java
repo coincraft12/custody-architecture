@@ -27,8 +27,8 @@ public class EvmRpcAdapter implements ChainAdapter {
 
     private static final Pattern EVM_ADDRESS_PATTERN = Pattern.compile("^0x[a-fA-F0-9]{40}$");
     private static final BigInteger GAS_LIMIT = BigInteger.valueOf(21_000);
-    private static final BigInteger MAX_PRIORITY_FEE_PER_GAS = BigInteger.valueOf(2_000_000_000L);
-    private static final BigInteger MAX_FEE_PER_GAS = BigInteger.valueOf(20_000_000_000L);
+    private static final BigInteger DEFAULT_MAX_PRIORITY_FEE_PER_GAS = BigInteger.valueOf(2_000_000_000L);
+    private static final BigInteger DEFAULT_MAX_FEE_PER_GAS = BigInteger.valueOf(20_000_000_000L);
 
     private final Web3j web3j;
     private final long configuredChainId;
@@ -60,6 +60,12 @@ public class EvmRpcAdapter implements ChainAdapter {
                     ? BigInteger.valueOf(command.nonce())
                     : getPendingNonce(credentials.getAddress());
             BigInteger valueWei = BigInteger.valueOf(command.amount());
+            BigInteger maxPriorityFeePerGas = command.maxPriorityFeePerGas() != null
+                    ? BigInteger.valueOf(command.maxPriorityFeePerGas())
+                    : DEFAULT_MAX_PRIORITY_FEE_PER_GAS;
+            BigInteger maxFeePerGas = command.maxFeePerGas() != null
+                    ? BigInteger.valueOf(command.maxFeePerGas())
+                    : DEFAULT_MAX_FEE_PER_GAS;
 
             RawTransaction rawTransaction = RawTransaction.createEtherTransaction(
                     configuredChainId,
@@ -67,8 +73,8 @@ public class EvmRpcAdapter implements ChainAdapter {
                     GAS_LIMIT,
                     command.to(),
                     valueWei,
-                    MAX_PRIORITY_FEE_PER_GAS,
-                    MAX_FEE_PER_GAS
+                    maxPriorityFeePerGas,
+                    maxFeePerGas
             );
 
             byte[] signedMessage = TransactionEncoder.signMessage(rawTransaction, configuredChainId, credentials);
@@ -76,7 +82,7 @@ public class EvmRpcAdapter implements ChainAdapter {
 
             EthSendTransaction sent = web3j.ethSendRawTransaction(signedTxHex).send();
             if (sent.hasError()) {
-                throw new IllegalStateException("Failed to broadcast transaction: " + sent.getError().getMessage());
+                throw new BroadcastRejectedException("EVM RPC rejected transaction: " + sent.getError().getMessage());
             }
 
             String txHash = sent.getTransactionHash();
