@@ -82,7 +82,7 @@ public class EvmRpcAdapter implements ChainAdapter {
 
             EthSendTransaction sent = web3j.ethSendRawTransaction(signedTxHex).send();
             if (sent.hasError()) {
-                throw new IllegalStateException("Failed to broadcast transaction: " + sent.getError().getMessage());
+                throw new BroadcastRejectedException("EVM RPC rejected transaction: " + sent.getError().getMessage());
             }
 
             String txHash = sent.getTransactionHash();
