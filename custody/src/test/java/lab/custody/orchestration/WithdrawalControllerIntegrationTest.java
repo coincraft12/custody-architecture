@@ -7,6 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -116,7 +117,25 @@ class WithdrawalControllerIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{'chainType':'evm','fromAddress':'0xfrom','toAddress':'0xto','asset':'USDC','amount':100}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value("Invalid JSON body. If you are using PowerShell, use double quotes for JSON (or send --data-binary from a file)."));
+                .andExpect(jsonPath("$.message").value(startsWith("Invalid JSON body. If you are using PowerShell, use double quotes for JSON (or send --data-binary from a file).")));
+    }
+
+
+    @Test
+    void create_withoutIdempotencyHeader_returnsBadRequestWithHeaderHint() throws Exception {
+        mockMvc.perform(post("/withdrawals")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "chainType": "evm",
+                                  "fromAddress": "0xfrom",
+                                  "toAddress": "0xto",
+                                  "asset": "USDC",
+                                  "amount": 100
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Missing required header: Idempotency-Key"));
     }
 
     @Test

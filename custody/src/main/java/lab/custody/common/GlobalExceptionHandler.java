@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 
 import java.util.Arrays;
 import java.util.List;
@@ -40,15 +41,32 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> handleUnreadableBody(HttpMessageNotReadableException ex) {
+        String detail = ex.getMostSpecificCause() != null ? ex.getMostSpecificCause().getMessage() : ex.getMessage();
+        String message = "Invalid JSON body. If you are using PowerShell, use double quotes for JSON (or send --data-binary from a file).";
+        if (detail != null && !detail.isBlank()) {
+            message += " Detail: " + detail;
+        }
+
         ErrorResponse body = new ErrorResponse(
                 HttpStatus.BAD_REQUEST.value(),
-                "Invalid JSON body. If you are using PowerShell, use double quotes for JSON (or send --data-binary from a file).",
+                message,
                 allowedChainTypes()
         );
 
         return ResponseEntity.badRequest()
                 .header(HttpHeaders.CONTENT_TYPE, "application/json")
                 .body(body);
+    }
+
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<ErrorResponse> handleMissingHeader(MissingRequestHeaderException ex) {
+        ErrorResponse body = new ErrorResponse(
+                HttpStatus.BAD_REQUEST.value(),
+                "Missing required header: " + ex.getHeaderName(),
+                allowedChainTypes()
+        );
+
+        return ResponseEntity.badRequest().body(body);
     }
 
     @ExceptionHandler({IllegalStateException.class, RuntimeException.class})
