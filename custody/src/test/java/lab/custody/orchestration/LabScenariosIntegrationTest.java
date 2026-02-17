@@ -133,7 +133,7 @@ class LabScenariosIntegrationTest {
     }
 
     @Test
-    void lab3_chainAdapterMocks_areInvokedThroughSameOrchestratorCallShape() throws Exception {
+    void lab3_chainAdapters_areInvokedThroughSameOrchestratorCallShape() throws Exception {
         mockMvc.perform(post("/adapter-demo/broadcast/evm")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -147,7 +147,7 @@ class LabScenariosIntegrationTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accepted").value(true))
-                .andExpect(jsonPath("$.txHash").value(org.hamcrest.Matchers.startsWith("0xEVM_")));
+                .andExpect(jsonPath("$.txHash").value(org.hamcrest.Matchers.startsWith("0x")));
 
         mockMvc.perform(post("/adapter-demo/broadcast/bft")
                         .contentType(MediaType.APPLICATION_JSON)

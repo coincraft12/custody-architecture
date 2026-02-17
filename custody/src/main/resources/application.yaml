@@ -19,3 +19,8 @@ spring:
 policy:
   max-amount: 1000
   whitelist-to-addresses: 0xto,0xtrusted
+
+adapter:
+  evm:
+    sepolia-rpc-url: ${SEPOLIA_RPC_URL:https://ethereum-sepolia-rpc.publicnode.com}
+    sender-private-key: ${SEPOLIA_SENDER_PRIVATE_KEY:}

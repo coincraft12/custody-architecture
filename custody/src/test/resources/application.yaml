@@ -1,0 +1,4 @@
+adapter:
+  evm:
+    sepolia-rpc-url: ""
+    sender-private-key: ""
