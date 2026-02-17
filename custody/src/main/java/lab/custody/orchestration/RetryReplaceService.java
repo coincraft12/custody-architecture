@@ -10,6 +10,7 @@ import lab.custody.domain.txattempt.TxAttemptStatus;
 import lab.custody.domain.withdrawal.Withdrawal;
 import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lab.custody.domain.withdrawal.WithdrawalStatus;
+import lab.custody.sim.fakechain.FakeChain;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +27,7 @@ public class RetryReplaceService {
     private final TxAttemptRepository txAttemptRepository;
     private final AttemptService attemptService;
     private final ChainAdapterRouter router;
+    private final FakeChain fakeChain;
 
     @Transactional
     public TxAttempt retry(UUID withdrawalId) {
@@ -78,6 +80,37 @@ public class RetryReplaceService {
                 }
             }
         }
+        return txAttemptRepository.save(canonical);
+    }
+
+    @Transactional
+    public TxAttempt simulateBroadcast(UUID withdrawalId) {
+        Withdrawal withdrawal = loadWithdrawal(withdrawalId);
+        TxAttempt canonical = loadCanonical(withdrawalId);
+        FakeChain.NextOutcome outcome = fakeChain.consumeOutcome(withdrawalId);
+
+        if (outcome == FakeChain.NextOutcome.FAIL_SYSTEM) {
+            canonical.markException(AttemptExceptionType.FAILED_SYSTEM, "simulated failure");
+            canonical.setCanonical(false);
+            txAttemptRepository.save(canonical);
+
+            TxAttempt newAttempt = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), canonical.getNonce());
+            return txAttemptRepository.save(newAttempt);
+        }
+
+        if (outcome == FakeChain.NextOutcome.REPLACED) {
+            canonical.markException(AttemptExceptionType.REPLACED, "simulated replace");
+            canonical.transitionTo(TxAttemptStatus.REPLACED);
+            canonical.setCanonical(false);
+            txAttemptRepository.save(canonical);
+
+            TxAttempt newAttempt = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), canonical.getNonce());
+            return txAttemptRepository.save(newAttempt);
+        }
+
+        canonical.transitionTo(TxAttemptStatus.INCLUDED);
+        withdrawal.transitionTo(WithdrawalStatus.W7_INCLUDED);
+        withdrawalRepository.save(withdrawal);
         return txAttemptRepository.save(canonical);
     }
 
