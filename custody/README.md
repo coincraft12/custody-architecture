@@ -62,6 +62,33 @@ chmod +x gradlew
 
 아래 예시는 모두 `curl` 기준입니다.
 
+### Windows 셸별 줄바꿈 템플릿 (`curl`)
+
+한글 키보드에서 `\` 키가 `₩`로 보이는 경우가 있어 줄바꿈 시 오류가 날 수 있습니다.
+아래처럼 **셸별 줄바꿈 문자**를 사용하세요.
+
+#### PowerShell 템플릿
+
+PowerShell은 줄바꿈에 **백틱**(`` ` ``)을 사용합니다.
+
+```powershell
+curl -i -X POST "http://localhost:8080/withdrawals" `
+  -H "Content-Type: application/json" `
+  -H "Idempotency-Key: idem-lab1-1" `
+  -d '{"chainType":"evm","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
+```
+
+#### CMD 템플릿
+
+CMD는 줄바꿈에 **캐럿**(`^`)을 사용합니다.
+
+```cmd
+curl -i -X POST "http://localhost:8080/withdrawals" ^
+  -H "Content-Type: application/json" ^
+  -H "Idempotency-Key: idem-lab1-1" ^
+  -d "{\"chainType\":\"evm\",\"fromAddress\":\"0xfrom-lab1\",\"toAddress\":\"0xto\",\"asset\":\"USDC\",\"amount\":100}"
+```
+
 ### STEP 0. 서버 실행
 
 ```bash
