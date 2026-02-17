@@ -430,3 +430,155 @@ Withdrawal API 통합 테스트만:
 - Adapter timeout/partial failure 시나리오 확장
 - 상태 전이 불변식 테스트(canonical은 항상 1개)
 - 요청 추적용 correlation id + 로그 표준화
+
+---
+
+## 14) 실습별 핵심 코드 + 수강생 설명 포인트
+
+아래는 강의에서 그대로 보여주기 좋은 **핵심 코드**와 설명 포인트입니다.
+
+### 실습 1 — Withdrawal / TxAttempt 분리 + Idempotency
+
+핵심 코드 (`WithdrawalService#createOrGet`)
+
+```java
+return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
+        .map(existing -> validateIdempotentRequest(existing, chainType, req))
+        .orElseGet(() -> {
+            Withdrawal w = Withdrawal.requested(...);
+            Withdrawal saved = withdrawalRepository.save(w);
+
+            PolicyDecision decision = policyEngine.evaluate(req);
+            policyAuditLogRepository.save(PolicyAuditLog.of(saved.getId(), decision.allowed(), decision.reason()));
+
+            if (!decision.allowed()) {
+                saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
+                return withdrawalRepository.save(saved);
+            }
+
+            saved.transitionTo(WithdrawalStatus.W1_POLICY_CHECKED);
+            saved.transitionTo(WithdrawalStatus.W4_SIGNING);
+            Withdrawal policyPassed = withdrawalRepository.save(saved);
+
+            long nonce = nonceAllocator.reserve(req.fromAddress());
+            attemptService.createAttempt(policyPassed.getId(), req.fromAddress(), nonce);
+
+            return policyPassed;
+        });
+```
+
+수강생 설명 포인트
+
+- **업무 단위(Withdrawal)** 와 **체인 시도 단위(TxAttempt)** 를 분리해, 재시도/교체가 발생해도 원본 업무 객체는 1개를 유지합니다.
+- 같은 `Idempotency-Key`가 들어오면 재생성이 아니라 기존 건을 재사용합니다.
+- 정책 통과 시 `W4_SIGNING`까지 전이하고, 그 시점에 첫 `TxAttempt`를 1개 생성합니다.
+
+---
+
+### 실습 2 — Retry / Replace / Included 수렴
+
+핵심 코드 (`RetryReplaceService#simulateBroadcast`)
+
+```java
+if (outcome == NextOutcome.FAIL_SYSTEM) {
+    canonical.markException(AttemptExceptionType.FAILED_SYSTEM, "simulated failure");
+    canonical.setCanonical(false);
+
+    long sameNonce = canonical.getNonce();
+    TxAttempt newAttempt = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), sameNonce);
+    newAttempt.setCanonical(true);
+
+} else if (outcome == NextOutcome.REPLACED) {
+    canonical.markException(AttemptExceptionType.REPLACED, "simulated replace");
+    canonical.setCanonical(false);
+
+    long sameNonce = canonical.getNonce();
+    TxAttempt newAttempt = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), sameNonce);
+    newAttempt.setCanonical(true);
+
+} else {
+    canonical.transitionTo(TxAttemptStatus.A4_INCLUDED);
+    w.transitionTo(WithdrawalStatus.W7_INCLUDED);
+}
+```
+
+수강생 설명 포인트
+
+- 실패를 없애는 게 아니라 **실패를 기록하고 canonical attempt를 갈아끼우는 모델**입니다.
+- `FAIL_SYSTEM`, `REPLACED` 둘 다 기존 canonical을 내리고 새 attempt를 canonical로 승격합니다.
+- `SUCCESS`에서만 `Withdrawal=W7_INCLUDED`로 수렴합니다.
+
+---
+
+### 실습 3 — Chain Adapter + Sepolia RPC
+
+핵심 코드 (`EvmMockAdapter#broadcast`)
+
+```java
+String chainId = rpcCall("eth_chainId", List.of()).asText();
+if (!SEPOLIA_CHAIN_ID_HEX.equalsIgnoreCase(chainId)) {
+    throw new IllegalStateException("Connected RPC is not Sepolia...");
+}
+
+Credentials credentials = Credentials.create(senderPrivateKey);
+BigInteger nonce = hexToBigInteger(rpcCall("eth_getTransactionCount", List.of(fromAddress, "pending")).asText());
+BigInteger gasPrice = hexToBigInteger(rpcCall("eth_gasPrice", List.of()).asText());
+
+RawTransaction rawTransaction = RawTransaction.createEtherTransaction(
+        nonce, gasPrice, DEFAULT_GAS_LIMIT, command.to(), BigInteger.valueOf(command.amount())
+);
+
+byte[] signedMessage = TransactionEncoder.signMessage(rawTransaction, SEPOLIA_CHAIN_ID_DECIMAL.longValue(), credentials);
+String txHash = rpcCall("eth_sendRawTransaction", List.of(Numeric.toHexString(signedMessage))).asText();
+```
+
+수강생 설명 포인트
+
+- 오케스트레이터는 `adapter.broadcast(command)`만 호출하고, 체인별 복잡성은 어댑터 내부로 숨깁니다.
+- EVM 어댑터는 `chainId` 검증 → nonce/gas 조회 → 로컬 서명 → `eth_sendRawTransaction` 순으로 동작합니다.
+- RPC URL이 없으면 mock hash를 반환하도록 설계되어 로컬 실습도 끊기지 않습니다.
+
+---
+
+### 실습 4 — Policy Engine + Audit
+
+핵심 코드 (`PolicyEngine#evaluate`)
+
+```java
+if (req.amount() > maxAmount) {
+    return PolicyDecision.reject("AMOUNT_LIMIT_EXCEEDED: max=" + maxAmount + ", requested=" + req.amount());
+}
+
+if (!toAddressWhitelist.isEmpty() && !toAddressWhitelist.contains(req.toAddress())) {
+    return PolicyDecision.reject("TO_ADDRESS_NOT_WHITELISTED: " + req.toAddress());
+}
+
+return PolicyDecision.allow();
+```
+
+수강생 설명 포인트
+
+- 정책은 **허용/거절 + 이유(reason)** 를 함께 반환해야 운영 시 추적이 쉽습니다.
+- `WithdrawalService`가 policy 결과를 `policy-audits`에 항상 남기므로, “왜 거절됐는지”를 API로 확인할 수 있습니다.
+- 상태(`W0_POLICY_REJECTED`)와 감사로그(reason)를 함께 보게 하면 실무 감각이 빨리 올라옵니다.
+
+---
+
+### 실습 5 (심화) — 동시성 멱등성
+
+핵심 코드 (`WithdrawalService#createOrGet`, `@Transactional`)
+
+```java
+@Transactional
+public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
+    return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
+            .map(existing -> validateIdempotentRequest(existing, chainType, req))
+            .orElseGet(() -> { ... create withdrawal once ... });
+}
+```
+
+수강생 설명 포인트
+
+- 동시 요청의 핵심은 “같은 키로 정말 1건만 생기느냐”입니다.
+- 그래서 검증 포인트가 `id 동일성` + `attempt 1개 유지`입니다.
+- 실무에서는 DB 유니크 제약(`idempotency_key`)까지 함께 두면 안전성이 더 높아집니다.
