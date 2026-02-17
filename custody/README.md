@@ -1,309 +1,376 @@
 # custody-architecture
 
-수탁형 지갑 출금 구조에서 **Withdrawal(업무 단위)** 와 **TxAttempt(체인 시도 단위)** 를 분리하고,
-Retry / Replace / Policy / Chain Adapter 동작을 단계별로 실습하는 프로젝트입니다.
+수탁형 지갑 출금 시스템을 **실습 중심**으로 이해하는 프로젝트입니다.
+핵심은 아래 한 문장입니다.
+
+> 출금 시스템은 실패를 제거하는 시스템이 아니라,
+> 실패를 분류하고 canonical attempt를 재선정해
+> 최종 상태로 수렴시키는 시스템이다.
 
 ---
 
-## 1) 실습 범위 요약
+## 0) 이 README의 목표
 
-- **실습 1: Withdrawal·TxAttempt 모델 + 상태 전이 + 멱등성**
-  - `withdrawal` / `tx_attempt` 데이터 모델 및 저장
-  - `Idempotency-Key` 기반 중복 요청 방지
-  - 업무 단위(Withdrawal)는 유지되고 시도(TxAttempt)는 누적되는 구조
+이 문서는 “코드를 읽지 않고도” 다음을 할 수 있게 설계했습니다.
 
-- **실습 2: Retry/Replace 시나리오 시뮬레이션**
-  - 실패 유도 후 재시도(Attempt 누적)
-  - replace 이벤트 시뮬레이션 후 canonical attempt 전환
-  - Withdrawal이 끊기지 않고 최종 상태로 수렴
-
-- **실습 3(경량): ChainAdapter 인터페이스 + Mock 2종**
-  - EVM / BFT Mock 구현 2종
-  - 오케스트레이터가 체인 상세를 몰라도 동일한 호출 형태로 broadcast
-
-- **실습 4: Policy Engine 최소 구현**
-  - 금액 한도 + 수신 주소 화이트리스트 룰
-  - 거절 사유 + 감사 로그(audit log) 기록
+- 서버 실행
+- 실습 1~4 수동 점검
+- 실습 5(심화: 관찰성/동시성) 수행
+- 자동 테스트 실행 및 실패 시 빠른 원인 파악
 
 ---
 
-## 2) 실행 환경
+## 1) 실습 전체 지도
+
+### 실습 1 — Withdrawal / TxAttempt 분리 + 멱등성
+
+- 업무 단위인 `Withdrawal`은 1개로 유지
+- 체인 시도 단위인 `TxAttempt`는 실패/재시도에 따라 누적
+- `Idempotency-Key`로 중복 요청 방지
+
+### 실습 2 — Retry / Replace 시뮬레이션
+
+- 실패(`FAIL_SYSTEM`) 시 새로운 attempt 생성
+- 교체(`REPLACED`) 시 canonical attempt 전환
+- 성공(`SUCCESS`)까지 수렴하는 흐름 확인
+
+### 실습 3 — Chain Adapter 추상화
+
+- EVM / BFT Mock Adapter 2종
+- 오케스트레이터는 체인별 세부사항을 몰라도 동일한 호출 형태 유지
+
+### 실습 4 — Policy Engine + Audit
+
+- 금액 제한
+- 수신 주소 화이트리스트
+- 허용/거절 근거를 감사 로그(`policy-audits`)로 확인
+
+### 실습 5 (심화) — 관찰성 + 동시성(실습 경험 개선)
+
+- 동시 요청에서 멱등성이 깨지지 않는지 확인
+- 상태 전이/attempt 누적을 관찰 가능한 형태로 점검
+
+---
+
+## 2) 준비물
 
 - Java 21+
-- Gradle(Wrapper 또는 로컬 Gradle)
-- Spring Boot + H2(in-memory)
+- Gradle Wrapper (`./gradlew`)
+- 기본 포트: `8080`
 
-> 기본 포트: `8080`
+H2 Console
 
-H2 Console:
 - URL: `http://localhost:8080/h2`
-- JDBC: `jdbc:h2:mem:testdb`
+- JDBC URL: `jdbc:h2:mem:testdb`
 - username: `sa`
-- password: (빈 값)
+- password: 빈 값
 
 ---
 
-## 3) 빠른 실행
+## 3) 빠른 시작
 
 ```bash
-./gradlew bootRun
-```
-
-Gradle wrapper 실행 권한이 없으면:
-
-```bash
+cd custody
 chmod +x gradlew
 ./gradlew bootRun
 ```
 
+서버가 뜨면 새 터미널에서 아래 API를 호출하세요.
+
 ---
 
-## 4) 단계별 점검 가이드 (수동 API)
+## 4) 실습용 공통 변수
 
-아래 예시는 모두 **PowerShell `Invoke-RestMethod` 단일 형식** 기준입니다.
-
-한글 키보드에서 `\` 키가 `₩`로 보이는 경우가 있어 줄바꿈 시 오류가 날 수 있습니다.
-PowerShell은 줄바꿈에 **백틱**(`` ` ``)을 사용합니다.
-
-### STEP 0. 서버 실행
+### Bash (curl)
 
 ```bash
-./gradlew bootRun
+BASE_URL="http://localhost:8080"
+```
+
+### PowerShell
+
+```powershell
+$BASE_URL = "http://localhost:8080"
 ```
 
 ---
 
-### STEP 1. 실습 1 점검 (멱등성 + 초기 Attempt 생성)
+## 5) 실습 1 — 멱등성 + 초기 Attempt 생성
 
-#### 1-1. Withdrawal 생성
+### 5-1. Withdrawal 생성
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
+```bash
+curl -s -X POST "$BASE_URL/withdrawals" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: idem-lab1-1" \
+  -d '{"chainType":"EVM","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
 ```
 
-확인 포인트:
+기대 결과
+
 - HTTP 200
-- 응답 `status = W4_SIGNING`
-- 응답 `id` 값 복사
+- `status = W4_SIGNING`
+- 응답의 `id` 저장
 
-#### 1-2. 같은 Idempotency-Key + 같은 Body 재요청
+### 5-2. 같은 키 + 같은 바디 재요청
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
+```bash
+curl -s -X POST "$BASE_URL/withdrawals" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: idem-lab1-1" \
+  -d '{"chainType":"EVM","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
 ```
 
-확인 포인트:
-- 같은 `withdrawal id` 반환 (중복 생성 방지)
+기대 결과
 
-#### 1-3. Attempt 목록 확인
+- 첫 요청과 **같은 withdrawal id** 반환
 
-```powershell
-Invoke-RestMethod -Method GET `
-  -Uri "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
+### 5-3. Attempt 목록 확인
+
+```bash
+curl -s "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 ```
 
-확인 포인트:
+기대 결과
+
 - length = 1
 - `attemptNo = 1`
 - `canonical = true`
 
-#### 1-4. 같은 Idempotency-Key + 다른 Body 충돌 확인
+### 5-4. 같은 키 + 다른 바디(충돌)
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
-  -Body '{ "chainType":"BFT", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
+```bash
+curl -s -X POST "$BASE_URL/withdrawals" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: idem-lab1-1" \
+  -d '{"chainType":"BFT","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
 ```
 
-확인 포인트:
+기대 결과
+
 - HTTP 409
 - 메시지: `same Idempotency-Key cannot be used with a different request body`
 
 ---
 
-### STEP 2. 실습 2 점검 (Retry / Replace / Canonical 전환)
+## 6) 실습 2 — Retry / Replace / Included 수렴
 
-#### 2-1. 테스트용 Withdrawal 생성
+### 6-1. 테스트용 Withdrawal 생성
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab2-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab2", "toAddress":"0xto", "asset":"USDC", "amount":50 }'
+```bash
+curl -s -X POST "$BASE_URL/withdrawals" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: idem-lab2-1" \
+  -d '{"chainType":"EVM","fromAddress":"0xfrom-lab2","toAddress":"0xto","asset":"USDC","amount":50}'
 ```
 
-`id`를 복사해 `{withdrawalId}`로 사용.
+응답의 `id`를 `{withdrawalId}`로 사용합니다.
 
-#### 2-2. FAIL_SYSTEM 주입 후 broadcast
+### 6-2. FAIL_SYSTEM 주입 후 broadcast
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/next-outcome/FAIL_SYSTEM"
-
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/broadcast"
+```bash
+curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/FAIL_SYSTEM"
+curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+curl -s "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 ```
 
-```powershell
-Invoke-RestMethod -Method GET `
-  -Uri "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
+기대 결과
+
+- attempt 2개
+- 이전 attempt: `canonical=false`, `exceptionType=FAILED_SYSTEM`
+- 최신 attempt: `canonical=true`
+
+### 6-3. REPLACED 주입 후 broadcast
+
+```bash
+curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/REPLACED"
+curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+curl -s "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 ```
 
-확인 포인트:
-- Attempt가 2개로 증가
-- 기존 attempt `canonical=false`, `exceptionType=FAILED_SYSTEM`
-- 새 attempt `canonical=true`
+기대 결과
 
-#### 2-3. REPLACED 주입 후 broadcast
+- attempt 3개
+- 이전 canonical attempt가 `REPLACED`, `canonical=false`
+- 최신 attempt `canonical=true`
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/next-outcome/REPLACED"
+### 6-4. SUCCESS 주입 후 broadcast
 
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/broadcast"
+```bash
+curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/SUCCESS"
+curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+curl -s "$BASE_URL/withdrawals/{withdrawalId}"
 ```
 
-```powershell
-Invoke-RestMethod -Method GET `
-  -Uri "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
-```
+기대 결과
 
-확인 포인트:
-- Attempt가 3개로 증가
-- 이전 canonical attempt가 `exceptionType=REPLACED`, `canonical=false`
-- 최신 attempt가 `canonical=true`
-
-#### 2-4. SUCCESS 주입 후 broadcast
-
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/next-outcome/SUCCESS"
-
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/broadcast"
-```
-
-```powershell
-Invoke-RestMethod -Method GET `
-  -Uri "http://localhost:8080/withdrawals/{withdrawalId}"
-```
-
-확인 포인트:
-- Withdrawal 최종 `status = W7_INCLUDED`
-- 최신 canonical attempt `status = A4_INCLUDED`
+- Withdrawal 최종 상태: `W7_INCLUDED`
+- 최신 canonical attempt: `A4_INCLUDED`
 
 ---
 
-### STEP 3. 실습 3 점검 (ChainAdapter 2종)
+## 7) 실습 3 — ChainAdapter 2종 검증
 
-#### 3-1. EVM adapter 호출
+### 7-1. EVM adapter
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/adapter-demo/broadcast/evm" `
-  -Headers @{ "Content-Type"="application/json" } `
-  -Body '{ "from":"a", "to":"b", "asset":"ETH", "amount":10, "nonce":1 }'
+```bash
+curl -s -X POST "$BASE_URL/adapter-demo/broadcast/evm" \
+  -H "Content-Type: application/json" \
+  -d '{"from":"a","to":"b","asset":"ETH","amount":10,"nonce":1}'
 ```
 
-확인 포인트:
+기대 결과
+
 - `accepted = true`
-- `txHash` prefix가 `0xEVM_`
+- `txHash` prefix: `0xEVM_`
 
-#### 3-2. BFT adapter 호출
+### 7-2. BFT adapter
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/adapter-demo/broadcast/bft" `
-  -Headers @{ "Content-Type"="application/json" } `
-  -Body '{ "from":"a", "to":"b", "asset":"TOKEN", "amount":10, "nonce":1 }'
+```bash
+curl -s -X POST "$BASE_URL/adapter-demo/broadcast/bft" \
+  -H "Content-Type: application/json" \
+  -d '{"from":"a","to":"b","asset":"TOKEN","amount":10,"nonce":1}'
 ```
 
-확인 포인트:
+기대 결과
+
 - `accepted = true`
-- `txHash` prefix가 `BFT_`
+- `txHash` prefix: `BFT_`
 
 ---
 
-### STEP 4. 실습 4 점검 (Policy Engine + Audit)
+## 8) 실습 4 — Policy + Audit
 
-기본 정책(`application.yaml`):
+기본 정책 (`src/main/resources/application.yaml`)
+
 - `policy.max-amount: 1000`
 - `policy.whitelist-to-addresses: 0xto,0xtrusted`
 
-#### 4-1. 허용 케이스
+### 8-1. 허용 케이스
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-allow-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
+```bash
+curl -s -X POST "$BASE_URL/withdrawals" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: idem-lab4-allow-1" \
+  -d '{"chainType":"EVM","fromAddress":"0xfrom","toAddress":"0xto","asset":"USDC","amount":100}'
 ```
 
-확인 포인트:
+기대 결과
+
 - `status = W4_SIGNING`
 
-#### 4-2. 화이트리스트 거절 케이스
+### 8-2. 화이트리스트 거절 케이스
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-reject-whitelist-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xnot-allowed", "asset":"USDC", "amount":100 }'
+```bash
+curl -s -X POST "$BASE_URL/withdrawals" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: idem-lab4-reject-whitelist-1" \
+  -d '{"chainType":"EVM","fromAddress":"0xfrom","toAddress":"0xnot-allowed","asset":"USDC","amount":100}'
 ```
 
-확인 포인트:
+기대 결과
+
 - `status = W0_POLICY_REJECTED`
-- 응답 `id` 획득 후 audit 확인:
+- 이후 audit 조회:
 
-```powershell
-Invoke-RestMethod -Method GET `
-  -Uri "http://localhost:8080/withdrawals/{withdrawalId}/policy-audits"
+```bash
+curl -s "$BASE_URL/withdrawals/{withdrawalId}/policy-audits"
 ```
 
-예상 reason:
+예상 reason
+
 - `TO_ADDRESS_NOT_WHITELISTED: 0xnot-allowed`
 
-#### 4-3. 금액 초과 거절 케이스
+### 8-3. 금액 초과 거절 케이스
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "http://localhost:8080/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-reject-amount-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xto", "asset":"USDC", "amount":1001 }'
+```bash
+curl -s -X POST "$BASE_URL/withdrawals" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: idem-lab4-reject-amount-1" \
+  -d '{"chainType":"EVM","fromAddress":"0xfrom","toAddress":"0xto","asset":"USDC","amount":1001}'
 ```
 
-확인 포인트:
+기대 결과
+
 - `status = W0_POLICY_REJECTED`
 - audit reason:
   - `AMOUNT_LIMIT_EXCEEDED: max=1000, requested=1001`
 
 ---
 
-## 5) 자동 테스트
+## 9) 실습 5 (심화) — 동시성 멱등성 점검
 
-전체 테스트:
+이 실습은 “실습 경험 개선”을 위한 확장 시나리오입니다.
+
+### 목표
+
+- 동시 요청에서도 동일 `Idempotency-Key`가 1개의 Withdrawal만 생성하는지 확인
+- 결과적으로 attempt가 불필요하게 증가하지 않는지 확인
+
+### 9-1. 동시 요청 실행 (Bash)
+
+```bash
+for i in {1..5}; do
+  curl -s -X POST "$BASE_URL/withdrawals" \
+    -H "Content-Type: application/json" \
+    -H "Idempotency-Key: idem-concurrency-1" \
+    -d '{"chainType":"EVM","fromAddress":"0xfrom-concurrent","toAddress":"0xto","asset":"USDC","amount":77}' &
+done
+wait
+```
+
+### 9-2. 확인 포인트
+
+- 반환된 `id`가 모두 동일한지
+- `/withdrawals/{id}/attempts`에서 초기 attempt가 1개로 유지되는지
+
+---
+
+## 10) 자동 테스트
+
+프로젝트 루트(`custody`)에서 실행:
 
 ```bash
 ./gradlew test
 ```
 
-실습 시나리오 통합 테스트만 실행:
+실습 시나리오 통합 테스트만:
 
 ```bash
 ./gradlew test --tests "lab.custody.orchestration.LabScenariosIntegrationTest"
 ```
 
+Withdrawal API 통합 테스트만:
+
+```bash
+./gradlew test --tests "lab.custody.orchestration.WithdrawalControllerIntegrationTest"
+```
+
 ---
 
-## 6) 주요 API 요약
+## 11) 트러블슈팅
+
+### Q1. `invalid chainType: unknown`
+
+- `EVM` 또는 `BFT`로 입력했는지 확인
+
+### Q2. PowerShell에서 JSON 파싱 오류
+
+- 작은따옴표/큰따옴표가 섞이면 깨질 수 있음
+- 가장 안전한 방법: JSON 파일 저장 후 `-InFile` 또는 here-string 사용
+
+### Q3. 같은 Idempotency-Key인데 409이 발생
+
+- 같은 키에 바디가 달라졌기 때문
+- 키를 바꾸거나 동일 바디로 재시도 필요
+
+### Q4. 정책 거절인데 이유를 모르겠음
+
+- `/withdrawals/{id}/policy-audits` 조회해서 reason 확인
+
+---
+
+## 12) 주요 API 요약
 
 - `POST /withdrawals` (Header: `Idempotency-Key`)
 - `GET /withdrawals/{id}`
@@ -315,8 +382,9 @@ Invoke-RestMethod -Method POST `
 
 ---
 
-## 설계 철학
+## 13) 다음 확장 과제 (권장)
 
-출금 시스템은 실패를 제거하는 시스템이 아니라,
-실패를 분류하고 canonical을 재선정하여
-최종 상태로 수렴시키는 시스템이다.
+- Policy 다중 룰(우선순위/다중 사유)
+- Adapter timeout/partial failure mock
+- 상태 전이 불변식 테스트(canonical은 항상 1개)
+- 요청 추적용 correlation id + 로그 표준화
