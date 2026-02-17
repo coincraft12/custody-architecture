@@ -36,7 +36,7 @@
 
 ### 실습 3 — Chain Adapter + Sepolia RPC 연동
 
-- EVM adapter는 Sepolia RPC(`eth_chainId`)를 실제 호출해 네트워크 연결을 검증
+- EVM adapter는 Sepolia RPC에 실제 서명 트랜잭션(`eth_sendRawTransaction`)을 전송
 - BFT adapter는 기존 mock 흐름 유지
 - 오케스트레이터는 체인별 세부사항을 몰라도 동일한 호출 형태 유지
 
@@ -58,8 +58,8 @@
 - Java 21+
 - Gradle Wrapper (`./gradlew`)
 - 기본 포트: `8080`
-- (권장) Sepolia RPC URL 환경변수: `SEPOLIA_RPC_URL`
-  - 예: `https://ethereum-sepolia-rpc.publicnode.com`
+- Sepolia RPC URL 환경변수: `SEPOLIA_RPC_URL` (기본값: `https://ethereum-sepolia-rpc.publicnode.com`)
+- 송신 지갑 개인키 환경변수: `SEPOLIA_SENDER_PRIVATE_KEY`
 
 H2 Console
 
@@ -220,11 +220,14 @@ Invoke-RestMethod -Method GET `
 
 ### 7-1. EVM adapter (Sepolia RPC 실제 호출)
 
-먼저 RPC URL을 설정합니다.
+먼저 RPC URL/송신 지갑 개인키를 설정합니다.
 
 ```powershell
 $env:SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com"
+$env:SEPOLIA_SENDER_PRIVATE_KEY = "<YOUR_SEPOLIA_PRIVATE_KEY>"
 ```
+
+> 주의: 개인키는 테스트용 지갑만 사용하세요. 절대 운영/실지갑 키를 사용하지 마세요.
 
 서버를 재시작한 뒤 아래를 호출하세요.
 
@@ -232,14 +235,14 @@ $env:SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com"
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/adapter-demo/broadcast/evm" `
   -Headers @{ "Content-Type"="application/json" } `
-  -Body '{ "from":"a", "to":"b", "asset":"ETH", "amount":10, "nonce":1 }'
+  -Body '{ "from":"ignored", "to":"0x1111111111111111111111111111111111111111", "asset":"ETH", "amount":1, "nonce":0 }'
 ```
 
 기대 결과
 
 - `accepted = true`
-- RPC가 Sepolia(`0xaa36a7`)인지 검증 후 응답
-- `txHash` prefix: `0xSEPOLIA_` (RPC 미설정 시 `0xEVM_MOCK_`)
+- Sepolia RPC(`eth_chainId`) 확인 후, 로컬 서명 트랜잭션을 `eth_sendRawTransaction`으로 전송
+- `txHash`는 실제 EVM 해시(예: `0x...`)
 
 ### 7-2. BFT adapter
 

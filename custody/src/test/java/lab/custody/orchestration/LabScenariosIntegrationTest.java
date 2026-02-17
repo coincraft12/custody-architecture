@@ -147,10 +147,7 @@ class LabScenariosIntegrationTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accepted").value(true))
-                .andExpect(jsonPath("$.txHash").value(org.hamcrest.Matchers.anyOf(
-                        org.hamcrest.Matchers.startsWith("0xSEPOLIA_"),
-                        org.hamcrest.Matchers.startsWith("0xEVM_MOCK_")
-                )));
+                .andExpect(jsonPath("$.txHash").value(org.hamcrest.Matchers.startsWith("0x")));
 
         mockMvc.perform(post("/adapter-demo/broadcast/bft")
                         .contentType(MediaType.APPLICATION_JSON)
