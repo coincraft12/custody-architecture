@@ -94,4 +94,5 @@ class LabScenariosIntegrationTest {
                 .andExpect(jsonPath("$[1].canonical").value(false))
                 .andExpect(jsonPath("$[2].canonical").value(true));
     }
+
 }

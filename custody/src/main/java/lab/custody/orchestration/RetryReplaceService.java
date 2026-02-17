@@ -81,7 +81,6 @@ public class RetryReplaceService {
         return txAttemptRepository.save(canonical);
     }
 
-
     private void ensureWithinAttemptLimit(UUID withdrawalId) {
         if (txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId).size() >= 3) {
             throw new InvalidRequestException("max retry/replace attempts exceeded (3)");
