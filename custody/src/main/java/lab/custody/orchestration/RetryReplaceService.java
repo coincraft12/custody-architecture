@@ -129,7 +129,9 @@ public class RetryReplaceService {
                         withdrawal.getToAddress(),
                         withdrawal.getAsset(),
                         withdrawal.getAmount(),
-                        attempt.getNonce()
+                        attempt.getNonce(),
+                        attempt.getMaxPriorityFeePerGas(),
+                        attempt.getMaxFeePerGas()
                 )
         );
         attempt.setTxHash(result.txHash());

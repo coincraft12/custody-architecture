@@ -16,7 +16,9 @@ public interface ChainAdapter {
             String to,
             String asset,
             long amount,
-            long nonce
+            long nonce,
+            Long maxPriorityFeePerGas,
+            Long maxFeePerGas
     ) {}
 
     record BroadcastResult(
