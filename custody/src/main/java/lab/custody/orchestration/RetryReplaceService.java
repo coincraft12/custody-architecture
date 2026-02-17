@@ -43,7 +43,7 @@ public class RetryReplaceService {
         long nonce = canonical.getNonce() + 1;
         ChainAdapter adapter = router.resolve(w.getChainType());
         if (adapter instanceof EvmRpcAdapter rpcAdapter) {
-            nonce = rpcAdapter.getPendingNonce(rpcAdapter.getSenderAddress()).longValue();
+            nonce = rpcAdapter.getPendingNonce(canonical.getFromAddress()).longValue();
         }
 
         TxAttempt retried = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), nonce);
@@ -132,7 +132,6 @@ public class RetryReplaceService {
         withdrawalRepository.save(withdrawal);
         return txAttemptRepository.save(canonical);
     }
-
 
 
     private boolean isNonceAlreadyIncluded(Withdrawal withdrawal, TxAttempt canonical) {

@@ -1,6 +1,5 @@
 package lab.custody.orchestration;
 
-
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.adapter.EvmRpcAdapter;
@@ -10,7 +9,6 @@ import lab.custody.domain.txattempt.TxAttempt;
 import lab.custody.domain.txattempt.TxAttemptRepository;
 import lab.custody.domain.txattempt.TxAttemptStatus;
 import lab.custody.domain.withdrawal.ChainType;
-
 import lab.custody.domain.withdrawal.Withdrawal;
 import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lab.custody.domain.withdrawal.WithdrawalStatus;
@@ -69,7 +67,7 @@ public class WithdrawalService {
     private long resolveInitialNonce(ChainType chainType, String fromAddress) {
         ChainAdapter adapter = router.resolve(chainType);
         if (adapter instanceof EvmRpcAdapter rpcAdapter) {
-            return rpcAdapter.getPendingNonce(rpcAdapter.getSenderAddress()).longValue();
+            return rpcAdapter.getPendingNonce(fromAddress).longValue();
         }
         return 0L;
     }
