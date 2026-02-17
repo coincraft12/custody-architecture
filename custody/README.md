@@ -34,9 +34,9 @@
 - 교체(`REPLACED`) 시 canonical attempt 전환
 - 성공(`SUCCESS`)까지 수렴하는 흐름 확인
 
-### 실습 3 — Chain Adapter + Sepolia RPC 연동
+### 실습 3 — Chain Adapter + EVM RPC(Sepolia/Hoodi) 연동
 
-- EVM adapter는 Sepolia RPC에 실제 서명 트랜잭션(`eth_sendRawTransaction`)을 전송
+- `custody.chain.mode=rpc`일 때 EVM adapter는 실제 RPC(Sepolia/Hoodi)에 EIP-1559 타입2 서명 트랜잭션(`eth_sendRawTransaction`)을 전송
 - BFT adapter는 기존 mock 흐름 유지
 - 오케스트레이터는 체인별 세부사항을 몰라도 동일한 호출 형태 유지
 
@@ -58,8 +58,10 @@
 - Java 21+
 - Gradle Wrapper (`./gradlew`)
 - 기본 포트: `8080`
-- Sepolia RPC URL 환경변수: `SEPOLIA_RPC_URL` (기본값: `https://ethereum-sepolia-rpc.publicnode.com`)
-- 송신 지갑 개인키 환경변수: `SEPOLIA_SENDER_PRIVATE_KEY`
+- 체인 모드 환경변수: `CUSTODY_CHAIN_MODE` (`mock`/`rpc`, 기본값 `mock`)
+- EVM RPC URL 환경변수: `CUSTODY_EVM_RPC_URL` (기본값: `https://ethereum-sepolia-rpc.publicnode.com`)
+- EVM 체인 ID 환경변수: `CUSTODY_EVM_CHAIN_ID` (Sepolia: `11155111`, Hoodi는 해당 체인 ID 값 사용)
+- 송신 지갑 개인키 환경변수: `CUSTODY_EVM_PRIVATE_KEY`
 
 H2 Console
 
@@ -241,8 +243,10 @@ Invoke-RestMethod -Method GET `
 먼저 RPC URL/송신 지갑 개인키를 설정합니다.
 
 ```powershell
-$env:SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com"
-$env:SEPOLIA_SENDER_PRIVATE_KEY = "<YOUR_SEPOLIA_PRIVATE_KEY>"
+$env:CUSTODY_CHAIN_MODE = "rpc"
+$env:CUSTODY_EVM_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com"
+$env:CUSTODY_EVM_CHAIN_ID = "11155111"
+$env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_SEPOLIA_OR_HOODI_PRIVATE_KEY>"
 ```
 
 > 주의: 개인키는 테스트용 지갑만 사용하세요. 절대 운영/실지갑 키를 사용하지 마세요.
@@ -259,7 +263,9 @@ Invoke-RestMethod -Method POST `
 기대 결과
 
 - `accepted = true`
-- Sepolia RPC(`eth_chainId`) 확인 후, 로컬 서명 트랜잭션을 `eth_sendRawTransaction`으로 전송
+- 설정한 `custody.evm.chain-id`와 RPC의 `eth_chainId`가 일치하는지 확인
+- nonce는 `eth_getTransactionCount(..., "pending")`로 조회
+- 고정 가스값 사용: `gasLimit=21000`, `maxPriorityFee=2 gwei`, `maxFee=20 gwei`
 - `txHash`는 실제 EVM 해시(예: `0x...`)
 
 ### 7-2. BFT adapter

@@ -1,4 +1,7 @@
-adapter:
+custody:
+  chain:
+    mode: mock
   evm:
-    sepolia-rpc-url: ""
-    sender-private-key: ""
+    rpc-url: ""
+    chain-id: 11155111
+    private-key: ""
