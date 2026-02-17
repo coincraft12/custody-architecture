@@ -10,6 +10,7 @@ import lab.custody.domain.txattempt.TxAttemptStatus;
 import lab.custody.domain.withdrawal.Withdrawal;
 import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lab.custody.domain.withdrawal.WithdrawalStatus;
+import lab.custody.sim.fakechain.FakeChain;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +27,7 @@ public class RetryReplaceService {
     private final TxAttemptRepository txAttemptRepository;
     private final AttemptService attemptService;
     private final ChainAdapterRouter router;
+    private final FakeChain fakeChain;
 
     @Transactional
     public TxAttempt retry(UUID withdrawalId) {
