@@ -153,7 +153,7 @@ Invoke-RestMethod -Method POST `
 
 ---
 
-## 6) 실습 2 — Retry / Replace / Included 수렴
+## 6) 실습 2 — Retry / Replace / Included 수렴 (실체인/RPC)
 
 ### 6-1. 테스트용 Withdrawal 생성
 
@@ -166,16 +166,11 @@ Invoke-RestMethod -Method POST `
 
 응답의 `id`를 `{withdrawalId}`로 사용합니다.
 
-### 6-2. FAIL_SYSTEM 주입 후 broadcast
+### 6-2. retry 실행 (새 nonce로 재전송)
 
 ```powershell
 Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/FAIL_SYSTEM"
-```
-
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+  -Uri "$BASE_URL/withdrawals/{withdrawalId}/retry"
 ```
 
 ```powershell
@@ -186,19 +181,14 @@ Invoke-RestMethod -Method GET `
 기대 결과
 
 - attempt 2개
-- 이전 attempt: `canonical=false`, `exceptionType=FAILED_SYSTEM`
-- 최신 attempt: `canonical=true`
+- 이전 attempt: `canonical=false`, `status=FAILED_TIMEOUT`
+- 최신 attempt: `canonical=true` (새 nonce로 broadcast)
 
-### 6-3. REPLACED 주입 후 broadcast
-
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/REPLACED"
-```
+### 6-3. replace 실행 (같은 nonce, fee bump)
 
 ```powershell
 Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+  -Uri "$BASE_URL/withdrawals/{withdrawalId}/replace"
 ```
 
 ```powershell
@@ -210,18 +200,13 @@ Invoke-RestMethod -Method GET `
 
 - attempt 3개
 - 이전 canonical attempt가 `REPLACED`, `canonical=false`
-- 최신 attempt `canonical=true`
+- 최신 attempt `canonical=true` (같은 nonce로 교체 전송)
 
-### 6-4. SUCCESS 주입 후 broadcast
-
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/SUCCESS"
-```
+### 6-4. sync로 실제 포함 수렴 확인
 
 ```powershell
 Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+  -Uri "$BASE_URL/withdrawals/{withdrawalId}/sync"
 ```
 
 ```powershell
@@ -231,8 +216,8 @@ Invoke-RestMethod -Method GET `
 
 기대 결과
 
-- Withdrawal 최종 상태: `W7_INCLUDED`
-- 최신 canonical attempt: `A4_INCLUDED`
+- receipt가 확인되면 Withdrawal 상태가 `W7_INCLUDED`로 전이
+- canonical attempt가 `INCLUDED`로 전이되고, 성공 receipt(`0x1`)이면 `SUCCESS`로 전이
 
 ---
 
@@ -465,8 +450,9 @@ Withdrawal API 통합 테스트만:
 - `GET /withdrawals/{id}`
 - `GET /withdrawals/{id}/attempts`
 - `GET /withdrawals/{id}/policy-audits`
-- `POST /sim/withdrawals/{id}/next-outcome/{FAIL_SYSTEM|REPLACED|SUCCESS}`
-- `POST /sim/withdrawals/{id}/broadcast`
+- `POST /withdrawals/{id}/retry`
+- `POST /withdrawals/{id}/replace`
+- `POST /withdrawals/{id}/sync`
 - `POST /adapter-demo/broadcast/{evm|bft}`
 - `GET /evm/wallet` (rpc 모드에서만 활성화)
 - `GET /evm/tx/{txHash}` (rpc 모드에서만 활성화)
@@ -527,36 +513,33 @@ return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
 
 ### 실습 2 — Retry / Replace / Included 수렴
 
-핵심 코드 (`RetryReplaceService#simulateBroadcast`)
+핵심 코드 (`RetryReplaceService#retry`, `#replace`, `#sync`)
 
 ```java
-if (outcome == NextOutcome.FAIL_SYSTEM) {
-    canonical.markException(AttemptExceptionType.FAILED_SYSTEM, "simulated failure");
-    canonical.setCanonical(false);
+// retry: 기존 canonical을 timeout 처리하고 새 nonce로 재브로드캐스트
+canonical.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
+canonical.setCanonical(false);
+long nonce = rpcAdapter.getPendingNonce(rpcAdapter.getSenderAddress()).longValue();
+TxAttempt retried = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), nonce);
+broadcast(w, retried);
 
-    long sameNonce = canonical.getNonce();
-    TxAttempt newAttempt = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), sameNonce);
-    newAttempt.setCanonical(true);
+// replace: 기존 canonical을 REPLACED 처리하고 같은 nonce로 fee bump 브로드캐스트
+canonical.transitionTo(TxAttemptStatus.REPLACED);
+canonical.markException(AttemptExceptionType.REPLACED, "fee bump replacement");
+canonical.setCanonical(false);
+TxAttempt replaced = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), canonical.getNonce());
+replaced.setFeeParams(4_000_000_000L, 40_000_000_000L);
+broadcast(w, replaced);
 
-} else if (outcome == NextOutcome.REPLACED) {
-    canonical.markException(AttemptExceptionType.REPLACED, "simulated replace");
-    canonical.setCanonical(false);
-
-    long sameNonce = canonical.getNonce();
-    TxAttempt newAttempt = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), sameNonce);
-    newAttempt.setCanonical(true);
-
-} else {
-    canonical.transitionTo(TxAttemptStatus.A4_INCLUDED);
-    w.transitionTo(WithdrawalStatus.W7_INCLUDED);
-}
+// sync: 실제 receipt를 조회해 INCLUDED/SUCCESS/FAILED로 수렴
+var receiptOpt = rpcAdapter.getReceipt(canonical.getTxHash());
 ```
 
 수강생 설명 포인트
 
-- 실패를 없애는 게 아니라 **실패를 기록하고 canonical attempt를 갈아끼우는 모델**입니다.
-- `FAIL_SYSTEM`, `REPLACED` 둘 다 기존 canonical을 내리고 새 attempt를 canonical로 승격합니다.
-- `SUCCESS`에서만 `Withdrawal=W7_INCLUDED`로 수렴합니다.
+- fake 주입이 아니라 **실제 브로드캐스트와 receipt 조회 결과**로 상태가 바뀝니다.
+- `retry`는 새 nonce, `replace`는 같은 nonce(fee bump)라는 규칙으로 canonical attempt를 교체합니다.
+- 최종 포함 여부는 `sync`에서 실제 체인 receipt로 판정합니다.
 
 ---
 
