@@ -42,6 +42,12 @@ public class TxAttempt {
     @Column(length = 80)
     private String txHash; // replace되면 바뀔 수 있음(Attempt 단위)
 
+    @Column
+    private Long maxPriorityFeePerGas;
+
+    @Column
+    private Long maxFeePerGas;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
     private TxAttemptStatus status;
@@ -66,7 +72,7 @@ public class TxAttempt {
                 .fromAddress(from)
                 .nonce(nonce)
                 .attemptGroupKey(groupKey(from, nonce))
-                .status(TxAttemptStatus.A0_CREATED)
+                .status(TxAttemptStatus.CREATED)
                 .canonical(canonical)
                 .createdAt(Instant.now())
                 .build();
@@ -74,6 +80,11 @@ public class TxAttempt {
 
     public void setTxHash(String txHash) {
         this.txHash = txHash;
+    }
+
+    public void setFeeParams(Long maxPriorityFeePerGas, Long maxFeePerGas) {
+        this.maxPriorityFeePerGas = maxPriorityFeePerGas;
+        this.maxFeePerGas = maxFeePerGas;
     }
 
     public void transitionTo(TxAttemptStatus next) {

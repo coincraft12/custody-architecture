@@ -41,7 +41,7 @@ public class EvmWalletController {
     @GetMapping("/wallet")
     public WalletResponse wallet() throws IOException {
         EthGetBalance balanceResponse = web3j.ethGetBalance(
-                evmRpcAdapter.senderAddress(),
+                evmRpcAdapter.getSenderAddress(),
                 DefaultBlockParameterName.LATEST
         ).send();
 
@@ -52,9 +52,9 @@ public class EvmWalletController {
         BigInteger balanceWei = balanceResponse.getBalance();
         return new WalletResponse(
                 "rpc",
-                evmRpcAdapter.chainId(),
+                evmRpcAdapter.getChainId(),
                 maskRpcUrl(rpcUrl),
-                evmRpcAdapter.senderAddress(),
+                evmRpcAdapter.getSenderAddress(),
                 balanceWei.toString(),
                 toEthString(balanceWei)
         );

@@ -1,8 +1,14 @@
 package lab.custody.orchestration;
 
 
+import lab.custody.adapter.ChainAdapter;
+import lab.custody.adapter.ChainAdapterRouter;
+import lab.custody.adapter.EvmRpcAdapter;
 import lab.custody.domain.policy.PolicyAuditLog;
 import lab.custody.domain.policy.PolicyAuditLogRepository;
+import lab.custody.domain.txattempt.TxAttempt;
+import lab.custody.domain.txattempt.TxAttemptRepository;
+import lab.custody.domain.txattempt.TxAttemptStatus;
 import lab.custody.domain.withdrawal.ChainType;
 
 import lab.custody.domain.withdrawal.Withdrawal;
@@ -23,45 +29,67 @@ import java.util.UUID;
 public class WithdrawalService {
 
     private final WithdrawalRepository withdrawalRepository;
-    private final NonceAllocator nonceAllocator;
     private final AttemptService attemptService;
     private final PolicyEngine policyEngine;
     private final PolicyAuditLogRepository policyAuditLogRepository;
+    private final TxAttemptRepository txAttemptRepository;
+    private final ChainAdapterRouter router;
 
     @Transactional
     public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
         ChainType chainType = parseChainType(req.chainType());
         return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
                 .map(existing -> validateIdempotentRequest(existing, chainType, req))
-                .orElseGet(() -> {
-                    Withdrawal w = Withdrawal.requested(
-                            idempotencyKey,
-                            chainType,
-                            req.fromAddress(),
-                            req.toAddress(),
-                            req.asset(),
-                            req.amount()
-                    );
+                .orElseGet(() -> createAndBroadcast(idempotencyKey, chainType, req));
+    }
 
-                    Withdrawal saved = withdrawalRepository.save(w);
+    private Withdrawal createAndBroadcast(String idempotencyKey, ChainType chainType, CreateWithdrawalRequest req) {
+        Withdrawal saved = withdrawalRepository.save(Withdrawal.requested(
+                idempotencyKey,
+                chainType,
+                req.fromAddress(),
+                req.toAddress(),
+                req.asset(),
+                req.amount()
+        ));
 
-                    PolicyDecision decision = policyEngine.evaluate(req);
-                    policyAuditLogRepository.save(PolicyAuditLog.of(saved.getId(), decision.allowed(), decision.reason()));
+        PolicyDecision decision = policyEngine.evaluate(req);
+        policyAuditLogRepository.save(PolicyAuditLog.of(saved.getId(), decision.allowed(), decision.reason()));
 
-                    if (!decision.allowed()) {
-                        saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
-                        return withdrawalRepository.save(saved);
-                    }
+        if (!decision.allowed()) {
+            saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
+            return withdrawalRepository.save(saved);
+        }
 
-                    saved.transitionTo(WithdrawalStatus.W1_POLICY_CHECKED);
-                    saved.transitionTo(WithdrawalStatus.W4_SIGNING);
-                    Withdrawal policyPassed = withdrawalRepository.save(saved);
+        TxAttempt attempt = attemptService.createAttempt(saved.getId(), req.fromAddress(), resolveInitialNonce(chainType, req.fromAddress()));
+        broadcastAttempt(saved, attempt);
+        return withdrawalRepository.save(saved);
+    }
 
-                    long nonce = nonceAllocator.reserve(req.fromAddress());
-                    attemptService.createAttempt(policyPassed.getId(), req.fromAddress(), nonce);
+    private long resolveInitialNonce(ChainType chainType, String fromAddress) {
+        ChainAdapter adapter = router.resolve(chainType);
+        if (adapter instanceof EvmRpcAdapter rpcAdapter) {
+            return rpcAdapter.getPendingNonce(rpcAdapter.getSenderAddress()).longValue();
+        }
+        return 0L;
+    }
 
-                    return policyPassed;
-                });
+    private void broadcastAttempt(Withdrawal withdrawal, TxAttempt attempt) {
+        ChainAdapter.BroadcastResult result = router.resolve(withdrawal.getChainType()).broadcast(
+                new ChainAdapter.BroadcastCommand(
+                        withdrawal.getId(),
+                        withdrawal.getFromAddress(),
+                        withdrawal.getToAddress(),
+                        withdrawal.getAsset(),
+                        withdrawal.getAmount(),
+                        attempt.getNonce()
+                )
+        );
+
+        attempt.setTxHash(result.txHash());
+        attempt.transitionTo(TxAttemptStatus.BROADCASTED);
+        withdrawal.transitionTo(WithdrawalStatus.W6_BROADCASTED);
+        txAttemptRepository.save(attempt);
     }
 
     private Withdrawal validateIdempotentRequest(Withdrawal existing, ChainType chainType, CreateWithdrawalRequest req) {

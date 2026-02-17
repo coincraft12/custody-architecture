@@ -2,6 +2,7 @@ package lab.custody.orchestration;
 
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
+import lab.custody.adapter.EvmRpcAdapter;
 import lab.custody.domain.txattempt.AttemptExceptionType;
 import lab.custody.domain.txattempt.TxAttempt;
 import lab.custody.domain.txattempt.TxAttemptRepository;
@@ -13,118 +14,107 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Comparator;
+import java.util.List;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class RetryReplaceService {
 
-    public enum NextOutcome {
-        SUCCESS,
-        FAIL_SYSTEM,
-        REPLACED
-    }
-
     private final WithdrawalRepository withdrawalRepository;
     private final TxAttemptRepository txAttemptRepository;
     private final AttemptService attemptService;
-    private final NonceAllocator nonceAllocator; // 지금은 직접 쓰지 않아도 되지만, 실습 확장 대비로 남겨둠
     private final ChainAdapterRouter router;
 
-    // withdrawalId별로 다음 결과를 주입하는 저장소 (FakeChain 대체)
-    private final Map<UUID, NextOutcome> nextOutcomeByWithdrawal = new ConcurrentHashMap<>();
-
     @Transactional
-    public void setNextOutcome(UUID withdrawalId, NextOutcome outcome) {
-        nextOutcomeByWithdrawal.put(withdrawalId, outcome);
+    public TxAttempt retry(UUID withdrawalId) {
+        Withdrawal w = loadWithdrawal(withdrawalId);
+        TxAttempt canonical = loadCanonical(withdrawalId);
+        ensureWithinAttemptLimit(withdrawalId);
+        canonical.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
+        canonical.setCanonical(false);
+
+        long nonce = canonical.getNonce() + 1;
+        ChainAdapter adapter = router.resolve(w.getChainType());
+        if (adapter instanceof EvmRpcAdapter rpcAdapter) {
+            nonce = rpcAdapter.getPendingNonce(rpcAdapter.getSenderAddress()).longValue();
+        }
+
+        TxAttempt retried = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), nonce);
+        broadcast(w, retried);
+        return txAttemptRepository.save(retried);
     }
 
-    private NextOutcome consumeOutcome(UUID withdrawalId) {
-        NextOutcome outcome = nextOutcomeByWithdrawal.getOrDefault(withdrawalId, NextOutcome.SUCCESS);
-        nextOutcomeByWithdrawal.remove(withdrawalId);
-        return outcome;
+    @Transactional
+    public TxAttempt replace(UUID withdrawalId) {
+        Withdrawal w = loadWithdrawal(withdrawalId);
+        TxAttempt canonical = loadCanonical(withdrawalId);
+        canonical.transitionTo(TxAttemptStatus.REPLACED);
+        canonical.markException(AttemptExceptionType.REPLACED, "fee bump replacement");
+        canonical.setCanonical(false);
+        txAttemptRepository.save(canonical);
+
+        TxAttempt replaced = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), canonical.getNonce());
+        replaced.setFeeParams(4_000_000_000L, 40_000_000_000L);
+        broadcast(w, replaced);
+        return txAttemptRepository.save(replaced);
     }
 
-    /**
-     * broadcast를 시뮬레이션하고 결과에 따라
-     * - FAIL_SYSTEM -> Attempt 누적 + canonical 전환
-     * - REPLACED    -> Attempt 누적 + canonical 전환
-     * - SUCCESS     -> INCLUDED 전이(간단 버전)
-     *
-     * 핵심: 실제 txHash 발급은 Adapter가 담당한다.
-     */
     @Transactional
-    public Withdrawal simulateBroadcast(UUID withdrawalId) {
-        Withdrawal w = withdrawalRepository.findById(withdrawalId)
+    public TxAttempt sync(UUID withdrawalId) {
+        Withdrawal w = loadWithdrawal(withdrawalId);
+        TxAttempt canonical = loadCanonical(withdrawalId);
+        ChainAdapter adapter = router.resolve(w.getChainType());
+        if (adapter instanceof EvmRpcAdapter rpcAdapter && canonical.getTxHash() != null) {
+            var receiptOpt = rpcAdapter.getReceipt(canonical.getTxHash());
+            if (receiptOpt.isPresent()) {
+                canonical.transitionTo(TxAttemptStatus.INCLUDED);
+                if ("0x1".equalsIgnoreCase(receiptOpt.get().getStatus())) {
+                    canonical.transitionTo(TxAttemptStatus.SUCCESS);
+                    w.transitionTo(WithdrawalStatus.W7_INCLUDED);
+                } else {
+                    canonical.transitionTo(TxAttemptStatus.FAILED);
+                }
+            }
+        }
+        return txAttemptRepository.save(canonical);
+    }
+
+
+    private void ensureWithinAttemptLimit(UUID withdrawalId) {
+        if (txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId).size() >= 3) {
+            throw new InvalidRequestException("max retry/replace attempts exceeded (3)");
+        }
+    }
+
+    private void broadcast(Withdrawal withdrawal, TxAttempt attempt) {
+        ChainAdapter.BroadcastResult result = router.resolve(withdrawal.getChainType()).broadcast(
+                new ChainAdapter.BroadcastCommand(
+                        withdrawal.getId(),
+                        withdrawal.getFromAddress(),
+                        withdrawal.getToAddress(),
+                        withdrawal.getAsset(),
+                        withdrawal.getAmount(),
+                        attempt.getNonce()
+                )
+        );
+        attempt.setTxHash(result.txHash());
+        attempt.transitionTo(TxAttemptStatus.BROADCASTED);
+        withdrawal.transitionTo(WithdrawalStatus.W6_BROADCASTED);
+        withdrawalRepository.save(withdrawal);
+    }
+
+    private Withdrawal loadWithdrawal(UUID withdrawalId) {
+        return withdrawalRepository.findById(withdrawalId)
                 .orElseThrow(() -> new IllegalArgumentException("withdrawal not found: " + withdrawalId));
+    }
 
-        // 1) canonical attempt 찾기
+    private TxAttempt loadCanonical(UUID withdrawalId) {
         List<TxAttempt> attempts = txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId);
-        TxAttempt canonical = attempts.stream()
+        return attempts.stream()
                 .filter(TxAttempt::isCanonical)
                 .max(Comparator.comparingInt(TxAttempt::getAttemptNo))
                 .orElseThrow(() -> new IllegalStateException("no canonical attempt"));
-
-        // 2) Withdrawal은 끊기지 않고 진행(실습2 체감용)
-        w.transitionTo(WithdrawalStatus.W6_BROADCASTED);
-
-        // 3) Adapter 선택
-        ChainAdapter adapter = router.resolve(w.getChainType());
-
-        // 4) 동일한 명령으로 broadcast 호출
-        ChainAdapter.BroadcastResult result = adapter.broadcast(
-                new ChainAdapter.BroadcastCommand(
-                        w.getId(),
-                        w.getFromAddress(),
-                        w.getToAddress(),
-                        w.getAsset(),
-                        w.getAmount(),
-                        canonical.getNonce()
-                )
-        );
-
-        // 5) Attempt에 txHash 기록 + 상태 전이
-        canonical.setTxHash(result.txHash());
-        canonical.transitionTo(TxAttemptStatus.A2_SENT_TO_RPC);
-
-        // 6) Outcome 처리
-        NextOutcome outcome = consumeOutcome(withdrawalId);
-
-        if (outcome == NextOutcome.FAIL_SYSTEM) {
-            // FAILED(system): 예외 기록 + 새 Attempt 생성 + canonical 전환
-            canonical.markException(AttemptExceptionType.FAILED_SYSTEM, "simulated failure");
-            canonical.setCanonical(false);
-
-            long sameNonce = canonical.getNonce(); // 실습2: 같은 nonce 유지
-            TxAttempt newAttempt = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), sameNonce);
-            newAttempt.setCanonical(true);
-
-            // 저장 강제(명확히)
-            txAttemptRepository.save(canonical);
-            txAttemptRepository.save(newAttempt);
-
-        } else if (outcome == NextOutcome.REPLACED) {
-            // REPLACED: 예외 기록 + 새 Attempt 생성 + canonical 전환
-            canonical.markException(AttemptExceptionType.REPLACED, "simulated replace");
-            canonical.setCanonical(false);
-
-            long sameNonce = canonical.getNonce(); // 실습2: 같은 nonce 유지
-            TxAttempt newAttempt = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), sameNonce);
-            newAttempt.setCanonical(true);
-
-            txAttemptRepository.save(canonical);
-            txAttemptRepository.save(newAttempt);
-
-        } else {
-            // SUCCESS: included로 간단 전이(확정/최종성은 다음 실습에서 확장)
-            canonical.transitionTo(TxAttemptStatus.A4_INCLUDED);
-            w.transitionTo(WithdrawalStatus.W7_INCLUDED);
-
-            txAttemptRepository.save(canonical);
-        }
-
-        // Withdrawal 저장(상태 전이 반영)
-        return withdrawalRepository.save(w);
     }
 }
