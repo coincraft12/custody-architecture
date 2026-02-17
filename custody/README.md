@@ -131,11 +131,22 @@ Invoke-RestMethod -Method GET `
   -Uri "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 ```
 
+응답에는 `attemptCount`와 `attempts` 배열이 함께 내려옵니다.
+PowerShell에서는 아래 한 줄만으로도 시도 수와 상세 목록을 바로 볼 수 있습니다.
+
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/{withdrawalId}/attempts"
+```
+
 기대 결과
 
-- length = 1
-- `attemptNo = 1`
-- `canonical = true`
+- `attemptCount = 1`
+- `attempts[0].attemptNo = 1`
+- `attempts[0].canonical = true`
+
+> 참고: `attemptCount = 0`이면 해당 withdrawal은 아직 브로드캐스트 시도가 없다는 뜻입니다
+> (예: policy rejected된 건).
 
 ### 5-4. 같은 키 + 다른 바디(충돌)
 
