@@ -102,9 +102,9 @@ curl -i -X POST "http://localhost:8080/withdrawals" ^
 #### 1-1. Withdrawal 생성
 
 ```bash
-curl -i -X POST "http://localhost:8080/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab1-1" \
+curl -i -X POST "http://localhost:8080/withdrawals" `
+  -H "Content-Type: application/json" `
+  -H "Idempotency-Key: idem-lab1-1" `
   -d '{"chainType":"evm","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
 ```
 
@@ -116,9 +116,9 @@ curl -i -X POST "http://localhost:8080/withdrawals" \
 #### 1-2. 같은 Idempotency-Key + 같은 Body 재요청
 
 ```bash
-curl -i -X POST "http://localhost:8080/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab1-1" \
+curl -i -X POST "http://localhost:8080/withdrawals" `
+  -H "Content-Type: application/json" `
+  -H "Idempotency-Key: idem-lab1-1" `
   -d '{"chainType":"evm","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
 ```
 
@@ -139,9 +139,9 @@ curl -s "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
 #### 1-4. 같은 Idempotency-Key + 다른 Body 충돌 확인
 
 ```bash
-curl -i -X POST "http://localhost:8080/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab1-1" \
+curl -i -X POST "http://localhost:8080/withdrawals" `
+  -H "Content-Type: application/json" `
+  -H "Idempotency-Key: idem-lab1-1" `
   -d '{"chainType":"bft","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
 ```
 
@@ -156,9 +156,9 @@ curl -i -X POST "http://localhost:8080/withdrawals" \
 #### 2-1. 테스트용 Withdrawal 생성
 
 ```bash
-curl -s -X POST "http://localhost:8080/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab2-1" \
+curl -s -X POST "http://localhost:8080/withdrawals" `
+  -H "Content-Type: application/json" `
+  -H "Idempotency-Key: idem-lab2-1" `
   -d '{"chainType":"evm","fromAddress":"0xfrom-lab2","toAddress":"0xto","asset":"USDC","amount":50}'
 ```
 
@@ -218,8 +218,8 @@ curl -s "http://localhost:8080/withdrawals/{withdrawalId}"
 #### 3-1. EVM adapter 호출
 
 ```bash
-curl -s -X POST "http://localhost:8080/adapter-demo/broadcast/evm" \
-  -H "Content-Type: application/json" \
+curl -s -X POST "http://localhost:8080/adapter-demo/broadcast/evm" `
+  -H "Content-Type: application/json" `
   -d '{"from":"a","to":"b","asset":"ETH","amount":10,"nonce":1}'
 ```
 
@@ -230,8 +230,8 @@ curl -s -X POST "http://localhost:8080/adapter-demo/broadcast/evm" \
 #### 3-2. BFT adapter 호출
 
 ```bash
-curl -s -X POST "http://localhost:8080/adapter-demo/broadcast/bft" \
-  -H "Content-Type: application/json" \
+curl -s -X POST "http://localhost:8080/adapter-demo/broadcast/bft" `
+  -H "Content-Type: application/json" `
   -d '{"from":"a","to":"b","asset":"TOKEN","amount":10,"nonce":1}'
 ```
 
@@ -250,9 +250,9 @@ curl -s -X POST "http://localhost:8080/adapter-demo/broadcast/bft" \
 #### 4-1. 허용 케이스
 
 ```bash
-curl -s -X POST "http://localhost:8080/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab4-allow-1" \
+curl -s -X POST "http://localhost:8080/withdrawals" `
+  -H "Content-Type: application/json" `
+  -H "Idempotency-Key: idem-lab4-allow-1" `
   -d '{"chainType":"evm","fromAddress":"0xfrom","toAddress":"0xto","asset":"USDC","amount":100}'
 ```
 
@@ -262,9 +262,9 @@ curl -s -X POST "http://localhost:8080/withdrawals" \
 #### 4-2. 화이트리스트 거절 케이스
 
 ```bash
-curl -s -X POST "http://localhost:8080/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab4-reject-whitelist-1" \
+curl -s -X POST "http://localhost:8080/withdrawals" `
+  -H "Content-Type: application/json" `
+  -H "Idempotency-Key: idem-lab4-reject-whitelist-1" `
   -d '{"chainType":"evm","fromAddress":"0xfrom","toAddress":"0xnot-allowed","asset":"USDC","amount":100}'
 ```
 
@@ -282,9 +282,9 @@ curl -s "http://localhost:8080/withdrawals/{withdrawalId}/policy-audits"
 #### 4-3. 금액 초과 거절 케이스
 
 ```bash
-curl -s -X POST "http://localhost:8080/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab4-reject-amount-1" \
+curl -s -X POST "http://localhost:8080/withdrawals" `
+  -H "Content-Type: application/json" `
+  -H "Idempotency-Key: idem-lab4-reject-amount-1" `
   -d '{"chainType":"evm","fromAddress":"0xfrom","toAddress":"0xto","asset":"USDC","amount":1001}'
 ```
 
