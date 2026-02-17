@@ -97,6 +97,36 @@ class LabScenariosIntegrationTest {
                 .andExpect(jsonPath("$.attempts[2].canonical").value(true));
     }
 
+
+    @Test
+    void lab2_replaceAfterIncluded_returnsGuidanceMessage() throws Exception {
+        MvcResult create = mockMvc.perform(post("/withdrawals")
+                        .header("Idempotency-Key", "idem-lab2-included-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "chainType": "evm",
+                                  "fromAddress": "0xfrom-lab2-inc",
+                                  "toAddress": "0xto",
+                                  "asset": "USDC",
+                                  "amount": 88
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String withdrawalId = objectMapper.readTree(create.getResponse().getContentAsString()).get("id").asText();
+
+        mockMvc.perform(post("/sim/withdrawals/{id}/next-outcome/SUCCESS", withdrawalId))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/sim/withdrawals/{id}/broadcast", withdrawalId))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/withdrawals/{id}/replace", withdrawalId))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Cannot replace attempt after it is already finalized on-chain. Create a new withdrawal/retry instead."));
+    }
+
     @Test
     void lab2_simNextOutcome_failSystem_replaced_success() throws Exception {
         MvcResult create = mockMvc.perform(post("/withdrawals")

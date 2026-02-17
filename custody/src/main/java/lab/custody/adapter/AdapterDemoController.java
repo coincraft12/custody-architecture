@@ -22,6 +22,7 @@ public class AdapterDemoController {
     ) {
         ChainType normalizedType = ChainType.valueOf(type.toUpperCase(Locale.ROOT));
         ChainAdapter adapter = router.resolve(normalizedType);
+        long nonce = resolveNonce(adapter, req.nonce());
 
         ChainAdapter.BroadcastResult result = adapter.broadcast(
                 new ChainAdapter.BroadcastCommand(
@@ -30,7 +31,7 @@ public class AdapterDemoController {
                         req.to(),
                         req.asset(),
                         req.amount(),
-                        req.nonce(),
+                        nonce,
                         null,
                         null
                 )
@@ -44,6 +45,16 @@ public class AdapterDemoController {
             String to,
             String asset,
             long amount,
-            long nonce
+            Long nonce
     ) {}
+
+    private long resolveNonce(ChainAdapter adapter, Long nonce) {
+        if (nonce != null) {
+            return nonce;
+        }
+        if (adapter instanceof EvmRpcAdapter rpcAdapter) {
+            return rpcAdapter.getPendingNonce(rpcAdapter.getSenderAddress()).longValue();
+        }
+        throw new IllegalArgumentException("nonce is required for non-EVM adapters");
+    }
 }

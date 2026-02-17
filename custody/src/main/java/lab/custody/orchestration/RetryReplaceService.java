@@ -55,6 +55,19 @@ public class RetryReplaceService {
     public TxAttempt replace(UUID withdrawalId) {
         Withdrawal w = loadWithdrawal(withdrawalId);
         TxAttempt canonical = loadCanonical(withdrawalId);
+
+        if (canonical.getStatus() == TxAttemptStatus.INCLUDED
+                || canonical.getStatus() == TxAttemptStatus.SUCCESS
+                || canonical.getStatus() == TxAttemptStatus.FAILED) {
+            throw new InvalidRequestException("Cannot replace attempt after it is already finalized on-chain. "
+                    + "Create a new withdrawal/retry instead.");
+        }
+
+        if (isNonceAlreadyIncluded(w, canonical)) {
+            throw new InvalidRequestException("Nonce already included on-chain for current canonical attempt (would fail with nonce too low). "
+                    + "replace cannot be executed; create a new retry with a fresh nonce.");
+        }
+
         canonical.transitionTo(TxAttemptStatus.REPLACED);
         canonical.markException(AttemptExceptionType.REPLACED, "fee bump replacement");
         canonical.setCanonical(false);
@@ -120,6 +133,16 @@ public class RetryReplaceService {
         return txAttemptRepository.save(canonical);
     }
 
+
+
+    private boolean isNonceAlreadyIncluded(Withdrawal withdrawal, TxAttempt canonical) {
+        ChainAdapter adapter = router.resolve(withdrawal.getChainType());
+        if (adapter instanceof EvmRpcAdapter rpcAdapter) {
+            long pendingNonce = rpcAdapter.getPendingNonce(canonical.getFromAddress()).longValue();
+            return canonical.getNonce() < pendingNonce;
+        }
+        return false;
+    }
 
     private void ensureWithinAttemptLimit(UUID withdrawalId) {
         if (txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId).size() >= 3) {
