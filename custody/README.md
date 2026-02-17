@@ -34,9 +34,10 @@
 - 교체(`REPLACED`) 시 canonical attempt 전환
 - 성공(`SUCCESS`)까지 수렴하는 흐름 확인
 
-### 실습 3 — Chain Adapter 추상화
+### 실습 3 — Chain Adapter + Sepolia RPC 연동
 
-- EVM / BFT Mock Adapter 2종
+- EVM adapter는 Sepolia RPC(`eth_chainId`)를 실제 호출해 네트워크 연결을 검증
+- BFT adapter는 기존 mock 흐름 유지
 - 오케스트레이터는 체인별 세부사항을 몰라도 동일한 호출 형태 유지
 
 ### 실습 4 — Policy Engine + Audit
@@ -57,6 +58,8 @@
 - Java 21+
 - Gradle Wrapper (`./gradlew`)
 - 기본 포트: `8080`
+- (권장) Sepolia RPC URL 환경변수: `SEPOLIA_RPC_URL`
+  - 예: `https://ethereum-sepolia-rpc.publicnode.com`
 
 H2 Console
 
@@ -215,7 +218,15 @@ Invoke-RestMethod -Method GET `
 
 ## 7) 실습 3 — ChainAdapter 2종 검증
 
-### 7-1. EVM adapter
+### 7-1. EVM adapter (Sepolia RPC 실제 호출)
+
+먼저 RPC URL을 설정합니다.
+
+```powershell
+$env:SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com"
+```
+
+서버를 재시작한 뒤 아래를 호출하세요.
 
 ```powershell
 Invoke-RestMethod -Method POST `
@@ -227,7 +238,8 @@ Invoke-RestMethod -Method POST `
 기대 결과
 
 - `accepted = true`
-- `txHash` prefix: `0xEVM_`
+- RPC가 Sepolia(`0xaa36a7`)인지 검증 후 응답
+- `txHash` prefix: `0xSEPOLIA_` (RPC 미설정 시 `0xEVM_MOCK_`)
 
 ### 7-2. BFT adapter
 
@@ -394,6 +406,6 @@ Withdrawal API 통합 테스트만:
 ## 13) 다음 확장 과제 (권장)
 
 - Policy 다중 룰(우선순위/다중 사유)
-- Adapter timeout/partial failure mock
+- Adapter timeout/partial failure 시나리오 확장
 - 상태 전이 불변식 테스트(canonical은 항상 1개)
 - 요청 추적용 correlation id + 로그 표준화
