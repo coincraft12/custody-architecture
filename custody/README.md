@@ -60,34 +60,10 @@ chmod +x gradlew
 
 ## 4) 단계별 점검 가이드 (수동 API)
 
-아래 예시는 모두 `curl` 기준입니다.
-
-### Windows 셸별 줄바꿈 템플릿 (`curl`)
+아래 예시는 모두 **PowerShell `Invoke-RestMethod` 단일 형식** 기준입니다.
 
 한글 키보드에서 `\` 키가 `₩`로 보이는 경우가 있어 줄바꿈 시 오류가 날 수 있습니다.
-아래처럼 **셸별 줄바꿈 문자**를 사용하세요.
-
-#### PowerShell 템플릿
-
 PowerShell은 줄바꿈에 **백틱**(`` ` ``)을 사용합니다.
-
-```powershell
-curl -i -X POST "http://localhost:8080/withdrawals" `
-  -H "Content-Type: application/json" `
-  -H "Idempotency-Key: idem-lab1-1" `
-  -d '{"chainType":"evm","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
-```
-
-#### CMD 템플릿
-
-CMD는 줄바꿈에 **캐럿**(`^`)을 사용합니다.
-
-```cmd
-curl -i -X POST "http://localhost:8080/withdrawals" ^
-  -H "Content-Type: application/json" ^
-  -H "Idempotency-Key: idem-lab1-1" ^
-  -d "{\"chainType\":\"evm\",\"fromAddress\":\"0xfrom-lab1\",\"toAddress\":\"0xto\",\"asset\":\"USDC\",\"amount\":100}"
-```
 
 ### STEP 0. 서버 실행
 
@@ -101,11 +77,11 @@ curl -i -X POST "http://localhost:8080/withdrawals" ^
 
 #### 1-1. Withdrawal 생성
 
-```bash
-curl -i -X POST "http://localhost:8080/withdrawals" `
-  -H "Content-Type: application/json" `
-  -H "Idempotency-Key: idem-lab1-1" `
-  -d '{"chainType":"evm","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
 ```
 
 확인 포인트:
@@ -115,11 +91,11 @@ curl -i -X POST "http://localhost:8080/withdrawals" `
 
 #### 1-2. 같은 Idempotency-Key + 같은 Body 재요청
 
-```bash
-curl -i -X POST "http://localhost:8080/withdrawals" `
-  -H "Content-Type: application/json" `
-  -H "Idempotency-Key: idem-lab1-1" `
-  -d '{"chainType":"evm","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
 ```
 
 확인 포인트:
@@ -127,8 +103,9 @@ curl -i -X POST "http://localhost:8080/withdrawals" `
 
 #### 1-3. Attempt 목록 확인
 
-```bash
-curl -s "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
 ```
 
 확인 포인트:
@@ -138,11 +115,11 @@ curl -s "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
 
 #### 1-4. 같은 Idempotency-Key + 다른 Body 충돌 확인
 
-```bash
-curl -i -X POST "http://localhost:8080/withdrawals" `
-  -H "Content-Type: application/json" `
-  -H "Idempotency-Key: idem-lab1-1" `
-  -d '{"chainType":"bft","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
+  -Body '{ "chainType":"BFT", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
 ```
 
 확인 포인트:
@@ -155,24 +132,28 @@ curl -i -X POST "http://localhost:8080/withdrawals" `
 
 #### 2-1. 테스트용 Withdrawal 생성
 
-```bash
-curl -s -X POST "http://localhost:8080/withdrawals" `
-  -H "Content-Type: application/json" `
-  -H "Idempotency-Key: idem-lab2-1" `
-  -d '{"chainType":"evm","fromAddress":"0xfrom-lab2","toAddress":"0xto","asset":"USDC","amount":50}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab2-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab2", "toAddress":"0xto", "asset":"USDC", "amount":50 }'
 ```
 
 `id`를 복사해 `{withdrawalId}`로 사용.
 
 #### 2-2. FAIL_SYSTEM 주입 후 broadcast
 
-```bash
-curl -X POST "http://localhost:8080/sim/withdrawals/{withdrawalId}/next-outcome/FAIL_SYSTEM"
-curl -s -X POST "http://localhost:8080/sim/withdrawals/{withdrawalId}/broadcast"
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/next-outcome/FAIL_SYSTEM"
+
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/broadcast"
 ```
 
-```bash
-curl -s "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
 ```
 
 확인 포인트:
@@ -182,13 +163,17 @@ curl -s "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
 
 #### 2-3. REPLACED 주입 후 broadcast
 
-```bash
-curl -X POST "http://localhost:8080/sim/withdrawals/{withdrawalId}/next-outcome/REPLACED"
-curl -s -X POST "http://localhost:8080/sim/withdrawals/{withdrawalId}/broadcast"
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/next-outcome/REPLACED"
+
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/broadcast"
 ```
 
-```bash
-curl -s "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
 ```
 
 확인 포인트:
@@ -198,13 +183,17 @@ curl -s "http://localhost:8080/withdrawals/{withdrawalId}/attempts"
 
 #### 2-4. SUCCESS 주입 후 broadcast
 
-```bash
-curl -X POST "http://localhost:8080/sim/withdrawals/{withdrawalId}/next-outcome/SUCCESS"
-curl -s -X POST "http://localhost:8080/sim/withdrawals/{withdrawalId}/broadcast"
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/next-outcome/SUCCESS"
+
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/sim/withdrawals/{withdrawalId}/broadcast"
 ```
 
-```bash
-curl -s "http://localhost:8080/withdrawals/{withdrawalId}"
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "http://localhost:8080/withdrawals/{withdrawalId}"
 ```
 
 확인 포인트:
@@ -217,10 +206,11 @@ curl -s "http://localhost:8080/withdrawals/{withdrawalId}"
 
 #### 3-1. EVM adapter 호출
 
-```bash
-curl -s -X POST "http://localhost:8080/adapter-demo/broadcast/evm" `
-  -H "Content-Type: application/json" `
-  -d '{"from":"a","to":"b","asset":"ETH","amount":10,"nonce":1}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/adapter-demo/broadcast/evm" `
+  -Headers @{ "Content-Type"="application/json" } `
+  -Body '{ "from":"a", "to":"b", "asset":"ETH", "amount":10, "nonce":1 }'
 ```
 
 확인 포인트:
@@ -229,10 +219,11 @@ curl -s -X POST "http://localhost:8080/adapter-demo/broadcast/evm" `
 
 #### 3-2. BFT adapter 호출
 
-```bash
-curl -s -X POST "http://localhost:8080/adapter-demo/broadcast/bft" `
-  -H "Content-Type: application/json" `
-  -d '{"from":"a","to":"b","asset":"TOKEN","amount":10,"nonce":1}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/adapter-demo/broadcast/bft" `
+  -Headers @{ "Content-Type"="application/json" } `
+  -Body '{ "from":"a", "to":"b", "asset":"TOKEN", "amount":10, "nonce":1 }'
 ```
 
 확인 포인트:
@@ -249,11 +240,11 @@ curl -s -X POST "http://localhost:8080/adapter-demo/broadcast/bft" `
 
 #### 4-1. 허용 케이스
 
-```bash
-curl -s -X POST "http://localhost:8080/withdrawals" `
-  -H "Content-Type: application/json" `
-  -H "Idempotency-Key: idem-lab4-allow-1" `
-  -d '{"chainType":"evm","fromAddress":"0xfrom","toAddress":"0xto","asset":"USDC","amount":100}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-allow-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
 ```
 
 확인 포인트:
@@ -261,19 +252,20 @@ curl -s -X POST "http://localhost:8080/withdrawals" `
 
 #### 4-2. 화이트리스트 거절 케이스
 
-```bash
-curl -s -X POST "http://localhost:8080/withdrawals" `
-  -H "Content-Type: application/json" `
-  -H "Idempotency-Key: idem-lab4-reject-whitelist-1" `
-  -d '{"chainType":"evm","fromAddress":"0xfrom","toAddress":"0xnot-allowed","asset":"USDC","amount":100}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-reject-whitelist-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xnot-allowed", "asset":"USDC", "amount":100 }'
 ```
 
 확인 포인트:
 - `status = W0_POLICY_REJECTED`
 - 응답 `id` 획득 후 audit 확인:
 
-```bash
-curl -s "http://localhost:8080/withdrawals/{withdrawalId}/policy-audits"
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "http://localhost:8080/withdrawals/{withdrawalId}/policy-audits"
 ```
 
 예상 reason:
@@ -281,11 +273,11 @@ curl -s "http://localhost:8080/withdrawals/{withdrawalId}/policy-audits"
 
 #### 4-3. 금액 초과 거절 케이스
 
-```bash
-curl -s -X POST "http://localhost:8080/withdrawals" `
-  -H "Content-Type: application/json" `
-  -H "Idempotency-Key: idem-lab4-reject-amount-1" `
-  -d '{"chainType":"evm","fromAddress":"0xfrom","toAddress":"0xto","asset":"USDC","amount":1001}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://localhost:8080/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-reject-amount-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xto", "asset":"USDC", "amount":1001 }'
 ```
 
 확인 포인트:
