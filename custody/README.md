@@ -169,8 +169,14 @@ Invoke-RestMethod -Method POST `
 ```powershell
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/FAIL_SYSTEM"
+```
+
+```powershell
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+```
+
+```powershell
 Invoke-RestMethod -Method GET `
   -Uri "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 ```
@@ -186,8 +192,14 @@ Invoke-RestMethod -Method GET `
 ```powershell
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/REPLACED"
+```
+
+```powershell
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+```
+
+```powershell
 Invoke-RestMethod -Method GET `
   -Uri "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 ```
@@ -203,8 +215,14 @@ Invoke-RestMethod -Method GET `
 ```powershell
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/SUCCESS"
+```
+
+```powershell
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+```
+
+```powershell
 Invoke-RestMethod -Method GET `
   -Uri "$BASE_URL/withdrawals/{withdrawalId}"
 ```
