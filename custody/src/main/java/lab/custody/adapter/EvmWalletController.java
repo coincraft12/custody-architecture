@@ -13,8 +13,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameterName;
 import org.web3j.protocol.core.methods.response.EthGetBalance;
-import org.web3j.protocol.core.methods.response.EthGetTransactionByHash;
 import org.web3j.protocol.core.methods.response.EthGetTransactionReceipt;
+import org.web3j.protocol.core.methods.response.EthTransaction;
 import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import org.web3j.utils.Numeric;
 
@@ -62,7 +62,7 @@ public class EvmWalletController {
 
     @GetMapping("/tx/{txHash}")
     public TxLookupResponse transaction(@PathVariable String txHash) throws IOException {
-        EthGetTransactionByHash txResponse = web3j.ethGetTransactionByHash(txHash).send();
+        EthTransaction txResponse = web3j.ethGetTransactionByHash(txHash).send();
         if (txResponse.hasError()) {
             throw new IllegalStateException("Failed to lookup transaction by hash: " + txResponse.getError().getMessage());
         }
