@@ -116,4 +116,12 @@ public class EvmRpcAdapter implements ChainAdapter {
     public ChainType getChainType() {
         return ChainType.EVM;
     }
+
+    public String senderAddress() {
+        return credentials.getAddress();
+    }
+
+    public long chainId() {
+        return configuredChainId;
+    }
 }
