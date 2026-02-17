@@ -81,12 +81,6 @@ chmod +x gradlew
 
 ## 4) 실습용 공통 변수
 
-### Bash (curl)
-
-```bash
-BASE_URL="http://localhost:8080"
-```
-
 ### PowerShell
 
 ```powershell
@@ -99,11 +93,11 @@ $BASE_URL = "http://localhost:8080"
 
 ### 5-1. Withdrawal 생성
 
-```bash
-curl -s -X POST "$BASE_URL/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab1-1" \
-  -d '{"chainType":"EVM","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
 ```
 
 기대 결과
@@ -114,11 +108,11 @@ curl -s -X POST "$BASE_URL/withdrawals" \
 
 ### 5-2. 같은 키 + 같은 바디 재요청
 
-```bash
-curl -s -X POST "$BASE_URL/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab1-1" \
-  -d '{"chainType":"EVM","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
 ```
 
 기대 결과
@@ -127,8 +121,9 @@ curl -s -X POST "$BASE_URL/withdrawals" \
 
 ### 5-3. Attempt 목록 확인
 
-```bash
-curl -s "$BASE_URL/withdrawals/{withdrawalId}/attempts"
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 ```
 
 기대 결과
@@ -139,11 +134,11 @@ curl -s "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 
 ### 5-4. 같은 키 + 다른 바디(충돌)
 
-```bash
-curl -s -X POST "$BASE_URL/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab1-1" \
-  -d '{"chainType":"BFT","fromAddress":"0xfrom-lab1","toAddress":"0xto","asset":"USDC","amount":100}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
+  -Body '{ "chainType":"BFT", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
 ```
 
 기대 결과
@@ -157,21 +152,24 @@ curl -s -X POST "$BASE_URL/withdrawals" \
 
 ### 6-1. 테스트용 Withdrawal 생성
 
-```bash
-curl -s -X POST "$BASE_URL/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab2-1" \
-  -d '{"chainType":"EVM","fromAddress":"0xfrom-lab2","toAddress":"0xto","asset":"USDC","amount":50}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab2-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab2", "toAddress":"0xto", "asset":"USDC", "amount":50 }'
 ```
 
 응답의 `id`를 `{withdrawalId}`로 사용합니다.
 
 ### 6-2. FAIL_SYSTEM 주입 후 broadcast
 
-```bash
-curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/FAIL_SYSTEM"
-curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
-curl -s "$BASE_URL/withdrawals/{withdrawalId}/attempts"
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/FAIL_SYSTEM"
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 ```
 
 기대 결과
@@ -182,10 +180,13 @@ curl -s "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 
 ### 6-3. REPLACED 주입 후 broadcast
 
-```bash
-curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/REPLACED"
-curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
-curl -s "$BASE_URL/withdrawals/{withdrawalId}/attempts"
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/REPLACED"
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 ```
 
 기대 결과
@@ -196,10 +197,13 @@ curl -s "$BASE_URL/withdrawals/{withdrawalId}/attempts"
 
 ### 6-4. SUCCESS 주입 후 broadcast
 
-```bash
-curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/SUCCESS"
-curl -s -X POST "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
-curl -s "$BASE_URL/withdrawals/{withdrawalId}"
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/next-outcome/SUCCESS"
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/sim/withdrawals/{withdrawalId}/broadcast"
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/{withdrawalId}"
 ```
 
 기대 결과
@@ -213,10 +217,11 @@ curl -s "$BASE_URL/withdrawals/{withdrawalId}"
 
 ### 7-1. EVM adapter
 
-```bash
-curl -s -X POST "$BASE_URL/adapter-demo/broadcast/evm" \
-  -H "Content-Type: application/json" \
-  -d '{"from":"a","to":"b","asset":"ETH","amount":10,"nonce":1}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/adapter-demo/broadcast/evm" `
+  -Headers @{ "Content-Type"="application/json" } `
+  -Body '{ "from":"a", "to":"b", "asset":"ETH", "amount":10, "nonce":1 }'
 ```
 
 기대 결과
@@ -226,10 +231,11 @@ curl -s -X POST "$BASE_URL/adapter-demo/broadcast/evm" \
 
 ### 7-2. BFT adapter
 
-```bash
-curl -s -X POST "$BASE_URL/adapter-demo/broadcast/bft" \
-  -H "Content-Type: application/json" \
-  -d '{"from":"a","to":"b","asset":"TOKEN","amount":10,"nonce":1}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/adapter-demo/broadcast/bft" `
+  -Headers @{ "Content-Type"="application/json" } `
+  -Body '{ "from":"a", "to":"b", "asset":"TOKEN", "amount":10, "nonce":1 }'
 ```
 
 기대 결과
@@ -248,11 +254,11 @@ curl -s -X POST "$BASE_URL/adapter-demo/broadcast/bft" \
 
 ### 8-1. 허용 케이스
 
-```bash
-curl -s -X POST "$BASE_URL/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab4-allow-1" \
-  -d '{"chainType":"EVM","fromAddress":"0xfrom","toAddress":"0xto","asset":"USDC","amount":100}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-allow-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
 ```
 
 기대 결과
@@ -261,11 +267,11 @@ curl -s -X POST "$BASE_URL/withdrawals" \
 
 ### 8-2. 화이트리스트 거절 케이스
 
-```bash
-curl -s -X POST "$BASE_URL/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab4-reject-whitelist-1" \
-  -d '{"chainType":"EVM","fromAddress":"0xfrom","toAddress":"0xnot-allowed","asset":"USDC","amount":100}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-reject-whitelist-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xnot-allowed", "asset":"USDC", "amount":100 }'
 ```
 
 기대 결과
@@ -273,8 +279,9 @@ curl -s -X POST "$BASE_URL/withdrawals" \
 - `status = W0_POLICY_REJECTED`
 - 이후 audit 조회:
 
-```bash
-curl -s "$BASE_URL/withdrawals/{withdrawalId}/policy-audits"
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/{withdrawalId}/policy-audits"
 ```
 
 예상 reason
@@ -283,11 +290,11 @@ curl -s "$BASE_URL/withdrawals/{withdrawalId}/policy-audits"
 
 ### 8-3. 금액 초과 거절 케이스
 
-```bash
-curl -s -X POST "$BASE_URL/withdrawals" \
-  -H "Content-Type: application/json" \
-  -H "Idempotency-Key: idem-lab4-reject-amount-1" \
-  -d '{"chainType":"EVM","fromAddress":"0xfrom","toAddress":"0xto","asset":"USDC","amount":1001}'
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-reject-amount-1" } `
+  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xto", "asset":"USDC", "amount":1001 }'
 ```
 
 기대 결과
@@ -307,16 +314,18 @@ curl -s -X POST "$BASE_URL/withdrawals" \
 - 동시 요청에서도 동일 `Idempotency-Key`가 1개의 Withdrawal만 생성하는지 확인
 - 결과적으로 attempt가 불필요하게 증가하지 않는지 확인
 
-### 9-1. 동시 요청 실행 (Bash)
+### 9-1. 동시 요청 실행 (PowerShell)
 
-```bash
-for i in {1..5}; do
-  curl -s -X POST "$BASE_URL/withdrawals" \
-    -H "Content-Type: application/json" \
-    -H "Idempotency-Key: idem-concurrency-1" \
-    -d '{"chainType":"EVM","fromAddress":"0xfrom-concurrent","toAddress":"0xto","asset":"USDC","amount":77}' &
-done
-wait
+```powershell
+1..5 | ForEach-Object {
+  Start-Job -ScriptBlock {
+    param($baseUrl)
+    Invoke-RestMethod -Method POST `
+      -Uri "$baseUrl/withdrawals" `
+      -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-concurrency-1" } `
+      -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-concurrent", "toAddress":"0xto", "asset":"USDC", "amount":77 }'
+  } -ArgumentList $BASE_URL
+} | Receive-Job -Wait -AutoRemoveJob
 ```
 
 ### 9-2. 확인 포인트
