@@ -18,10 +18,10 @@ public class AttemptController {
     private final WithdrawalService withdrawalService;
 
     @GetMapping("/{id}/attempts")
-    public ResponseEntity<AttemptListResponse> listAttempts(@PathVariable UUID id) {
+    public ResponseEntity<List<TxAttempt>> listAttempts(@PathVariable UUID id) {
         withdrawalService.get(id);
         List<TxAttempt> attempts = attemptService.listAttempts(id);
-        return ResponseEntity.ok(new AttemptListResponse(id, attempts.size(), attempts));
+        return ResponseEntity.ok(attempts);
     }
 
     @PostMapping("/{id}/retry")
