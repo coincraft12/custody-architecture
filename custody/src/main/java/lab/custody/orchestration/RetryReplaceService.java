@@ -83,19 +83,37 @@ public class RetryReplaceService {
     }
 
     @Transactional
-    public TxAttempt sync(UUID withdrawalId) {
+    public TxAttempt sync(UUID withdrawalId, long timeoutMs, long pollMs) {
         Withdrawal w = loadWithdrawal(withdrawalId);
         TxAttempt canonical = loadCanonical(withdrawalId);
         ChainAdapter adapter = router.resolve(w.getChainType());
         if (adapter instanceof EvmRpcAdapter rpcAdapter && canonical.getTxHash() != null) {
-            var receiptOpt = rpcAdapter.getReceipt(canonical.getTxHash());
-            if (receiptOpt.isPresent()) {
-                canonical.transitionTo(TxAttemptStatus.INCLUDED);
-                if ("0x1".equalsIgnoreCase(receiptOpt.get().getStatus())) {
-                    canonical.transitionTo(TxAttemptStatus.SUCCESS);
-                    w.transitionTo(WithdrawalStatus.W7_INCLUDED);
-                } else {
-                    canonical.transitionTo(TxAttemptStatus.FAILED);
+            long normalizedTimeoutMs = Math.max(timeoutMs, 0L);
+            long normalizedPollMs = Math.max(pollMs, 100L);
+            long start = System.currentTimeMillis();
+
+            while (System.currentTimeMillis() - start <= normalizedTimeoutMs) {
+                var receiptOpt = rpcAdapter.getReceipt(canonical.getTxHash());
+                if (receiptOpt.isPresent()) {
+                    canonical.transitionTo(TxAttemptStatus.INCLUDED);
+                    if ("0x1".equalsIgnoreCase(receiptOpt.get().getStatus())) {
+                        canonical.transitionTo(TxAttemptStatus.SUCCESS);
+                        w.transitionTo(WithdrawalStatus.W7_INCLUDED);
+                    } else {
+                        canonical.transitionTo(TxAttemptStatus.FAILED);
+                    }
+                    break;
+                }
+
+                if (normalizedTimeoutMs == 0L) {
+                    break;
+                }
+
+                try {
+                    Thread.sleep(normalizedPollMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while waiting for transaction receipt", e);
                 }
             }
         }
@@ -125,6 +143,25 @@ public class RetryReplaceService {
 
             TxAttempt newAttempt = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), canonical.getNonce());
             return txAttemptRepository.save(newAttempt);
+        }
+
+        canonical.transitionTo(TxAttemptStatus.INCLUDED);
+        withdrawal.transitionTo(WithdrawalStatus.W7_INCLUDED);
+        withdrawalRepository.save(withdrawal);
+        return txAttemptRepository.save(canonical);
+    }
+
+    @Transactional
+    public TxAttempt simulateConfirmation(UUID withdrawalId) {
+        Withdrawal withdrawal = loadWithdrawal(withdrawalId);
+        TxAttempt canonical = loadCanonical(withdrawalId);
+
+        if (canonical.getStatus() == TxAttemptStatus.INCLUDED || canonical.getStatus() == TxAttemptStatus.SUCCESS) {
+            return canonical;
+        }
+
+        if (canonical.getStatus() != TxAttemptStatus.BROADCASTED) {
+            throw new InvalidRequestException("Cannot confirm before broadcast. Current canonical status: " + canonical.getStatus());
         }
 
         canonical.transitionTo(TxAttemptStatus.INCLUDED);

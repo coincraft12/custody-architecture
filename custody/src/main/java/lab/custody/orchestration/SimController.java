@@ -23,4 +23,9 @@ public class SimController {
     public Object broadcast(@PathVariable UUID id) {
         return retryReplaceService.simulateBroadcast(id);
     }
+
+    @PostMapping("/withdrawals/{id}/confirm")
+    public Object confirm(@PathVariable UUID id) {
+        return retryReplaceService.simulateConfirmation(id);
+    }
 }

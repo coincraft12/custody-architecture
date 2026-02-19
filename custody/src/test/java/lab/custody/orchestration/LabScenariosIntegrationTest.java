@@ -183,4 +183,48 @@ class LabScenariosIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[2].status").value("INCLUDED"));
     }
+
+    @Test
+    void lab6_broadcastAndConfirmationTracks_areSeparated() throws Exception {
+        MvcResult create = mockMvc.perform(post("/withdrawals")
+                        .header("Idempotency-Key", "idem-lab6-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "chainType": "evm",
+                                  "fromAddress": "0xfrom-lab6",
+                                  "toAddress": "0xto",
+                                  "asset": "USDC",
+                                  "amount": 33
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("W6_BROADCASTED"))
+                .andReturn();
+
+        String withdrawalId = objectMapper.readTree(create.getResponse().getContentAsString()).get("id").asText();
+
+        mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].attemptNo").value(1))
+                .andExpect(jsonPath("$[0].status").value("BROADCASTED"))
+                .andExpect(jsonPath("$[0].canonical").value(true));
+
+        mockMvc.perform(post("/sim/withdrawals/{id}/confirm", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attemptNo").value(1))
+                .andExpect(jsonPath("$.status").value("INCLUDED"));
+
+        mockMvc.perform(get("/withdrawals/{id}", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("W7_INCLUDED"));
+
+        mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].attemptNo").value(1))
+                .andExpect(jsonPath("$[0].status").value("INCLUDED"))
+                .andExpect(jsonPath("$[0].canonical").value(true));
+    }
 }

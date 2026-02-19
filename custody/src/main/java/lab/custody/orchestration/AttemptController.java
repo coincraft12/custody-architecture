@@ -35,7 +35,11 @@ public class AttemptController {
     }
 
     @PostMapping("/{id}/sync")
-    public ResponseEntity<TxAttempt> sync(@PathVariable UUID id) {
-        return ResponseEntity.ok(retryReplaceService.sync(id));
+    public ResponseEntity<TxAttempt> sync(
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "30000") long timeoutMs,
+            @RequestParam(defaultValue = "1500") long pollMs
+    ) {
+        return ResponseEntity.ok(retryReplaceService.sync(id, timeoutMs, pollMs));
     }
 }
