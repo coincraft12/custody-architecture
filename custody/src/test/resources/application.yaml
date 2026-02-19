@@ -5,3 +5,7 @@ custody:
     rpc-url: ""
     chain-id: 11155111
     private-key: ""
+
+policy:
+  max-amount: 1000
+  whitelist-to-addresses: 0xto,0xtrusted

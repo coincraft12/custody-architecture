@@ -2,6 +2,8 @@ package lab.custody.common;
 
 import lab.custody.adapter.BroadcastRejectedException;
 import lab.custody.domain.withdrawal.ChainType;
+import lab.custody.orchestration.IdempotencyConflictException;
+import lab.custody.orchestration.InvalidRequestException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -80,6 +82,28 @@ public class GlobalExceptionHandler {
         );
 
         return ResponseEntity.badRequest().body(body);
+    }
+
+    @ExceptionHandler(InvalidRequestException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidRequest(InvalidRequestException ex) {
+        ErrorResponse body = new ErrorResponse(
+                HttpStatus.BAD_REQUEST.value(),
+                sanitizeMessage(ex.getMessage()),
+                allowedChainTypes()
+        );
+
+        return ResponseEntity.badRequest().body(body);
+    }
+
+    @ExceptionHandler(IdempotencyConflictException.class)
+    public ResponseEntity<ErrorResponse> handleIdempotencyConflict(IdempotencyConflictException ex) {
+        ErrorResponse body = new ErrorResponse(
+                HttpStatus.CONFLICT.value(),
+                sanitizeMessage(ex.getMessage()),
+                allowedChainTypes()
+        );
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     @ExceptionHandler({IllegalStateException.class, RuntimeException.class})
