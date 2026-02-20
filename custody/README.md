@@ -1,14 +1,5 @@
 # custody-architecture
 
-수탁형 지갑 출금 시스템을 **실습 중심**으로 이해하는 프로젝트입니다.
-핵심은 아래 한 문장입니다.
-
-> 출금 시스템은 실패를 제거하는 시스템이 아니라,
-> 실패를 분류하고 canonical attempt를 재선정해
-> 최종 상태로 수렴시키는 시스템이다.
-
----
-
 ## 0) 이 README의 목표
 
 이 문서는 “코드를 읽지 않고도” 다음을 할 수 있게 설계했습니다.
@@ -482,9 +473,7 @@ Withdrawal API 통합 테스트만:
 
 ---
 
-## 14) 실습별 핵심 코드 + 수강생 설명 포인트
-
-아래는 강의에서 그대로 보여주기 좋은 **핵심 코드**와 설명 포인트입니다.
+## 14) 실습별 핵심 코드
 
 ### 실습 1 — Withdrawal / TxAttempt 분리 + Idempotency
 
@@ -516,8 +505,6 @@ return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
         });
 ```
 
-수강생 설명 포인트
-
 - **업무 단위(Withdrawal)** 와 **체인 시도 단위(TxAttempt)** 를 분리해, 재시도/교체가 발생해도 원본 업무 객체는 1개를 유지합니다.
 - 같은 `Idempotency-Key`가 들어오면 재생성이 아니라 기존 건을 재사용합니다.
 - 정책 통과 시 `W4_SIGNING`까지 전이하고, 그 시점에 첫 `TxAttempt`를 1개 생성합니다.
@@ -548,8 +535,6 @@ broadcast(w, replaced);
 var receiptOpt = rpcAdapter.getReceipt(canonical.getTxHash());
 ```
 
-수강생 설명 포인트
-
 - fake 주입이 아니라 **실제 브로드캐스트와 receipt 조회 결과**로 상태가 바뀝니다.
 - `retry`는 새 nonce, `replace`는 같은 nonce(fee bump)라는 규칙으로 canonical attempt를 교체합니다.
 - 최종 포함 여부는 `sync`에서 실제 체인 receipt로 판정합니다.
@@ -578,8 +563,6 @@ byte[] signedMessage = TransactionEncoder.signMessage(rawTransaction, SEPOLIA_CH
 String txHash = rpcCall("eth_sendRawTransaction", List.of(Numeric.toHexString(signedMessage))).asText();
 ```
 
-수강생 설명 포인트
-
 - 오케스트레이터는 `adapter.broadcast(command)`만 호출하고, 체인별 복잡성은 어댑터 내부로 숨깁니다.
 - EVM 어댑터는 `chainId` 검증 → nonce/gas 조회 → 로컬 서명 → `eth_sendRawTransaction` 순으로 동작합니다.
 - RPC URL이 없으면 mock hash를 반환하도록 설계되어 로컬 실습도 끊기지 않습니다.
@@ -602,8 +585,6 @@ if (!toAddressWhitelist.isEmpty() && !toAddressWhitelist.contains(req.toAddress(
 return PolicyDecision.allow();
 ```
 
-수강생 설명 포인트
-
 - 정책은 **허용/거절 + 이유(reason)** 를 함께 반환해야 운영 시 추적이 쉽습니다.
 - `WithdrawalService`가 policy 결과를 `policy-audits`에 항상 남기므로, “왜 거절됐는지”를 API로 확인할 수 있습니다.
 - 상태(`W0_POLICY_REJECTED`)와 감사로그(reason)를 함께 보게 하면 실무 감각이 빨리 올라옵니다.
@@ -622,8 +603,6 @@ public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req
             .orElseGet(() -> { ... create withdrawal once ... });
 }
 ```
-
-수강생 설명 포인트
 
 - 동시 요청의 핵심은 “같은 키로 정말 1건만 생기느냐”입니다.
 - 그래서 검증 포인트가 `id 동일성` + `attempt 1개 유지`입니다.
