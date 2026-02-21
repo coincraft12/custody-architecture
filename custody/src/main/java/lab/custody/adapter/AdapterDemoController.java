@@ -29,25 +29,27 @@ public class AdapterDemoController {
     private long trackAttemptTimeoutMs;
 
     @PostMapping("/broadcast/{type}")
-    public ResponseEntity<ChainAdapter.BroadcastResult> broadcast(
+        public ResponseEntity<ChainAdapter.BroadcastResult> broadcast(
             @PathVariable String type,
             @RequestBody DemoRequest req
-    ) {
+        ) {
         ChainType normalizedType = ChainType.valueOf(type.toUpperCase(Locale.ROOT));
         ChainAdapter adapter = router.resolve(normalizedType);
         long nonce = resolveNonce(adapter, req.nonce());
 
+        long amountWei = ethToWei(req.amount());
+
         ChainAdapter.BroadcastResult result = adapter.broadcast(
-                new ChainAdapter.BroadcastCommand(
-                        UUID.randomUUID(),
-                        req.from(),
-                        req.to(),
-                        req.asset(),
-                        req.amount(),
-                        nonce,
-                        null,
-                        null
-                )
+            new ChainAdapter.BroadcastCommand(
+                UUID.randomUUID(),
+                req.from(),
+                req.to(),
+                req.asset(),
+                amountWei,
+                nonce,
+                null,
+                null
+            )
         );
 
         return ResponseEntity.ok(result);
@@ -147,9 +149,20 @@ public class AdapterDemoController {
             String from,
             String to,
             String asset,
-            long amount,
+            java.math.BigDecimal amount,
             Long nonce
     ) {}
+
+    private long ethToWei(java.math.BigDecimal eth) {
+        if (eth == null) throw new IllegalArgumentException("amount is required");
+        try {
+            java.math.BigDecimal multiplier = new java.math.BigDecimal("1000000000000000000");
+            java.math.BigInteger wei = eth.multiply(multiplier).toBigIntegerExact();
+            return wei.longValueExact();
+        } catch (ArithmeticException | NumberFormatException e) {
+            throw new IllegalArgumentException("invalid amount: must be a decimal with up to 18 fractional digits representing ETH");
+        }
+    }
 
     private long resolveNonce(ChainAdapter adapter, Long nonce) {
         if (nonce != null) {

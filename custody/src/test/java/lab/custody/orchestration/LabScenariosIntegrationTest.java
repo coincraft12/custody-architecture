@@ -33,7 +33,7 @@ class LabScenariosIntegrationTest {
                   "fromAddress": "0xfrom-lab1",
                   "toAddress": "0xto",
                   "asset": "USDC",
-                  "amount": 100
+                  "amount": 1
                 }
                 """;
 
@@ -68,7 +68,7 @@ class LabScenariosIntegrationTest {
                                   "fromAddress": "0xfrom-lab2",
                                   "toAddress": "0xto",
                                   "asset": "USDC",
-                                  "amount": 50
+                                  "amount": 1
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -108,7 +108,7 @@ class LabScenariosIntegrationTest {
                                   "fromAddress": "0xfrom-lab2-inc",
                                   "toAddress": "0xto",
                                   "asset": "USDC",
-                                  "amount": 88
+                                  "amount": 1
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -137,7 +137,7 @@ class LabScenariosIntegrationTest {
                                   "fromAddress": "0xfrom-lab2-sim",
                                   "toAddress": "0xto",
                                   "asset": "USDC",
-                                  "amount": 77
+                                  "amount": 1
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -195,7 +195,7 @@ class LabScenariosIntegrationTest {
                                   "fromAddress": "0xfrom-lab6",
                                   "toAddress": "0xto",
                                   "asset": "USDC",
-                                  "amount": 33
+                                  "amount": 1
                                 }
                                 """))
                 .andExpect(status().isOk())

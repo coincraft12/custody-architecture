@@ -4,6 +4,7 @@ import lab.custody.orchestration.CreateWithdrawalRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -11,14 +12,14 @@ import java.util.stream.Collectors;
 @Component
 public class PolicyEngine {
 
-    private final long maxAmount;
+    private final BigDecimal maxAmountEth;
     private final Set<String> toAddressWhitelist;
 
     public PolicyEngine(
-            @Value("${policy.max-amount:1000}") long maxAmount,
+            @Value("${policy.max-amount:1000}") BigDecimal maxAmountEth,
             @Value("${policy.whitelist-to-addresses:}") String whitelistToAddresses
     ) {
-        this.maxAmount = maxAmount;
+        this.maxAmountEth = maxAmountEth;
         this.toAddressWhitelist = Arrays.stream(whitelistToAddresses.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isBlank())
@@ -26,8 +27,8 @@ public class PolicyEngine {
     }
 
     public PolicyDecision evaluate(CreateWithdrawalRequest req) {
-        if (req.amount() > maxAmount) {
-            return PolicyDecision.reject("AMOUNT_LIMIT_EXCEEDED: max=" + maxAmount + ", requested=" + req.amount());
+        if (req.amount().compareTo(maxAmountEth) > 0) {
+            return PolicyDecision.reject("AMOUNT_LIMIT_EXCEEDED: max=" + maxAmountEth + ", requested=" + req.amount());
         }
 
         if (!toAddressWhitelist.isEmpty() && !toAddressWhitelist.contains(req.toAddress())) {

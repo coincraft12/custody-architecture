@@ -32,7 +32,7 @@ class WithdrawalControllerIntegrationTest {
                                   "fromAddress": "0xfrom",
                                   "toAddress": "0xto",
                                   "asset": "USDC",
-                                  "amount": 100
+                                  "amount": 1
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -51,7 +51,7 @@ class WithdrawalControllerIntegrationTest {
                                   "fromAddress": "0xfrom",
                                   "toAddress": "0xto",
                                   "asset": "USDC",
-                                  "amount": 100
+                                  "amount": 1
                                 }
                                 """))
                 .andExpect(status().isBadRequest())
@@ -68,7 +68,7 @@ class WithdrawalControllerIntegrationTest {
                                   "fromAddress": "0xfrom",
                                   "toAddress": "0xto",
                                   "asset": "USDC",
-                                  "amount": 100
+                                  "amount": 1
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -89,7 +89,7 @@ class WithdrawalControllerIntegrationTest {
                                   "fromAddress": "0xfrom",
                                   "toAddress": "0xto",
                                   "asset": "USDC",
-                                  "amount": 100
+                                  "amount": 1
                                 }
                                 """))
                 .andExpect(status().isOk());
@@ -103,7 +103,7 @@ class WithdrawalControllerIntegrationTest {
                                   "fromAddress": "0xfrom",
                                   "toAddress": "0xto",
                                   "asset": "USDC",
-                                  "amount": 100
+                                  "amount": 1
                                 }
                                 """))
                 .andExpect(status().isConflict())
@@ -131,7 +131,7 @@ class WithdrawalControllerIntegrationTest {
                                   "fromAddress": "0xfrom",
                                   "toAddress": "0xto",
                                   "asset": "USDC",
-                                  "amount": 100
+                                  "amount": 1
                                 }
                                 """))
                 .andExpect(status().isBadRequest())
@@ -149,7 +149,7 @@ class WithdrawalControllerIntegrationTest {
                                   "fromAddress": "0xfrom",
                                   "toAddress": "0xnot-allowed",
                                   "asset": "USDC",
-                                  "amount": 100
+                                  "amount": 1
                                 }
                                 """))
                 .andExpect(status().isOk())

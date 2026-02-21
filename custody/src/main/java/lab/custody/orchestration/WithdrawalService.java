@@ -18,6 +18,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -50,13 +52,15 @@ public class WithdrawalService {
     }
 
     private Withdrawal createAndBroadcast(String idempotencyKey, ChainType chainType, CreateWithdrawalRequest req) {
+        long amountWei = ethToWei(req.amount());
+
         Withdrawal saved = withdrawalRepository.save(Withdrawal.requested(
                 idempotencyKey,
                 chainType,
                 req.fromAddress(),
                 req.toAddress(),
                 req.asset(),
-                req.amount()
+            amountWei
         ));
         if (ledgerService != null) {
             saved = ledgerService.saveWithdrawal(saved);
@@ -118,7 +122,7 @@ public class WithdrawalService {
                         withdrawal.getFromAddress(),
                         withdrawal.getToAddress(),
                         withdrawal.getAsset(),
-                        withdrawal.getAmount(),
+                withdrawal.getAmount(),
                         attempt.getNonce(),
                         attempt.getMaxPriorityFeePerGas(),
                         attempt.getMaxFeePerGas()
@@ -132,11 +136,13 @@ public class WithdrawalService {
     }
 
     private Withdrawal validateIdempotentRequest(Withdrawal existing, ChainType chainType, CreateWithdrawalRequest req) {
+        long reqWei = ethToWei(req.amount());
+
         boolean matches = existing.getChainType() == chainType
-                && existing.getFromAddress().equals(req.fromAddress())
-                && existing.getToAddress().equals(req.toAddress())
-                && existing.getAsset().equals(req.asset())
-                && existing.getAmount() == req.amount();
+            && existing.getFromAddress().equals(req.fromAddress())
+            && existing.getToAddress().equals(req.toAddress())
+            && existing.getAsset().equals(req.asset())
+            && existing.getAmount() == reqWei;
 
         if (!matches) {
             throw new IdempotencyConflictException("same Idempotency-Key cannot be used with a different request body");
@@ -165,6 +171,17 @@ public class WithdrawalService {
             return ChainType.valueOf(chainType.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             throw new InvalidRequestException("invalid chainType: " + chainType);
+        }
+    }
+
+    private long ethToWei(BigDecimal eth) {
+        if (eth == null) throw new InvalidRequestException("amount is required");
+        try {
+            BigDecimal multiplier = new BigDecimal("1000000000000000000");
+            BigInteger wei = eth.multiply(multiplier).toBigIntegerExact();
+            return wei.longValueExact();
+        } catch (ArithmeticException | NumberFormatException e) {
+            throw new InvalidRequestException("invalid amount: must be a decimal with up to 18 fractional digits representing ETH");
         }
     }
 }

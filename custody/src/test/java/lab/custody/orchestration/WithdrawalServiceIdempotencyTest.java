@@ -50,8 +50,10 @@ class WithdrawalServiceIdempotencyTest {
 
     @Test
     void sameIdempotencyKey_doesNotRebroadcast() {
-        CreateWithdrawalRequest req = new CreateWithdrawalRequest("evm", "0xfrom", "0xto", "ETH", 1L);
-        Withdrawal w = Withdrawal.requested("idem-1", ChainType.EVM, "0xfrom", "0xto", "ETH", 1L);
+        CreateWithdrawalRequest req = new CreateWithdrawalRequest("evm", "0xfrom", "0xto", "ETH", new java.math.BigDecimal("1"));
+        // 1 ETH in wei
+        long oneEthWei = 1000000000000000000L;
+        Withdrawal w = Withdrawal.requested("idem-1", ChainType.EVM, "0xfrom", "0xto", "ETH", oneEthWei);
 
         when(withdrawalRepository.findByIdempotencyKey("idem-1")).thenReturn(Optional.empty(), Optional.of(w));
         when(withdrawalRepository.save(any())).thenReturn(w);

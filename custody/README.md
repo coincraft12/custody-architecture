@@ -9,6 +9,10 @@
 - 실습 5(심화: 관찰성/동시성) 수행
 - 자동 테스트 실행 및 실패 시 빠른 원인 파악
 
+주의: 기본 설정은 목(Mock) 모드입니다. 별도 RPC 설정을 하지 않으면(예: `CUSTODY_CHAIN_MODE`가 `mock`일 때)
+서버는 목 어댑터를 사용해 네트워크 없이 동작합니다. 실제 체인 RPC를 사용하려면 `CUSTODY_CHAIN_MODE`를 `rpc`로 설정하고,
+RPC 관련 세부 설정(RPC URL, 체인 ID, 개인키 등)을 애플리케이션 설정(`application.yml` 또는 환경변수)에서 구성하세요. 이 README의 RPC 관련 단계는 실제 RPC 사용 시의 동작을 설명합니다.
+
 ---
 
 ## 1) 실습 전체 지도
@@ -49,10 +53,11 @@
 - Java 21+
 - Gradle Wrapper (`./gradlew`)
 - 기본 포트: `8080`
-- 권장 프로파일: `SPRING_PROFILES_ACTIVE=labs-rpc` (내부적으로 `custody.chain.mode=rpc`)
-- EVM RPC URL 환경변수: `CUSTODY_EVM_RPC_URL` (기본값: `https://ethereum-sepolia-rpc.publicnode.com`)
-- EVM 체인 ID 환경변수: `CUSTODY_EVM_CHAIN_ID` (Sepolia: `11155111`, Hoodi는 해당 체인 ID 값 사용)
-- 송신 지갑 개인키 환경변수: `CUSTODY_EVM_PRIVATE_KEY`
+- 권장 프로파일: `SPRING_PROFILES_ACTIVE=labs-rpc` (내부적으로 `custody.chain.mode=rpc`) — 선택 사항 (기본은 목(Mock) 모드)
+ - 서비스 모드 환경변수: `CUSTODY_CHAIN_MODE` (`mock` 또는 `rpc`) — 기본값: `mock`
+   - `mock`: 네트워크 호출 없이 내부 mock adapter로 동작
+   - `rpc`: 실제 RPC를 사용해 브로드캐스트/영수증 확인 수행
+   - RPC 모드에서 필요한 세부 설정(RPC URL, 체인 ID, 개인키 등)은 애플리케이션 설정(`application.yml` 또는 환경변수)을 통해 구성하세요.
 
 H2 Console
 
@@ -223,13 +228,49 @@ Invoke-RestMethod -Method GET `
 - receipt가 확인되면 Withdrawal 상태가 `W7_INCLUDED`로 전이
 - canonical attempt가 `INCLUDED`로 전이되고, 성공 receipt(`0x1`)이면 `SUCCESS`로 전이
 
+### 6-5. Confirmation Tracker 실습 — 영수증(Receipt) 확인 후 Included 전이
+
+설명: 실제 RPC를 통해 영수증(receipt)을 확인하는 백그라운드 트래커(Confirmation Tracker)가 실행될 때,
+영수증이 확인되면 해당 canonical `TxAttempt`와 `Withdrawal`이 자동으로 `INCLUDED` 상태로 전이되는 흐름을 확인합니다.
+
+요구사항
+
+- 서버는 `CUSTODY_CHAIN_MODE`가 `rpc`인 상태에서 실행되어야 합니다. RPC 관련 세부 설정(RPC URL, 체인 ID, 개인키 등)은 애플리케이션 설정에서 구성하세요.
+- Confirmation Tracker는 주기적으로(또는 이벤트 기반) `eth_getTransactionReceipt(txHash)`를 호출해 receipt를 확인합니다.
+
+절차
+
+1. Withdrawal 생성 및 브로드캐스트 (6-1 ~ 6-3 참고)
+2. 브로드캐스트된 `txHash`를 확보
+3. Confirmation Tracker가 receipt를 발견하면 내부에서 `attempt.status -> INCLUDED`, `withdrawal.status -> W7_INCLUDED`로 전이
+
+확인 방법
+
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/{withdrawalId}"
+```
+
+- `status`가 `W7_INCLUDED`인지 확인
+- canonical attempt의 상태가 `INCLUDED`인지 확인
+
+디버깅 / 수동 강제 확인
+
+- 즉시 영수증 조회 및 수동 동기화: `POST /withdrawals/{withdrawalId}/sync` 호출
+- txHash에 대해 체인에서 수동으로 receipt를 확인하려면 `GET /evm/tx/{txHash}/wait` 사용
+
+운영 주의사항
+
+- Confirmation Tracker는 재시도/replace에 의해 바뀐 canonical에 대해 올바른 txHash를 추적해야 합니다.
+- 다중 체인/네트워크 지연을 고려해 poll 간격과 타임아웃을 적절히 설정하세요.
+
 ---
 
 ## 7) 실습 3 — ChainAdapter 2종 검증
 
 ### 7-1. EVM adapter (Sepolia RPC 실제 호출)
 
-먼저 RPC URL/송신 지갑 개인키를 설정합니다.
+먼저 서비스 모드를 `rpc`로 설정하고, 프로젝트 설정에서 RPC URL/체인 ID/개인키 등을 구성하세요.
 
 ```powershell
 $env:CUSTODY_CHAIN_MODE = "rpc"
@@ -238,7 +279,7 @@ $env:CUSTODY_EVM_CHAIN_ID = "11155111"
 $env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_SEPOLIA_OR_HOODI_PRIVATE_KEY>"
 ```
 
-> 주의: 개인키는 테스트용 지갑만 사용하세요. 절대 운영/실지갑 키를 사용하지 마세요.
+주의: RPC 모드에서 사용하는 RPC URL, 체인 ID, 개인키 등의 세부 구성은 `application.yml` 또는 환경변수로 제공합니다. 개인키는 테스트용 지갑만 사용하세요. 절대 운영/실지갑 키를 사용하지 마세요.
 
 서버를 재시작한 뒤 아래를 호출하세요.
 
@@ -423,6 +464,26 @@ Withdrawal API 통합 테스트만:
 ```bash
 ./gradlew test --tests "lab.custody.orchestration.WithdrawalControllerIntegrationTest"
 ```
+
+---
+
+목 테스트 (Mock Tests)
+
+설명: 로컬 개발/CI에서 체인 RPC를 직접 호출하지 않고 동작을 확인하려면 목 모드로 테스트를 실행하세요. 목 테스트는 실제 네트워크 연결 없이 내부 mock adapter/fixture를 사용합니다.
+
+방법 (PowerShell 예)
+
+```powershell
+# 1) 간단히: 모드만 mock으로 설정
+$env:CUSTODY_CHAIN_MODE = "mock"
+./gradlew test --tests "**IntegrationTest*"
+
+# 또는 프로파일을 사용한다면(프로젝트에 설정된 경우)
+$env:SPRING_PROFILES_ACTIVE = "labs-mock"
+./gradlew test
+```
+
+주의: 프로젝트의 프로파일/설정은 환경에 따라 다를 수 있습니다. 목 테스트는 네트워크 불안정성의 영향을 받지 않으므로 로컬 개발과 CI에서 빠른 확인용으로 사용하세요.
 
 ---
 
@@ -611,6 +672,63 @@ public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req
 
 ## 보안/안전 가드
 
+---
+
+### Confirmation Tracker — Receipt Polling 및 상태 전이 (핵심 코드)
+
+아래는 Confirmation Tracker의 간단한 구현 예시입니다. 주기적으로(또는 이벤트 기반으로) 체인에서 `eth_getTransactionReceipt(txHash)`를 호출해
+영수증을 발견하면 해당 `TxAttempt`와 `Withdrawal`의 상태를 전이합니다. 핵심 원칙은 `txHash`로 시점을 정확히 확인하고,
+canonical이 변경됐을 경우에도 올바른 attempt를 찾아 업데이트하는 것입니다.
+
+```java
+@Component
+public class ConfirmationTracker {
+  private final TxAttemptRepository attemptRepo;
+  private final WithdrawalRepository withdrawalRepo;
+  private final RpcAdapter rpcAdapter;
+
+  public ConfirmationTracker(TxAttemptRepository attemptRepo,
+                 WithdrawalRepository withdrawalRepo,
+                 RpcAdapter rpcAdapter) {
+    this.attemptRepo = attemptRepo;
+    this.withdrawalRepo = withdrawalRepo;
+    this.rpcAdapter = rpcAdapter;
+  }
+
+  @Scheduled(fixedDelayString = "${confirmation.tracker.poll-ms:5000}")
+  @Transactional
+  public void pollPendingReceipts() {
+    List<TxAttempt> pending = attemptRepo.findCanonicalPendingAttempts(); // BROADCASTED / PENDING
+    for (TxAttempt a : pending) {
+      String txHash = a.getTxHash();
+      if (txHash == null) continue;
+
+      var receiptOpt = rpcAdapter.getReceipt(txHash);
+      if (receiptOpt.isPresent()) {
+        var receipt = receiptOpt.get();
+        a.setStatus(TxAttemptStatus.INCLUDED);
+        a.setReceiptStatus(receipt.getStatusHex());
+        attemptRepo.save(a);
+
+        Withdrawal w = withdrawalRepo.findById(a.getWithdrawalId()).orElseThrow();
+        w.transitionTo(WithdrawalStatus.W7_INCLUDED);
+        if ("0x1".equals(receipt.getStatusHex())) {
+          w.setResult(WithdrawalResult.SUCCESS);
+        } else {
+          w.setResult(WithdrawalResult.FAILED);
+        }
+        withdrawalRepo.save(w);
+      }
+    }
+  }
+}
+```
+
+- `findCanonicalPendingAttempts()`는 현재 canonical이며 포함되지 않은 attempt만 반환해야 합니다.
+- 트래커는 `txHash`가 canonical에 남아있는지, 또는 이미 replace/retry로 canonical이 바뀌었는지를 고려해 영수증을 적용해야 합니다.
+- 수작업 동기화(`POST /withdrawals/{id}/sync`)는 즉시 영수증을 확인해 동일한 상태 전이를 수행합니다.
+
+
 - `custody.evm.chain-id=1`(mainnet)은 부팅 시 차단됩니다.
-- `CUSTODY_EVM_PRIVATE_KEY`, `CUSTODY_EVM_RPC_URL` 미설정 시 부팅 실패합니다.
+- `CUSTODY_CHAIN_MODE`가 `rpc`일 경우 RPC 관련 설정이 올바르게 구성되지 않으면 부팅이 실패할 수 있습니다 (RPC URL, 체인 ID, 개인키 등).
 - 개인키는 절대 커밋하지 마세요.
