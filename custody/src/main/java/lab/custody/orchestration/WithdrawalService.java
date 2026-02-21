@@ -6,7 +6,6 @@ import lab.custody.adapter.EvmRpcAdapter;
 import lab.custody.domain.policy.PolicyAuditLog;
 import lab.custody.domain.policy.PolicyAuditLogRepository;
 import lab.custody.domain.txattempt.TxAttempt;
-import lab.custody.domain.txattempt.TxAttemptRepository;
 import lab.custody.domain.txattempt.TxAttemptStatus;
 import lab.custody.domain.withdrawal.ChainType;
 import lab.custody.domain.withdrawal.Withdrawal;
@@ -15,6 +14,7 @@ import lab.custody.domain.withdrawal.WithdrawalStatus;
 import lab.custody.orchestration.policy.PolicyDecision;
 import lab.custody.orchestration.policy.PolicyEngine;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,8 +30,16 @@ public class WithdrawalService {
     private final AttemptService attemptService;
     private final PolicyEngine policyEngine;
     private final PolicyAuditLogRepository policyAuditLogRepository;
-    private final TxAttemptRepository txAttemptRepository;
     private final ChainAdapterRouter router;
+    
+    @Autowired(required = false)
+    private ApprovalService approvalService;
+    
+    @Autowired(required = false)
+    private LedgerService ledgerService;
+    
+    @Autowired(required = false)
+    private ConfirmationTracker confirmationTracker;
 
     @Transactional
     public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
@@ -50,18 +58,49 @@ public class WithdrawalService {
                 req.asset(),
                 req.amount()
         ));
+        if (ledgerService != null) {
+            saved = ledgerService.saveWithdrawal(saved);
+        }
 
         PolicyDecision decision = policyEngine.evaluate(req);
         policyAuditLogRepository.save(PolicyAuditLog.of(saved.getId(), decision.allowed(), decision.reason()));
 
         if (!decision.allowed()) {
             saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
+            if (ledgerService != null) {
+                return ledgerService.saveWithdrawal(saved);
+            }
+            return withdrawalRepository.save(saved);
+        }
+
+        // Approval stage (currently auto-approved). If ApprovalService is not present, default to approved.
+        boolean approved = approvalService == null || approvalService.requestApproval(saved);
+        if (!approved) {
+            saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
+            if (ledgerService != null) {
+                return ledgerService.saveWithdrawal(saved);
+            }
             return withdrawalRepository.save(saved);
         }
 
         TxAttempt attempt = attemptService.createAttempt(saved.getId(), req.fromAddress(), resolveInitialNonce(chainType, req.fromAddress()));
         broadcastAttempt(saved, attempt);
-        return withdrawalRepository.save(saved);
+
+        // persist latest state via ledger if available
+        if (ledgerService != null) {
+            ledgerService.saveAttempt(attempt);
+            saved = ledgerService.saveWithdrawal(saved);
+        } else {
+            // fallback: ensure withdrawal persisted
+            withdrawalRepository.save(saved);
+        }
+
+        // start async confirmation tracking if available
+        if (confirmationTracker != null) {
+            confirmationTracker.startTracking(attempt);
+        }
+
+        return saved;
     }
 
     private long resolveInitialNonce(ChainType chainType, String fromAddress) {
@@ -89,7 +128,7 @@ public class WithdrawalService {
         attempt.setTxHash(result.txHash());
         attempt.transitionTo(TxAttemptStatus.BROADCASTED);
         withdrawal.transitionTo(WithdrawalStatus.W6_BROADCASTED);
-        txAttemptRepository.save(attempt);
+        // saving of attempt/wdl is handled by LedgerService by caller
     }
 
     private Withdrawal validateIdempotentRequest(Withdrawal existing, ChainType chainType, CreateWithdrawalRequest req) {

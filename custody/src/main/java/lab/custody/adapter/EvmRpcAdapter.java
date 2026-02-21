@@ -4,9 +4,7 @@ import lab.custody.domain.withdrawal.ChainType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
-import org.web3j.crypto.Credentials;
 import org.web3j.crypto.RawTransaction;
-import org.web3j.crypto.TransactionEncoder;
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameterName;
 import org.web3j.protocol.core.methods.response.EthChainId;
@@ -15,6 +13,8 @@ import org.web3j.protocol.core.methods.response.EthSendTransaction;
 import org.web3j.protocol.core.methods.response.EthTransaction;
 import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import org.web3j.utils.Numeric;
+
+import lab.custody.adapter.Signer;
 
 import java.io.IOException;
 import java.math.BigInteger;
@@ -32,19 +32,16 @@ public class EvmRpcAdapter implements ChainAdapter {
 
     private final Web3j web3j;
     private final long configuredChainId;
-    private final Credentials credentials;
+    private final Signer signer;
 
     public EvmRpcAdapter(
             Web3j web3j,
             @Value("${custody.evm.chain-id}") long configuredChainId,
-            @Value("${custody.evm.private-key:}") String privateKey
+            Signer signer
     ) {
         this.web3j = web3j;
         this.configuredChainId = configuredChainId;
-        if (privateKey == null || privateKey.isBlank()) {
-            throw new IllegalStateException("custody.evm.private-key must be configured when custody.chain.mode=rpc");
-        }
-        this.credentials = Credentials.create(privateKey.trim());
+        this.signer = signer;
     }
 
     @Override
@@ -56,9 +53,9 @@ public class EvmRpcAdapter implements ChainAdapter {
         ensureConnectedChainIdMatchesConfigured();
 
         try {
-            BigInteger nonce = command.nonce() >= 0
+                BigInteger nonce = command.nonce() >= 0
                     ? BigInteger.valueOf(command.nonce())
-                    : getPendingNonce(credentials.getAddress());
+                    : getPendingNonce(signer.getAddress());
             BigInteger valueWei = BigInteger.valueOf(command.amount());
             BigInteger maxPriorityFeePerGas = command.maxPriorityFeePerGas() != null
                     ? BigInteger.valueOf(command.maxPriorityFeePerGas())
@@ -67,7 +64,7 @@ public class EvmRpcAdapter implements ChainAdapter {
                     ? BigInteger.valueOf(command.maxFeePerGas())
                     : DEFAULT_MAX_FEE_PER_GAS;
 
-            RawTransaction rawTransaction = RawTransaction.createEtherTransaction(
+                RawTransaction rawTransaction = RawTransaction.createEtherTransaction(
                     configuredChainId,
                     nonce,
                     GAS_LIMIT,
@@ -75,10 +72,9 @@ public class EvmRpcAdapter implements ChainAdapter {
                     valueWei,
                     maxPriorityFeePerGas,
                     maxFeePerGas
-            );
+                );
 
-            byte[] signedMessage = TransactionEncoder.signMessage(rawTransaction, configuredChainId, credentials);
-            String signedTxHex = Numeric.toHexString(signedMessage);
+                String signedTxHex = signer.sign(rawTransaction, configuredChainId);
 
             EthSendTransaction sent = web3j.ethSendRawTransaction(signedTxHex).send();
             if (sent.hasError()) {
@@ -121,7 +117,7 @@ public class EvmRpcAdapter implements ChainAdapter {
     }
 
     public String getSenderAddress() {
-        return credentials.getAddress();
+        return signer.getAddress();
     }
 
     public long getChainId() {

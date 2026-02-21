@@ -9,9 +9,9 @@ import lab.custody.domain.withdrawal.Withdrawal;
 import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lab.custody.orchestration.policy.PolicyDecision;
 import lab.custody.orchestration.policy.PolicyEngine;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -33,7 +33,20 @@ class WithdrawalServiceIdempotencyTest {
     @Mock ChainAdapterRouter router;
     @Mock ChainAdapter adapter;
 
-    @InjectMocks WithdrawalService withdrawalService;
+    WithdrawalService withdrawalService;
+
+    @BeforeEach
+    void setUp() {
+        // Create WithdrawalService with required dependencies
+        // Optional dependencies (approvalService, ledgerService, confirmationTracker) will be null
+        withdrawalService = new WithdrawalService(
+                withdrawalRepository,
+                attemptService,
+                policyEngine,
+                policyAuditLogRepository,
+                router
+        );
+    }
 
     @Test
     void sameIdempotencyKey_doesNotRebroadcast() {

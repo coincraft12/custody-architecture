@@ -67,7 +67,7 @@ H2 Console
 
 ```bash
 cd custody
-chmod +x gradlew
+./gradlew build clean
 ./gradlew bootRun
 ```
 
