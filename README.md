@@ -48,6 +48,19 @@
    - `rpc`: 실제 RPC를 사용해 브로드캐스트/영수증 확인 수행
    - RPC 모드에서 필요한 세부 설정(RPC URL, 체인 ID, 개인키 등)은 애플리케이션 설정(`application.yml` 또는 환경변수)을 통해 구성하세요.
 
+   - RPC 설정(PowerShell):
+     - `$env:CUSTODY_CHAIN_MODE = "rpc"`
+     - `$env:CUSTODY_EVM_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com"`
+     - `$env:CUSTODY_EVM_CHAIN_ID = "11155111"`
+     - `$env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_PRIVATE_KEY>"`
+   - 사내 프록시 설정 (PowerShell)
+     - `$env:CUSTODY_EVM_PROXY_ENABLED = "true"`
+     - `$env:CUSTODY_EVM_PROXY_HOST = "127.0.0.1"`
+     - `$env:CUSTODY_EVM_PROXY_PORT = "8080"`
+     - 인증 프록시라면 추가:
+     - `$env:CUSTODY_EVM_PROXY_USERNAME = "<username>"`
+     - `$env:CUSTODY_EVM_PROXY_PASSWORD = "<password>"`
+
 H2 Console
 
 - URL: `http://localhost:8080/h2`
