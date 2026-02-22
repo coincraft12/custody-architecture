@@ -218,43 +218,7 @@ $w = Invoke-RestMethod -Method POST `
 - 동시 요청에서도 동일 `Idempotency-Key`가 1개의 Withdrawal만 생성하는지 확인
 - 결과적으로 attempt가 불필요하게 증가하지 않는지 확인
 
-### 6-1. 동시 요청 실행 (PowerShell)
-
-```powershell
-$from    = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
-$to      = "0x1111111111111111111111111111111111111111"
-$idemp   = "idem-concurrency-1"   # 동일 멱등키 고정
-
-$jobs = 1..5 | ForEach-Object {
-  Start-Job -ScriptBlock {
-    param($BASE_URL, $from, $to, $idemp)
-
-    Invoke-RestMethod -Method POST `
-      -Uri "$BASE_URL/withdrawals" `
-      -Headers @{ 
-        "Content-Type"  = "application/json"
-        "Idempotency-Key" = $idemp 
-      } `
-      -Body (@{
-        chainType   = "EVM"
-        fromAddress = $from
-        toAddress   = $to
-        asset       = "USDC"
-        amount      = 0.00001
-      } | ConvertTo-Json -Depth 10)
-  } -ArgumentList $BASE_URL, $from, $to, $idemp
-}
-$jobs | Receive-Job -Wait -AutoRemoveJob
-
-```
-
-### 6-2. 확인 포인트
-
-- 반환된 `id`가 모두 동일한지
-- `/withdrawals/{id}/attempts`에서 초기 attempt가 1개로 유지되는지
-
-
-### 6-3. Withdrawal 생성
+### 6-1. Withdrawal 생성
 
 ```powershell
 $from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
@@ -289,7 +253,7 @@ updatedAt      : 2026-02-21T16:31:18.901122Z
 chainType      : EVM
 ```
 
-### 6-4. 같은 키 + 같은 바디 재요청
+### 6-2. 같은 키 + 같은 바디 재요청
 
 ```powershell
 $w = Invoke-RestMethod -Method POST `
@@ -309,7 +273,7 @@ $w
 
 - 첫 요청과 **같은 withdrawal id** 반환
 
-### 6-5. Attempt 목록 확인
+### 6-3. Attempt 목록 확인
 
 ```powershell
 Invoke-RestMethod -Method GET `
@@ -338,7 +302,7 @@ createdAt            : 2026-02-21T16:31:18.100507Z
 > 참고: `attemptCount = 0`이면 해당 withdrawal은 아직 브로드캐스트 시도가 없다는 뜻입니다
 > (예: policy rejected된 건).
 
-### 6-6. 같은 키 + 다른 바디(충돌)
+### 6-4. 같은 키 + 다른 바디(충돌)
 
 ```powershell
 $from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
@@ -362,6 +326,43 @@ $w
 
 - HTTP 409
 - 메시지: `same Idempotency-Key cannot be used with a different request body`
+
+### 6-5. 동시 요청 실행 (PowerShell)
+
+```powershell
+$from    = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+$to      = "0x1111111111111111111111111111111111111111"
+$idemp   = "idem-concurrency-2"   # 동일 멱등키 고정
+
+$jobs = 1..5 | ForEach-Object {
+  Start-Job -ScriptBlock {
+    param($BASE_URL, $from, $to, $idemp)
+
+    try {
+      Invoke-RestMethod -Method POST `
+        -Uri "$BASE_URL/withdrawals" `
+        -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
+        -Body (@{
+          chainType="EVM"; fromAddress=$from; toAddress=$to; asset="USDC"; amount=0.00001
+        } | ConvertTo-Json -Depth 10)
+    } catch {
+      $r = $_.Exception.Response
+      $sr = New-Object System.IO.StreamReader($r.GetResponseStream())
+      $sr.ReadToEnd()
+    }
+  } -ArgumentList $BASE_URL, $from, $to, $idemp
+}
+
+$jobs | Receive-Job -Wait -AutoRemoveJob
+
+
+```
+
+### 6-6. 확인 포인트
+
+- 반환된 `id`가 모두 동일한지
+- `/withdrawals/{id}/attempts`에서 초기 attempt가 1개로 유지되는지
+
 
 ---
 
@@ -628,12 +629,19 @@ return PolicyDecision.allow();
 핵심 코드 (`WithdrawalService#createOrGet`, `#createAndBroadcast`, `#validateIdempotentRequest`, `AttemptService#createAttempt`)
 
 ```java
-@Transactional
 public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
     ChainType chainType = parseChainType(req.chainType());
-    return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
-            .map(existing -> validateIdempotentRequest(existing, chainType, req))
-            .orElseGet(() -> createAndBroadcast(idempotencyKey, chainType, req));
+    ReentrantLock lock = idempotencyLocks.computeIfAbsent(idempotencyKey, key -> new ReentrantLock());
+    lock.lock();
+    try {
+        return transactionTemplate.execute(status ->
+                withdrawalRepository.findByIdempotencyKey(idempotencyKey)
+                        .map(existing -> validateIdempotentRequest(existing, chainType, req))
+                        .orElseGet(() -> createAndBroadcast(idempotencyKey, chainType, req))
+        );
+    } finally {
+        lock.unlock();
+    }
 }
 ```
 
@@ -660,6 +668,7 @@ if (!matches) {
 
 - **업무 단위(Withdrawal)** 와 **시도 단위(TxAttempt)** 를 분리해서 retry/replace가 일어나도 원본 Withdrawal은 유지합니다.
 - 같은 `Idempotency-Key` + 동일 바디면 기존 Withdrawal을 반환하고, 같은 키 + 다른 바디면 `409` 충돌을 유도합니다.
+- 같은 `Idempotency-Key` 동시 요청은 `ReentrantLock`으로 직렬화하고, 락 내부에서 `TransactionTemplate`로 조회/생성/브로드캐스트를 커밋까지 묶어 중복 브로드캐스트(`already known`)를 방지합니다.
 - 생성 시점에 첫 `TxAttempt`를 만들고 브로드캐스트하며, 가능하면 `ConfirmationTracker` 비동기 추적도 시작합니다.
 - 현재 구현에는 `ApprovalService`, `LedgerService`가 선택 주입(`@Autowired(required=false)`)으로 연결될 수 있는 훅이 포함되어 있습니다.
 
@@ -765,12 +774,16 @@ if (remoteChainId != configuredChainId) {
 핵심 코드 (`WithdrawalService#createOrGet`, `ConfirmationTracker`)
 
 ```java
-@Transactional
-public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
-    ChainType chainType = parseChainType(req.chainType());
-    return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
-            .map(existing -> validateIdempotentRequest(existing, chainType, req))
-            .orElseGet(() -> createAndBroadcast(idempotencyKey, chainType, req));
+ReentrantLock lock = idempotencyLocks.computeIfAbsent(idempotencyKey, key -> new ReentrantLock());
+lock.lock();
+try {
+    return transactionTemplate.execute(status ->
+            withdrawalRepository.findByIdempotencyKey(idempotencyKey)
+                    .map(existing -> validateIdempotentRequest(existing, chainType, req))
+                    .orElseGet(() -> createAndBroadcast(idempotencyKey, chainType, req))
+    );
+} finally {
+    lock.unlock();
 }
 ```
 
@@ -791,7 +804,7 @@ while (tries < 60) {
 timeoutAttempt.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
 ```
 
-- `@Transactional` + 멱등성 키 조회/검증 흐름이 동시 요청에서도 중복 생성 방지의 핵심입니다.
+- 단순 `@Transactional`만으로는 동시 요청에서 중복 브로드캐스트가 발생할 수 있어, 현재 구현은 `Idempotency-Key`별 JVM 락 + `TransactionTemplate`로 커밋 완료까지 직렬화합니다.
 - 현재 `ConfirmationTracker`는 `@Scheduled`가 아니라 `ExecutorService` 기반 비동기 추적 방식입니다.
 - EVM RPC 어댑터일 때만 receipt 폴링을 수행하고, 일정 시간 내 receipt 미발견 시 `FAILED_TIMEOUT`으로 표시합니다.
 

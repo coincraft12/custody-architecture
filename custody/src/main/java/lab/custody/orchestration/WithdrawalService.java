@@ -17,12 +17,15 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Service
 @RequiredArgsConstructor
@@ -33,6 +36,8 @@ public class WithdrawalService {
     private final PolicyEngine policyEngine;
     private final PolicyAuditLogRepository policyAuditLogRepository;
     private final ChainAdapterRouter router;
+    private final TransactionTemplate transactionTemplate;
+    private final ConcurrentHashMap<String, ReentrantLock> idempotencyLocks = new ConcurrentHashMap<>();
     
     @Autowired(required = false)
     private ApprovalService approvalService;
@@ -43,12 +48,23 @@ public class WithdrawalService {
     @Autowired(required = false)
     private ConfirmationTracker confirmationTracker;
 
-    @Transactional
     public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
         ChainType chainType = parseChainType(req.chainType());
-        return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
-                .map(existing -> validateIdempotentRequest(existing, chainType, req))
-                .orElseGet(() -> createAndBroadcast(idempotencyKey, chainType, req));
+        ReentrantLock lock = idempotencyLocks.computeIfAbsent(idempotencyKey, key -> new ReentrantLock());
+        lock.lock();
+        try {
+            Withdrawal result = transactionTemplate.execute(status ->
+                    withdrawalRepository.findByIdempotencyKey(idempotencyKey)
+                            .map(existing -> validateIdempotentRequest(existing, chainType, req))
+                            .orElseGet(() -> createAndBroadcast(idempotencyKey, chainType, req))
+            );
+            if (result == null) {
+                throw new IllegalStateException("failed to create or get withdrawal");
+            }
+            return result;
+        } finally {
+            lock.unlock();
+        }
     }
 
     private Withdrawal createAndBroadcast(String idempotencyKey, ChainType chainType, CreateWithdrawalRequest req) {

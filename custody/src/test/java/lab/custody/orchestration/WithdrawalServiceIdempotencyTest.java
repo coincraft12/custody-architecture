@@ -14,6 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Optional;
@@ -32,6 +34,7 @@ class WithdrawalServiceIdempotencyTest {
     @Mock TxAttemptRepository txAttemptRepository;
     @Mock ChainAdapterRouter router;
     @Mock ChainAdapter adapter;
+    @Mock TransactionTemplate transactionTemplate;
 
     WithdrawalService withdrawalService;
 
@@ -44,8 +47,14 @@ class WithdrawalServiceIdempotencyTest {
                 attemptService,
                 policyEngine,
                 policyAuditLogRepository,
-                router
+                router,
+                transactionTemplate
         );
+
+        when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
+            TransactionCallback<?> callback = invocation.getArgument(0);
+            return callback.doInTransaction(null);
+        });
     }
 
     @Test
