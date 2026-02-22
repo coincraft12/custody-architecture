@@ -181,8 +181,8 @@ public class RetryReplaceService {
     }
 
     private void ensureWithinAttemptLimit(UUID withdrawalId) {
-        if (txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId).size() >= 3) {
-            throw new InvalidRequestException("max retry/replace attempts exceeded (3)");
+        if (txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId).size() >= 5) {
+            throw new InvalidRequestException("max retry/replace attempts exceeded (5)");
         }
     }
 
