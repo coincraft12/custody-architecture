@@ -27,3 +27,9 @@ custody:
     rpc-url: ${CUSTODY_EVM_RPC_URL:https://ethereum-sepolia-rpc.publicnode.com}
     chain-id: ${CUSTODY_EVM_CHAIN_ID:11155111}
     private-key: ${CUSTODY_EVM_PRIVATE_KEY:}
+    proxy:
+      enabled: ${CUSTODY_EVM_PROXY_ENABLED:false}
+      host: ${CUSTODY_EVM_PROXY_HOST:}
+      port: ${CUSTODY_EVM_PROXY_PORT:8080}
+      username: ${CUSTODY_EVM_PROXY_USERNAME:}
+      password: ${CUSTODY_EVM_PROXY_PASSWORD:}
