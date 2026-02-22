@@ -4,9 +4,10 @@
 
 이 문서는 “코드를 읽지 않고도” 다음을 할 수 있게 설계했습니다.
 
-주의: 기본 설정은 목(Mock) 모드입니다. 별도 RPC 설정을 하지 않으면(예: `CUSTODY_CHAIN_MODE`가 `mock`일 때)
-서버는 목 어댑터를 사용해 네트워크 없이 동작합니다. 실제 체인 RPC를 사용하려면 `CUSTODY_CHAIN_MODE`를 `rpc`로 설정하고,
-RPC 관련 세부 설정(RPC URL, 체인 ID, 개인키 등)을 애플리케이션 설정(`application.yml` 또는 환경변수)에서 구성하세요. 
+주의: 기본 설정은 목(Mock) 모드입니다.  
+별도 RPC 설정을 하지 않으면(예: `CUSTODY_CHAIN_MODE`가 `mock`일 때) 서버는 목 어댑터를 사용해 네트워크 없이 동작합니다.  
+실제 체인 RPC를 사용하려면 `CUSTODY_CHAIN_MODE`를 `rpc`로 설정하고,  
+RPC 관련 세부 설정(RPC URL, 체인 ID, 개인키 등)을 애플리케이션 설정(`application.yml` 또는 환경변수)에서 구성하세요.  
 
 ---
 
@@ -115,14 +116,156 @@ balanceEth : 1.587757348527098995
 
 ---
 
-## 5) 실습 1 — 멱등성 + 초기 Attempt 생성
+## 5) 실습 1 — Policy + Audit
 
-### 5-1. Withdrawal 생성
+기본 정책 (`src/main/resources/application.yaml`)
+
+- `policy.max-amount: 0.1`
+- `policy.whitelist-to-addresses: 0xto,0xtrusted, 0x1111111111111111111111111111111111111111`
+
+### 5-1. 허용 케이스
+
+```powershell
+$from = "0x740161186057d3a948a1c16f1978937dca269070"
+$to   = "0x1111111111111111111111111111111111111111"
+$w    = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ 
+    "Content-Type"   = "application/json"
+    "Idempotency-Key" = "idem-lab5-allow-1"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $to
+    asset       = "ETH"
+    amount      = 0.00001
+  } | ConvertTo-Json -Depth 10)
+  $w
+
+```
+
+기대 결과
+
+- `status = W5_BROADCASTED`
+
+### 5-2. 화이트리스트 거절 케이스
+
+```powershell
+$from = "0x740161186057d3a948a1c16f1978937dca269070"
+$to   = "0x2222222222222222222222222222222222222222"  # 화이트리스트에 없는 주소
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ 
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab4-reject-whitelist-1"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $to
+    asset       = "USDC"
+    amount      = 0.00001
+  } | ConvertTo-Json -Depth 10)
+  $w
+
+```
+
+기대 결과
+
+- `status = W0_POLICY_REJECTED`
+- 이후 audit 조회:
+
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/policy-audits"
+```
+
+예상 reason
+
+- `TO_ADDRESS_NOT_WHITELISTED: 0xnot-allowed`
+
+### 5-3. 금액 초과 거절 케이스
+
+```powershell
+$from = "0x740161186057d3a948a1c16f1978937dca269070"
+$to   = "0x1111111111111111111111111111111111111111"
+
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ 
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab4-reject-amount-1"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $to
+    asset       = "USDC"
+    amount      = 0.2   # 정책 한도 초과 값
+  } | ConvertTo-Json -Depth 10)
+  $w
+
+```
+
+기대 결과
+
+- `status = W0_POLICY_REJECTED`
+- audit reason:
+  - `AMOUNT_LIMIT_EXCEEDED: max=0.1, requested=0.2`
+
+
+## 6) 실습 2 — 멱등성 + 초기 Attempt 생성
+
+실습 2 동시성 멱등성 점검
+
+### 목표
+
+- 동시 요청에서도 동일 `Idempotency-Key`가 1개의 Withdrawal만 생성하는지 확인
+- 결과적으로 attempt가 불필요하게 증가하지 않는지 확인
+
+### 6-1. 동시 요청 실행 (PowerShell)
+
+```powershell
+$from    = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+$to      = "0x1111111111111111111111111111111111111111"
+$idemp   = "idem-concurrency-1"   # 동일 멱등키 고정
+
+$jobs = 1..5 | ForEach-Object {
+  Start-Job -ScriptBlock {
+    param($BASE_URL, $from, $to, $idemp)
+
+    Invoke-RestMethod -Method POST `
+      -Uri "$BASE_URL/withdrawals" `
+      -Headers @{ 
+        "Content-Type"  = "application/json"
+        "Idempotency-Key" = $idemp 
+      } `
+      -Body (@{
+        chainType   = "EVM"
+        fromAddress = $from
+        toAddress   = $to
+        asset       = "USDC"
+        amount      = 0.00001
+      } | ConvertTo-Json -Depth 10)
+  } -ArgumentList $BASE_URL, $from, $to, $idemp
+}
+$jobs | Receive-Job -Wait -AutoRemoveJob
+
+```
+
+### 6-2. 확인 포인트
+
+- 반환된 `id`가 모두 동일한지
+- `/withdrawals/{id}/attempts`에서 초기 attempt가 1개로 유지되는지
+
+
+### 6-3. Withdrawal 생성
 
 ```powershell
 $from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
 $to   = "0x1111111111111111111111111111111111111111"
-$idemp = "idem-lab1-1"
+$idemp = "idem-lab1-2"
 $w = Invoke-RestMethod -Method POST `
 -Uri "$BASE_URL/withdrawals" `
 -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
@@ -152,7 +295,7 @@ updatedAt      : 2026-02-21T16:31:18.901122Z
 chainType      : EVM
 ```
 
-### 5-2. 같은 키 + 같은 바디 재요청
+### 6-4. 같은 키 + 같은 바디 재요청
 
 ```powershell
 $w = Invoke-RestMethod -Method POST `
@@ -173,14 +316,6 @@ $w
 - 첫 요청과 **같은 withdrawal id** 반환
 
 ### 5-3. Attempt 목록 확인
-
-```powershell
-Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
-```
-
-응답에는 `attemptCount`와 `attempts` 배열이 함께 내려옵니다.
-PowerShell에서는 아래 한 줄만으로도 시도 수와 상세 목록을 바로 볼 수 있습니다.
 
 ```powershell
 Invoke-RestMethod -Method GET `
@@ -214,7 +349,7 @@ createdAt            : 2026-02-21T16:31:18.100507Z
 ```powershell
 $from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
 $to   = "0x1111111111111111111111111111111111111111"
-$idemp = "idem-lab1-1"
+$idemp = "idem-lab1-2"
 $w = Invoke-RestMethod -Method POST `
 -Uri "$BASE_URL/withdrawals" `
 -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
@@ -236,12 +371,12 @@ $w
 
 ---
 
-## 6) 실습 2 — Retry / Replace / Included 수렴 (실체인/RPC)
+## 7) 실습 3 — Retry / Replace / Included
 
-### 6-1. 테스트용 Withdrawal 생성
+### 7-1. Withdrawal 생성
 
 ```powershell
-$idemp = "idem-lab2-1"
+$idemp = "idem-lab3-1"
 $w = Invoke-RestMethod -Method POST `
 -Uri "$BASE_URL/withdrawals" `
 -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
@@ -300,24 +435,8 @@ Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/withdrawals/$($w.id)/replace"
 ```
 
-### 6-4. sync로 실제 포함 수렴 확인
 
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals/{withdrawalId}/sync"
-```
-
-```powershell
-Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/{withdrawalId}"
-```
-
-기대 결과
-
-- receipt가 확인되면 Withdrawal 상태가 `W7_INCLUDED`로 전이
-- canonical attempt가 `INCLUDED`로 전이되고, 성공 receipt(`0x1`)이면 `SUCCESS`로 전이
-
-### 6-5. Confirmation Tracker 실습 — 영수증(Receipt) 확인 후 Included 전이
+### 6-4. Confirmation Tracker — 영수증(Receipt) 확인 후 Included 전이
 
 설명: 실제 RPC를 통해 영수증(receipt)을 확인하는 백그라운드 트래커(Confirmation Tracker)가 실행될 때,
 영수증이 확인되면 해당 canonical `TxAttempt`와 `Withdrawal`이 자동으로 `INCLUDED` 상태로 전이되는 흐름을 확인합니다.
@@ -326,15 +445,14 @@ Invoke-RestMethod -Method GET `
 
 절차
 
-1. Withdrawal 생성 및 브로드캐스트 (6-1 ~ 6-3 참고)
-2. 브로드캐스트된 `txHash`를 확보
-3. Confirmation Tracker가 receipt를 발견하면 내부에서 `attempt.status -> INCLUDED`, `withdrawal.status -> W7_INCLUDED`로 전이
+1. 브로드캐스트된 `txHash`를 확보
+2. Confirmation Tracker가 receipt를 발견하면 내부에서 `attempt.status -> INCLUDED`, `withdrawal.status -> W7_INCLUDED`로 전이
 
 확인 방법
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/{withdrawalId}"
+  -Uri "$BASE_URL/withdrawals/$($w.id)"
 ```
 
 - `status`가 `W7_INCLUDED`인지 확인
@@ -342,45 +460,12 @@ Invoke-RestMethod -Method GET `
 
 디버깅 / 수동 강제 확인
 
-- 즉시 영수증 조회 및 수동 동기화: `POST /withdrawals/{withdrawalId}/sync` 호출
 - txHash에 대해 체인에서 수동으로 receipt를 확인하려면 `GET /evm/tx/{txHash}/wait` 사용
 
-운영 주의사항
-
-- Confirmation Tracker는 재시도/replace에 의해 바뀐 canonical에 대해 올바른 txHash를 추적해야 합니다.
-- 다중 체인/네트워크 지연을 고려해 poll 간격과 타임아웃을 적절히 설정하세요.
-
----
-
-## 7) 실습 3 — ChainAdapter 2종 검증
-
-### 7-1. EVM adapter (Sepolia RPC 실제 호출)
-
-
-
-서버를 재시작한 뒤 아래를 호출하세요.
-
-RPC 데모 한 줄 플로우
-
-1. `GET /evm/wallet`로 송신 지갑 주소/잔고/체인 정보를 확인
-2. 위 주소에 Sepolia faucet으로 테스트 ETH 입금
-3. `POST /adapter-demo/broadcast/evm`로 트랜잭션 브로드캐스트 후 `txHash` 확보
-4. `GET /evm/tx/{txHash}/wait?timeoutMs=30000&pollMs=1500`로 포함(영수증) 확인
-5. 필요 시 Etherscan에서 `txHash` 검색해 보조 검증
-
-`GET /evm/wallet` 응답 예시:
-
-```json
-{
-  "mode": "rpc",
-  "chainId": 11155111,
-  "rpc": "https://ethereum-sepolia-rpc.publicnode.com",
-  "address": "0x...",
-  "balanceWei": "12300000000000000",
-  "balanceEth": "0.0123"
-}
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/evm/tx/{txHash}/wait"
 ```
-
 `GET /evm/tx/{txHash}` 응답 예시(미포함):
 
 ```json
@@ -401,11 +486,38 @@ RPC 데모 한 줄 플로우
 }
 ```
 
+- 즉시 영수증 조회 및 수동 동기화: `POST /withdrawals/{withdrawalId}/sync` 호출
+
 ```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/sync"
+```
+
+운영 주의사항
+
+- Confirmation Tracker는 재시도/replace에 의해 바뀐 canonical에 대해 올바른 txHash를 추적해야 합니다.
+- 다중 체인/네트워크 지연을 고려해 poll 간격과 타임아웃을 적절히 설정하세요.
+
+---
+
+## 7) 실습 3 — ChainAdapter 2종 검증
+
+### 7-1. EVM adapter (Sepolia RPC 실제 호출)
+
+
+```powershell
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/adapter-demo/broadcast/evm" `
   -Headers @{ "Content-Type"="application/json" } `
-  -Body '{ "from":"ignored", "to":"0x1111111111111111111111111111111111111111", "asset":"ETH", "amount":1 }'
+  -Body (@{
+    from   = $from
+    to     = "0x1111111111111111111111111111111111111111"
+    asset  = "ETH"
+    amount = 0.00001
+  } | ConvertTo-Json)
+
 ```
 
 기대 결과
@@ -422,125 +534,19 @@ Invoke-RestMethod -Method POST `
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/adapter-demo/broadcast/bft" `
   -Headers @{ "Content-Type"="application/json" } `
-  -Body '{ "from":"a", "to":"b", "asset":"TOKEN", "amount":10, "nonce":1 }'
+  -Body (@{
+    from   = "a"
+    to     = "b"
+    asset  = "TOKEN"
+    amount = 0.00001
+    nonce  = 1
+  } | ConvertTo-Json)
 ```
 
 기대 결과
 
 - `accepted = true`
 - `txHash` prefix: `BFT_`
-
----
-
-## 8) 실습 4 — Policy + Audit
-
-기본 정책 (`src/main/resources/application.yaml`)
-
-- `policy.max-amount: 1000`
-- `policy.whitelist-to-addresses: 0xto,0xtrusted`
-
-### 8-1. 허용 케이스
-
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-allow-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
-```
-
-기대 결과
-
-- `status = W4_SIGNING`
-
-### 8-2. 화이트리스트 거절 케이스
-
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-reject-whitelist-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xnot-allowed", "asset":"USDC", "amount":100 }'
-```
-
-기대 결과
-
-- `status = W0_POLICY_REJECTED`
-- 이후 audit 조회:
-
-```powershell
-Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/{withdrawalId}/policy-audits"
-```
-
-예상 reason
-
-- `TO_ADDRESS_NOT_WHITELISTED: 0xnot-allowed`
-
-### 8-3. 금액 초과 거절 케이스
-
-```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab4-reject-amount-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom", "toAddress":"0xto", "asset":"USDC", "amount":1001 }'
-```
-
-기대 결과
-
-- `status = W0_POLICY_REJECTED`
-- audit reason:
-  - `AMOUNT_LIMIT_EXCEEDED: max=1000, requested=1001`
-
----
-
-## 9) 실습 5 (심화) — 동시성 멱등성 점검
-
-이 실습은 “실습 경험 개선”을 위한 확장 시나리오입니다.
-
-### 목표
-
-- 동시 요청에서도 동일 `Idempotency-Key`가 1개의 Withdrawal만 생성하는지 확인
-- 결과적으로 attempt가 불필요하게 증가하지 않는지 확인
-
-### 9-1. 동시 요청 실행 (PowerShell)
-
-```powershell
-1..5 | ForEach-Object {
-  Start-Job -ScriptBlock {
-    param($baseUrl)
-    Invoke-RestMethod -Method POST `
-      -Uri "$baseUrl/withdrawals" `
-      -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-concurrency-1" } `
-      -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-concurrent", "toAddress":"0xto", "asset":"USDC", "amount":77 }'
-  } -ArgumentList $BASE_URL
-} | Receive-Job -Wait -AutoRemoveJob
-```
-
-### 9-2. 확인 포인트
-
-- 반환된 `id`가 모두 동일한지
-- `/withdrawals/{id}/attempts`에서 초기 attempt가 1개로 유지되는지
-
----
-
-## 10) 자동 테스트
-
-프로젝트 루트(`custody`)에서 실행:
-
-```bash
-./gradlew test
-```
-
-실습 시나리오 통합 테스트만:
-
-```bash
-./gradlew test --tests "lab.custody.orchestration.LabScenariosIntegrationTest"
-```
-
-Withdrawal API 통합 테스트만:
-
-```bash
-./gradlew test --tests "lab.custody.orchestration.WithdrawalControllerIntegrationTest"
-```
 
 ---
 
@@ -564,29 +570,7 @@ $env:SPRING_PROFILES_ACTIVE = "labs-mock"
 
 ---
 
-## 11) 트러블슈팅
-
-### Q1. `invalid chainType: unknown`
-
-- `EVM` 또는 `BFT`로 입력했는지 확인
-
-### Q2. PowerShell에서 JSON 파싱 오류
-
-- 작은따옴표/큰따옴표가 섞이면 깨질 수 있음
-- 가장 안전한 방법: JSON 파일 저장 후 `-InFile` 또는 here-string 사용
-
-### Q3. 같은 Idempotency-Key인데 409이 발생
-
-- 같은 키에 바디가 달라졌기 때문
-- 키를 바꾸거나 동일 바디로 재시도 필요
-
-### Q4. 정책 거절인데 이유를 모르겠음
-
-- `/withdrawals/{id}/policy-audits` 조회해서 reason 확인
-
----
-
-## 12) 주요 API 요약
+## 8) 주요 API 요약
 
 - `POST /withdrawals` (Header: `Idempotency-Key`)
 - `GET /withdrawals/{id}`
@@ -602,7 +586,7 @@ $env:SPRING_PROFILES_ACTIVE = "labs-mock"
 
 ---
 
-## 13) 다음 확장 과제 (권장)
+## 9) 다음 확장 과제 (권장)
 
 - Policy 다중 룰(우선순위/다중 사유)
 - Adapter timeout/partial failure 시나리오 확장
@@ -611,7 +595,7 @@ $env:SPRING_PROFILES_ACTIVE = "labs-mock"
 
 ---
 
-## 14) 실습별 핵심 코드
+## 10) 실습별 핵심 코드
 
 ### 실습 1 — Withdrawal / TxAttempt 분리 + Idempotency
 

@@ -17,7 +17,7 @@ spring:
         format_sql: true
 
 policy:
-  max-amount: 10
+  max-amount: 0.1
   whitelist-to-addresses: 0xto,0xtrusted,0x1111111111111111111111111111111111111111
 
 custody:
