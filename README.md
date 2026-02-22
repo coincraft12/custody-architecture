@@ -4,14 +4,9 @@
 
 이 문서는 “코드를 읽지 않고도” 다음을 할 수 있게 설계했습니다.
 
-- 서버 실행
-- 실습 1~4 수동 점검
-- 실습 5(심화: 관찰성/동시성) 수행
-- 자동 테스트 실행 및 실패 시 빠른 원인 파악
-
 주의: 기본 설정은 목(Mock) 모드입니다. 별도 RPC 설정을 하지 않으면(예: `CUSTODY_CHAIN_MODE`가 `mock`일 때)
 서버는 목 어댑터를 사용해 네트워크 없이 동작합니다. 실제 체인 RPC를 사용하려면 `CUSTODY_CHAIN_MODE`를 `rpc`로 설정하고,
-RPC 관련 세부 설정(RPC URL, 체인 ID, 개인키 등)을 애플리케이션 설정(`application.yml` 또는 환경변수)에서 구성하세요. 이 README의 RPC 관련 단계는 실제 RPC 사용 시의 동작을 설명합니다.
+RPC 관련 세부 설정(RPC URL, 체인 ID, 개인키 등)을 애플리케이션 설정(`application.yml` 또는 환경변수)에서 구성하세요. 
 
 ---
 
@@ -88,6 +83,36 @@ cd custody
 $BASE_URL = "http://localhost:8080"
 ```
 
+### RPC 연결
+
+먼저 서비스 모드를 `rpc`로 설정하고, 프로젝트 설정에서 RPC URL/체인 ID/개인키 등을 구성하세요.
+
+```powershell
+$env:CUSTODY_CHAIN_MODE = "rpc"
+$env:CUSTODY_EVM_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com"
+$env:CUSTODY_EVM_CHAIN_ID = "11155111"
+$env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_SEPOLIA_OR_HOODI_PRIVATE_KEY>"
+```
+
+주의: RPC 모드에서 사용하는 RPC URL, 체인 ID, 개인키 등의 세부 구성은 `application.yml` 또는 환경변수로 제공합니다. 개인키는 테스트용 지갑만 사용하세요. 절대 운영/실지갑 키를 사용하지 마세요.
+
+정상 연결 확인
+
+```powershell
+Invoke-RestMethod -Uri "$BASE_URL/evm/wallet"
+```
+
+결과
+
+```powershell
+mode       : rpc
+chainId    : 11155111
+rpc        : https://ethereum-sepolia-rpc.publicnode.com
+address    : 0x740161186057d3a948a1c16f1978937dca269070
+balanceWei : 1587757348527098995
+balanceEth : 1.587757348527098995
+```
+
 ---
 
 ## 5) 실습 1 — 멱등성 + 초기 Attempt 생성
@@ -95,25 +120,52 @@ $BASE_URL = "http://localhost:8080"
 ### 5-1. Withdrawal 생성
 
 ```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+$to   = "0x1111111111111111111111111111111111111111"
+$idemp = "idem-lab1-1"
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = $from
+toAddress   = $to
+asset       = "ETH"
+amount      = 0.001  # eth
+} | ConvertTo-Json)
+$w
+
 ```
 
-기대 결과
+예시 결과
 
-- HTTP 200
-- `status = W4_SIGNING`
-- 응답의 `id` 저장
+```powershell
+id             : 4d540b1e-281e-43d9-87b6-992042214893
+idempotencyKey : idem-lab1-1
+fromAddress    : 0x740161186057d3a948a1c16f1978937dca269070
+toAddress      : 0x1111111111111111111111111111111111111111
+asset          : ETH
+amount         : 1000000000000
+status         : W6_BROADCASTED
+createdAt      : 2026-02-21T16:31:17.649081Z
+updatedAt      : 2026-02-21T16:31:18.901122Z
+chainType      : EVM
+```
 
 ### 5-2. 같은 키 + 같은 바디 재요청
 
 ```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = $from
+toAddress   = $to
+asset       = "ETH"
+amount      = 0.001
+} | ConvertTo-Json)
+$w
 ```
 
 기대 결과
@@ -124,7 +176,7 @@ Invoke-RestMethod -Method POST `
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/{withdrawalId}/attempts"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
 ```
 
 응답에는 `attemptCount`와 `attempts` 배열이 함께 내려옵니다.
@@ -132,14 +184,27 @@ PowerShell에서는 아래 한 줄만으로도 시도 수와 상세 목록을 �
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/{withdrawalId}/attempts"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
 ```
 
 기대 결과
 
-- `attemptCount = 1`
-- `attempts[0].attemptNo = 1`
-- `attempts[0].canonical = true`
+```powershell
+id                   : 4a7b8db4-17dd-430c-8095-ddbb850c75b5
+withdrawalId         : 4d540b1e-281e-43d9-87b6-992042214893
+attemptNo            : 1
+fromAddress          : 0x740161186057d3a948a1c16f1978937dca269070
+nonce                : 41
+attemptGroupKey      : 0x740161186057d3a948a1c16f1978937dca269070:41
+txHash               : 0x180b8e21f3dc5eddef1379b523cc69eba7047e6a15941e45a74d3ff3f09be16a
+maxPriorityFeePerGas :
+maxFeePerGas         :
+status               : BROADCASTED
+canonical            : True
+exceptionType        :
+exceptionDetail      :
+createdAt            : 2026-02-21T16:31:18.100507Z
+```
 
 > 참고: `attemptCount = 0`이면 해당 withdrawal은 아직 브로드캐스트 시도가 없다는 뜻입니다
 > (예: policy rejected된 건).
@@ -147,10 +212,21 @@ Invoke-RestMethod -Method GET `
 ### 5-4. 같은 키 + 다른 바디(충돌)
 
 ```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab1-1" } `
-  -Body '{ "chainType":"BFT", "fromAddress":"0xfrom-lab1", "toAddress":"0xto", "asset":"USDC", "amount":100 }'
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+$to   = "0x1111111111111111111111111111111111111111"
+$idemp = "idem-lab1-1"
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = $from
+toAddress   = $to
+asset       = "ETH"
+amount      = 0.0001  #수량 변경
+} | ConvertTo-Json)
+$w
+
 ```
 
 기대 결과
@@ -165,24 +241,30 @@ Invoke-RestMethod -Method POST `
 ### 6-1. 테스트용 Withdrawal 생성
 
 ```powershell
-Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals" `
-  -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"="idem-lab2-1" } `
-  -Body '{ "chainType":"EVM", "fromAddress":"0xfrom-lab2", "toAddress":"0xto", "asset":"USDC", "amount":50 }'
+$idemp = "idem-lab2-1"
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = $from
+toAddress   = $to
+asset       = "USDC"
+amount      = 0.0001  # wei
+} | ConvertTo-Json)
+$w
 ```
-
-응답의 `id`를 `{withdrawalId}`로 사용합니다.
 
 ### 6-2. retry 실행 (새 nonce로 재전송)
 
 ```powershell
 Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals/{withdrawalId}/retry"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/retry"
 ```
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/{withdrawalId}/attempts"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
 ```
 
 기대 결과
@@ -195,12 +277,12 @@ Invoke-RestMethod -Method GET `
 
 ```powershell
 Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals/{withdrawalId}/replace"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/replace"
 ```
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/{withdrawalId}/attempts"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
 ```
 
 기대 결과
@@ -208,8 +290,15 @@ Invoke-RestMethod -Method GET `
 - attempt 3개
 - 이전 canonical attempt가 `REPLACED`, `canonical=false`
 - 최신 attempt `canonical=true` (같은 nonce로 교체 전송)
-- 단, retry 이후 이미 해당 nonce가 블록에 포함된 상태라면 replace는 `nonce too low` 상황이므로
-  안내 메시지와 함께 거절됩니다. 이 경우 새 nonce를 사용하는 retry를 다시 수행하세요.
+- 단, retry 이후 이미 해당 nonce가 블록에 포함된 상태라면 replace는 `nonce too low` 상황이므로 안내 메시지와 함께 거절됩니다. 이 경우 새 nonce를 사용하는 retry를 다시 수행하세요.
+- 네트워크 상태에 따라 retry 트랜잭션이 너무 빨리 블록체 포함되는 경우라면 아래와 같이 두개의 트랜잭션을 연달아 실행해 보세요.
+
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/retry"
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/replace"
+```
 
 ### 6-4. sync로 실제 포함 수렴 확인
 
@@ -233,9 +322,6 @@ Invoke-RestMethod -Method GET `
 설명: 실제 RPC를 통해 영수증(receipt)을 확인하는 백그라운드 트래커(Confirmation Tracker)가 실행될 때,
 영수증이 확인되면 해당 canonical `TxAttempt`와 `Withdrawal`이 자동으로 `INCLUDED` 상태로 전이되는 흐름을 확인합니다.
 
-요구사항
-
-- 서버는 `CUSTODY_CHAIN_MODE`가 `rpc`인 상태에서 실행되어야 합니다. RPC 관련 세부 설정(RPC URL, 체인 ID, 개인키 등)은 애플리케이션 설정에서 구성하세요.
 - Confirmation Tracker는 주기적으로(또는 이벤트 기반) `eth_getTransactionReceipt(txHash)`를 호출해 receipt를 확인합니다.
 
 절차
@@ -270,16 +356,7 @@ Invoke-RestMethod -Method GET `
 
 ### 7-1. EVM adapter (Sepolia RPC 실제 호출)
 
-먼저 서비스 모드를 `rpc`로 설정하고, 프로젝트 설정에서 RPC URL/체인 ID/개인키 등을 구성하세요.
 
-```powershell
-$env:CUSTODY_CHAIN_MODE = "rpc"
-$env:CUSTODY_EVM_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com"
-$env:CUSTODY_EVM_CHAIN_ID = "11155111"
-$env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_SEPOLIA_OR_HOODI_PRIVATE_KEY>"
-```
-
-주의: RPC 모드에서 사용하는 RPC URL, 체인 ID, 개인키 등의 세부 구성은 `application.yml` 또는 환경변수로 제공합니다. 개인키는 테스트용 지갑만 사용하세요. 절대 운영/실지갑 키를 사용하지 마세요.
 
 서버를 재시작한 뒤 아래를 호출하세요.
 
