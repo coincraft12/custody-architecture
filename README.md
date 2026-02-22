@@ -508,7 +508,7 @@ Invoke-RestMethod -Method POST `
 
 ---
 
-## 8) 실습 3 — ChainAdapter 2종 검증
+## 8) 실습 4 — ChainAdapter 2종 검증
 
 ### 8-1. EVM adapter (Sepolia RPC 실제 호출)
 
