@@ -15,6 +15,7 @@ public class PolicyEngine {
     private final BigDecimal maxAmountEth;
     private final Set<String> toAddressWhitelist;
 
+    // Load policy rules from config so lab scenarios can change behavior without changing code.
     public PolicyEngine(
             @Value("${policy.max-amount:1000}") BigDecimal maxAmountEth,
             @Value("${policy.whitelist-to-addresses:}") String whitelistToAddresses
@@ -26,6 +27,8 @@ public class PolicyEngine {
                 .collect(Collectors.toSet());
     }
 
+    // Evaluate business/policy constraints before any signing or broadcast attempt is created.
+    // Return both decision and reason so the caller can persist an audit trail.
     public PolicyDecision evaluate(CreateWithdrawalRequest req) {
         if (req.amount().compareTo(maxAmountEth) > 0) {
             return PolicyDecision.reject("AMOUNT_LIMIT_EXCEEDED: max=" + maxAmountEth + ", requested=" + req.amount());

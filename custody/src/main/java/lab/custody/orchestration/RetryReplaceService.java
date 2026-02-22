@@ -32,6 +32,8 @@ public class RetryReplaceService {
     private final ChainAdapterRouter router;
     private final FakeChain fakeChain;
 
+    // Retry creates a new canonical attempt after marking the previous canonical attempt as timed out.
+    // For EVM, the nonce is re-read from the pending state so the retry uses the latest executable nonce.
     @Transactional
     public TxAttempt retry(UUID withdrawalId) {
         Withdrawal w = loadWithdrawal(withdrawalId);
@@ -51,6 +53,8 @@ public class RetryReplaceService {
         return txAttemptRepository.save(retried);
     }
 
+    // Replace keeps the same nonce and bumps fees so a stuck pending tx can be superseded (RBF-style flow).
+    // The previous canonical attempt is preserved in history but no longer considered canonical.
     @Transactional
     public TxAttempt replace(UUID withdrawalId) {
         Withdrawal w = loadWithdrawal(withdrawalId);
@@ -82,6 +86,8 @@ public class RetryReplaceService {
         return txAttemptRepository.save(replaced);
     }
 
+    // Synchronous receipt check path used by labs/manual operations.
+    // This updates the canonical attempt/withdrawal based on real RPC receipt data when available.
     @Transactional
     public TxAttempt sync(UUID withdrawalId, long timeoutMs, long pollMs) {
         Withdrawal w = loadWithdrawal(withdrawalId);
@@ -120,6 +126,7 @@ public class RetryReplaceService {
         return txAttemptRepository.save(canonical);
     }
 
+    // Lab helper: drive attempt state transitions without a real chain by consuming scripted fake outcomes.
     @Transactional
     public TxAttempt simulateBroadcast(UUID withdrawalId) {
         Withdrawal withdrawal = loadWithdrawal(withdrawalId);
@@ -151,6 +158,7 @@ public class RetryReplaceService {
         return txAttemptRepository.save(canonical);
     }
 
+    // Lab helper: simulate the "broadcasted -> included" transition while enforcing state order rules.
     @Transactional
     public TxAttempt simulateConfirmation(UUID withdrawalId) {
         Withdrawal withdrawal = loadWithdrawal(withdrawalId);
@@ -171,6 +179,7 @@ public class RetryReplaceService {
     }
 
 
+    // Guard against replace on a nonce that has already moved past pending (would fail with nonce-too-low).
     private boolean isNonceAlreadyIncluded(Withdrawal withdrawal, TxAttempt canonical) {
         ChainAdapter adapter = router.resolve(withdrawal.getChainType());
         if (adapter instanceof EvmRpcAdapter rpcAdapter) {
@@ -180,12 +189,14 @@ public class RetryReplaceService {
         return false;
     }
 
+    // Bound the number of retries/replaces so failures become visible operationally instead of looping forever.
     private void ensureWithinAttemptLimit(UUID withdrawalId) {
         if (txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId).size() >= 5) {
             throw new InvalidRequestException("max retry/replace attempts exceeded (5)");
         }
     }
 
+    // Increase fees enough to satisfy typical replacement rules while guaranteeing at least +1 wei.
     private long bumpedFee(Long previous, long fallback) {
         long base = previous != null ? previous : fallback;
         // Geth replacement rule(약 +10%)를 만족하도록 12.5% 상향 + 최소 1 wei 증가 보장
@@ -193,6 +204,7 @@ public class RetryReplaceService {
         return increased;
     }
 
+    // Shared broadcast path for retry/replace flows: submit via adapter and reflect broadcast state locally.
     private void broadcast(Withdrawal withdrawal, TxAttempt attempt) {
         ChainAdapter.BroadcastResult result = router.resolve(withdrawal.getChainType()).broadcast(
                 new ChainAdapter.BroadcastCommand(
@@ -212,11 +224,13 @@ public class RetryReplaceService {
         withdrawalRepository.save(withdrawal);
     }
 
+    // Load helpers keep controller/service methods focused on workflow logic and consistent error messages.
     private Withdrawal loadWithdrawal(UUID withdrawalId) {
         return withdrawalRepository.findById(withdrawalId)
                 .orElseThrow(() -> new IllegalArgumentException("withdrawal not found: " + withdrawalId));
     }
 
+    // Canonical attempt means "the current representative tx" for this withdrawal among historical attempts.
     private TxAttempt loadCanonical(UUID withdrawalId) {
         List<TxAttempt> attempts = txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId);
         return attempts.stream()

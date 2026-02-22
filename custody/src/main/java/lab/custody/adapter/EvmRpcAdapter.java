@@ -45,6 +45,8 @@ public class EvmRpcAdapter implements ChainAdapter {
     }
 
     @Override
+    // Submit an EVM transfer via RPC using EIP-1559 fields and return the tx hash if accepted by the node.
+    // This adapter hides RPC/web3j details so upper layers only deal with BroadcastCommand/BroadcastResult.
     public BroadcastResult broadcast(BroadcastCommand command) {
         if (!isValidAddress(command.to())) {
             throw new IllegalArgumentException("Invalid EVM to-address: " + command.to());
@@ -92,6 +94,7 @@ public class EvmRpcAdapter implements ChainAdapter {
         }
     }
 
+    // Safety check to avoid sending transactions to the wrong chain when config/RPC endpoint mismatch.
     private void ensureConnectedChainIdMatchesConfigured() {
         try {
             EthChainId chainIdResponse = web3j.ethChainId().send();
@@ -124,6 +127,7 @@ public class EvmRpcAdapter implements ChainAdapter {
         return configuredChainId;
     }
 
+    // Read the pending nonce (not latest) so new attempts account for in-flight transactions.
     public BigInteger getPendingNonce(String address) {
         try {
             EthGetTransactionCount txCountResponse = web3j.ethGetTransactionCount(address, DefaultBlockParameterName.PENDING).send();
@@ -136,6 +140,7 @@ public class EvmRpcAdapter implements ChainAdapter {
         }
     }
 
+    // Receipt lookup is used by sync/confirmation tracking to detect inclusion/finalization progress.
     public Optional<TransactionReceipt> getReceipt(String txHash) {
         try {
             return web3j.ethGetTransactionReceipt(txHash).send().getTransactionReceipt();
@@ -144,6 +149,7 @@ public class EvmRpcAdapter implements ChainAdapter {
         }
     }
 
+    // Transaction lookup is used by demo/wallet endpoints for observability during labs.
     public Optional<org.web3j.protocol.core.methods.response.Transaction> getTransaction(String txHash) {
         try {
             EthTransaction response = web3j.ethGetTransactionByHash(txHash).send();

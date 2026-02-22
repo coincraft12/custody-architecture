@@ -16,6 +16,8 @@ public class WithdrawalController {
 
     private final WithdrawalService withdrawalService;
 
+    // Main API entry for creating a withdrawal.
+    // Idempotency-Key is required so duplicate client retries do not create duplicate withdrawals.
     @PostMapping
     public ResponseEntity<Withdrawal> create(
             @RequestHeader("Idempotency-Key") String idempotencyKey,
@@ -25,11 +27,13 @@ public class WithdrawalController {
         return ResponseEntity.ok(w);
     }
 
+    // Read the current withdrawal state to observe status transitions after retry/replace/confirmation.
     @GetMapping("/{id}")
     public ResponseEntity<Withdrawal> get(@PathVariable UUID id) {
         return ResponseEntity.ok(withdrawalService.get(id));
     }
 
+    // Return policy audit records (allow/reject + reason) for operational traceability.
     @GetMapping("/{id}/policy-audits")
     public ResponseEntity<List<PolicyAuditLog>> getPolicyAudits(@PathVariable UUID id) {
         return ResponseEntity.ok(withdrawalService.getPolicyAudits(id));

@@ -15,6 +15,8 @@ public class AttemptService {
 
     private final TxAttemptRepository txAttemptRepository;
 
+    // Create a new on-chain execution attempt for a Withdrawal.
+    // attemptNo is derived from history size so retry/replace timelines stay easy to read in order.
     @Transactional
     public TxAttempt createAttempt(UUID withdrawalId, String fromAddress, long nonce) {
         List<TxAttempt> existing = txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId);
@@ -27,6 +29,7 @@ public class AttemptService {
     }
 
 
+    // Return the full attempt history in attempt order for debugging, audit, and lab demos.
     @Transactional(readOnly = true)
     public List<TxAttempt> listAttempts(UUID withdrawalId) {
         return txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId);

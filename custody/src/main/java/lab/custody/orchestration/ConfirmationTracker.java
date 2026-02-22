@@ -29,14 +29,18 @@ public class ConfirmationTracker {
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
+    // Start receipt tracking asynchronously so API callers do not block on chain confirmation time.
     public void startTracking(TxAttempt attempt) {
         executor.submit(() -> trackAttemptInternal(attempt.getId()));
     }
 
+    // Variant used by demo/manual endpoints when only the attempt id is available.
     public void startTrackingByAttemptId(java.util.UUID attemptId) {
         executor.submit(() -> trackAttemptInternal(attemptId));
     }
 
+    // Poll the chain for a receipt and apply confirmation state transitions when a receipt is found.
+    // Tracking and broadcasting are intentionally separate responsibilities in this architecture.
     private void trackAttemptInternal(java.util.UUID attemptId) {
         try {
             log.debug("Starting confirmation tracking for attempt {}", attemptId);

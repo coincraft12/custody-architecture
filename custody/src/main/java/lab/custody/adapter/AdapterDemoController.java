@@ -28,6 +28,7 @@ public class AdapterDemoController {
     @Value("${demo.track-attempt.timeout-ms:60000}")
     private long trackAttemptTimeoutMs;
 
+    // Lab/demo endpoint that exercises adapter routing directly without the full withdrawal workflow.
     @PostMapping("/broadcast/{type}")
         public ResponseEntity<ChainAdapter.BroadcastResult> broadcast(
             @PathVariable String type,
@@ -55,6 +56,7 @@ public class AdapterDemoController {
         return ResponseEntity.ok(result);
     }
 
+    // Synchronously poll an attempt's receipt for demo purposes, then optionally kick async DB state tracking.
     @PostMapping("/track-attempt/{attemptId}")
     public ResponseEntity<ReceiptResponse> trackAttempt(@PathVariable String attemptId) {
         try {
@@ -126,6 +128,7 @@ public class AdapterDemoController {
         }
     }
 
+    // Fire-and-forget helper to start the confirmation tracker when the attempt id is already known.
     @PostMapping("/track-apply/{attemptId}")
     public ResponseEntity<String> trackAndApply(@PathVariable String attemptId) {
         try {
@@ -153,6 +156,7 @@ public class AdapterDemoController {
             Long nonce
     ) {}
 
+    // Convert human-friendly ETH decimal input to wei to align with adapter command units.
     private long ethToWei(java.math.BigDecimal eth) {
         if (eth == null) throw new IllegalArgumentException("amount is required");
         try {
@@ -164,6 +168,7 @@ public class AdapterDemoController {
         }
     }
 
+    // Use caller-supplied nonce when present; otherwise derive it from EVM pending state for convenience.
     private long resolveNonce(ChainAdapter adapter, Long nonce) {
         if (nonce != null) {
             return nonce;

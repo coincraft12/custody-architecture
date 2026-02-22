@@ -17,6 +17,7 @@ public class AttemptController {
     private final RetryReplaceService retryReplaceService;
     private final WithdrawalService withdrawalService;
 
+    // List all attempts for a withdrawal so labs can inspect canonical changes and retry/replace history.
     @GetMapping("/{id}/attempts")
     public ResponseEntity<List<TxAttempt>> listAttempts(@PathVariable UUID id) {
         withdrawalService.get(id);
@@ -24,16 +25,19 @@ public class AttemptController {
         return ResponseEntity.ok(attempts);
     }
 
+    // Trigger a retry flow (typically new nonce) and return the newly created attempt.
     @PostMapping("/{id}/retry")
     public ResponseEntity<TxAttempt> retry(@PathVariable UUID id) {
         return ResponseEntity.ok(retryReplaceService.retry(id));
     }
 
+    // Trigger a replace flow (same nonce + fee bump) for a pending canonical attempt.
     @PostMapping("/{id}/replace")
     public ResponseEntity<TxAttempt> replace(@PathVariable UUID id) {
         return ResponseEntity.ok(retryReplaceService.replace(id));
     }
 
+    // Manual sync endpoint: poll receipt synchronously and apply inclusion/result state updates.
     @PostMapping("/{id}/sync")
     public ResponseEntity<TxAttempt> sync(
             @PathVariable UUID id,
