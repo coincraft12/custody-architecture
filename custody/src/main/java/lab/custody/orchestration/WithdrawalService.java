@@ -48,6 +48,8 @@ public class WithdrawalService {
     @Autowired(required = false)
     private ConfirmationTracker confirmationTracker;
 
+    // Entry point for withdrawal creation with idempotency protection.
+    // Same Idempotency-Key + same body returns the existing Withdrawal instead of rebroadcasting.
     public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
         ChainType chainType = parseChainType(req.chainType());
         ReentrantLock lock = idempotencyLocks.computeIfAbsent(idempotencyKey, key -> new ReentrantLock());
@@ -66,7 +68,8 @@ public class WithdrawalService {
             lock.unlock();
         }
     }
-
+    // Main orchestration flow for a new withdrawal:
+    // persist Withdrawal -> evaluate policy/audit -> create TxAttempt -> broadcast -> start tracking.
     private Withdrawal createAndBroadcast(String idempotencyKey, ChainType chainType, CreateWithdrawalRequest req) {
         long amountWei = ethToWei(req.amount());
 
@@ -122,7 +125,7 @@ public class WithdrawalService {
 
         return saved;
     }
-
+    // Resolve the nonce right before the first broadcast so EVM attempts use the latest pending nonce.
     private long resolveInitialNonce(ChainType chainType, String fromAddress) {
         ChainAdapter adapter = router.resolve(chainType);
         if (adapter instanceof EvmRpcAdapter rpcAdapter) {
@@ -130,7 +133,8 @@ public class WithdrawalService {
         }
         return 0L;
     }
-
+    // Broadcast through the chain adapter abstraction and reflect the result in domain state.
+    // Note: BROADCASTED means submitted to a node, not yet included on-chain.
     private void broadcastAttempt(Withdrawal withdrawal, TxAttempt attempt) {
         ChainAdapter.BroadcastResult result = router.resolve(withdrawal.getChainType()).broadcast(
                 new ChainAdapter.BroadcastCommand(
@@ -150,7 +154,8 @@ public class WithdrawalService {
         withdrawal.transitionTo(WithdrawalStatus.W6_BROADCASTED);
         // saving of attempt/wdl is handled by LedgerService by caller
     }
-
+    // Enforce idempotency semantics strictly: same key can only replay the same logical request.
+    // Any body mismatch is treated as a conflict to prevent ambiguous or unsafe duplicate handling.
     private Withdrawal validateIdempotentRequest(Withdrawal existing, ChainType chainType, CreateWithdrawalRequest req) {
         long reqWei = ethToWei(req.amount());
 
@@ -201,3 +206,5 @@ public class WithdrawalService {
         }
     }
 }
+
+
