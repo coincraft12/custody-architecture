@@ -1,50 +1,43 @@
 # custody-architecture
 
-## 0) 이 README의 목표
+## 0) 이 프로젝트의 목표
+이 프로젝트는 출금(Withdrawal) 오케스트레이션을 중심으로, 커스터디 시스템의 핵심 흐름(정책 검증, 멱등성, 시도/재시도/대체, 체인 어댑터 연동, 감사 로그)을 실습하고 검증하기 위한 학습용 아키텍처 프로젝트입니다.
 
-이 문서는 “코드를 읽지 않고도” 다음을 할 수 있게 설계했습니다.
+코드를 모두 읽지 않아도 API 호출과 시나리오 실행만으로 위 흐름을 단계별로 확인할 수 있도록 구성했습니다.
 
-주의: 기본 설정은 목(Mock) 모드입니다.  
-별도 RPC 설정을 하지 않으면(예: `CUSTODY_CHAIN_MODE`가 `mock`일 때) 서버는 목 어댑터를 사용해 네트워크 없이 동작합니다.  
-실제 체인 RPC를 사용하려면 `CUSTODY_CHAIN_MODE`를 `rpc`로 설정하고,  
-RPC 관련 세부 설정(RPC URL, 체인 ID, 개인키 등)을 애플리케이션 설정(`application.yml` 또는 환경변수)에서 구성하세요.  
+주의: 기본 설정은 목(Mock) 모드입니다. 별도 RPC 설정을 하지 않으면(예: `CUSTODY_CHAIN_MODE`가 `mock`일 때) 서버는 목 어댑터를 사용해 네트워크 없이 동작합니다. 실제 체인 RPC를 사용하려면 `CUSTODY_CHAIN_MODE`를 `rpc`로 설정하고, RPC 관련 세부 설정(RPC URL, 체인 ID, 개인키 등)을 애플리케이션 설정(`application.yml` 또는 환경변수)에서 구성하세요.  
 
 ---
 
 ## 1) 실습 전체 지도
 
-### 실습 1 — RPC Full Mode Withdrawal + 멱등성
-
-- `POST /withdrawals`는 DB 저장 + 실제 RPC 브로드캐스트까지 수행
-- 동일 `Idempotency-Key` 재호출 시 재브로드캐스트 없이 기존 canonical `txHash` 유지
-- `GET /evm/tx/{txHash}/wait`로 포함 여부 확인
-
-### 실습 2 — Retry / Replace (실체인 규칙)
-
-- `POST /withdrawals/{id}/retry`: 새 nonce로 새 attempt 브로드캐스트
-- `POST /withdrawals/{id}/replace`: 같은 nonce fee bump로 canonical 교체
-- `GET /withdrawals/{id}/attempts`로 누적/전환 확인
-
-### 실습 3 — Chain Adapter + EVM RPC(Sepolia/Hoodi) 연동
-
-- `custody.chain.mode=rpc`일 때 EVM adapter는 실제 RPC(Sepolia/Hoodi)에 EIP-1559 타입2 서명 트랜잭션(`eth_sendRawTransaction`)을 전송
-- BFT adapter는 기존 mock 흐름 유지
-- 오케스트레이터는 체인별 세부사항을 몰라도 동일한 호출 형태 유지
-
-### 실습 4 — Policy Engine + Audit
+### 실습 1 — Policy Engine + Audit
 
 - 금액 제한
 - 수신 주소 화이트리스트
 - 허용/거절 근거를 감사 로그(`policy-audits`)로 확인
 
-### 실습 5 (심화) — 관찰성 + 동시성(실습 경험 개선)
+### 실습 2 — Withdrawal + 멱등성
 
-- 동시 요청에서 멱등성이 깨지지 않는지 확인
-- 상태 전이/attempt 누적을 관찰 가능한 형태로 점검
+- `POST /withdrawals`는 DB 저장 + 실제 RPC 브로드캐스트까지 수행
+- 동일 `Idempotency-Key` 재호출 시 재브로드캐스트 없이 기존 canonical `txHash` 유지
+- `GET /evm/tx/{txHash}/wait`로 포함 여부 확인
+
+### 실습 3 — Retry / Replace (실체인 규칙)
+
+- `POST /withdrawals/{id}/retry`: 새 nonce로 새 attempt 브로드캐스트
+- `POST /withdrawals/{id}/replace`: 같은 nonce fee bump로 canonical 교체
+- `GET /withdrawals/{id}/attempts`로 누적/전환 확인
+
+### 실습 4 — Chain Adapter + EVM RPC(Sepolia/Hoodi) 연동
+
+- `custody.chain.mode=rpc`일 때 EVM adapter는 실제 RPC(Sepolia/Hoodi)에 EIP-1559 타입2 서명 트랜잭션(`eth_sendRawTransaction`)을 전송
+- BFT adapter는 기존 mock 흐름 유지
+- 오케스트레이터는 체인별 세부사항을 몰라도 동일한 호출 형태 유지
 
 ---
 
-## 2) 준비물
+## 2) 환경 설정
 
 - Java 21+
 - Gradle Wrapper (`./gradlew`)
@@ -64,10 +57,11 @@ H2 Console
 
 ---
 
-## 3) 빠른 시작
+## 3) 시작
 
 ```bash
-cd custody
+git clone https://github.com/coincraft12/custody-architecture.git
+cd custody-architecture/custody
 ./gradlew build clean
 ./gradlew bootRun
 ```
@@ -92,7 +86,7 @@ $BASE_URL = "http://localhost:8080"
 $env:CUSTODY_CHAIN_MODE = "rpc"
 $env:CUSTODY_EVM_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com"
 $env:CUSTODY_EVM_CHAIN_ID = "11155111"
-$env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_SEPOLIA_OR_HOODI_PRIVATE_KEY>"
+$env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_SEPOLIA_PRIVATE_KEY>"
 ```
 
 주의: RPC 모드에서 사용하는 RPC URL, 체인 ID, 개인키 등의 세부 구성은 `application.yml` 또는 환경변수로 제공합니다. 개인키는 테스트용 지갑만 사용하세요. 절대 운영/실지갑 키를 사용하지 마세요.
@@ -315,7 +309,7 @@ $w
 
 - 첫 요청과 **같은 withdrawal id** 반환
 
-### 5-3. Attempt 목록 확인
+### 6-5. Attempt 목록 확인
 
 ```powershell
 Invoke-RestMethod -Method GET `
@@ -344,7 +338,7 @@ createdAt            : 2026-02-21T16:31:18.100507Z
 > 참고: `attemptCount = 0`이면 해당 withdrawal은 아직 브로드캐스트 시도가 없다는 뜻입니다
 > (예: policy rejected된 건).
 
-### 5-4. 같은 키 + 다른 바디(충돌)
+### 6-6. 같은 키 + 다른 바디(충돌)
 
 ```powershell
 $from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
@@ -390,7 +384,7 @@ amount      = 0.0001  # wei
 $w
 ```
 
-### 6-2. retry 실행 (새 nonce로 재전송)
+### 7-2. retry 실행 (새 nonce로 재전송)
 
 ```powershell
 Invoke-RestMethod -Method POST `
@@ -408,7 +402,7 @@ Invoke-RestMethod -Method GET `
 - 이전 attempt: `canonical=false`, `status=FAILED_TIMEOUT`
 - 최신 attempt: `canonical=true` (새 nonce로 broadcast)
 
-### 6-3. replace 실행 (같은 nonce, fee bump)
+### 7-3. replace 실행 (같은 nonce, fee bump)
 
 ```powershell
 Invoke-RestMethod -Method POST `
@@ -436,7 +430,7 @@ Invoke-RestMethod -Method POST `
 ```
 
 
-### 6-4. Confirmation Tracker — 영수증(Receipt) 확인 후 Included 전이
+### 7-4. Confirmation Tracker — 영수증(Receipt) 확인 후 Included 전이
 
 설명: 실제 RPC를 통해 영수증(receipt)을 확인하는 백그라운드 트래커(Confirmation Tracker)가 실행될 때,
 영수증이 확인되면 해당 canonical `TxAttempt`와 `Withdrawal`이 자동으로 `INCLUDED` 상태로 전이되는 흐름을 확인합니다.
@@ -500,9 +494,9 @@ Invoke-RestMethod -Method POST `
 
 ---
 
-## 7) 실습 3 — ChainAdapter 2종 검증
+## 8) 실습 3 — ChainAdapter 2종 검증
 
-### 7-1. EVM adapter (Sepolia RPC 실제 호출)
+### 8-1. EVM adapter (Sepolia RPC 실제 호출)
 
 
 ```powershell
@@ -528,7 +522,7 @@ Invoke-RestMethod -Method POST `
 - 고정 가스값 사용: `gasLimit=21000`, `maxPriorityFee=2 gwei`, `maxFee=20 gwei`
 - `txHash`는 실제 EVM 해시(예: `0x...`)
 
-### 7-2. BFT adapter
+### 8-2. BFT adapter
 
 ```powershell
 Invoke-RestMethod -Method POST `
@@ -570,7 +564,7 @@ $env:SPRING_PROFILES_ACTIVE = "labs-mock"
 
 ---
 
-## 8) 주요 API 요약
+## 9) 주요 API 요약
 
 - `POST /withdrawals` (Header: `Idempotency-Key`)
 - `GET /withdrawals/{id}`
@@ -586,7 +580,7 @@ $env:SPRING_PROFILES_ACTIVE = "labs-mock"
 
 ---
 
-## 9) 다음 확장 과제 (권장)
+## 10) 다음 확장 과제 (권장)
 
 - Policy 다중 룰(우선순위/다중 사유)
 - Adapter timeout/partial failure 시나리오 확장
@@ -595,109 +589,25 @@ $env:SPRING_PROFILES_ACTIVE = "labs-mock"
 
 ---
 
-## 10) 실습별 핵심 코드
+## 11) 실습별 핵심 코드
 
-### 실습 1 — Withdrawal / TxAttempt 분리 + Idempotency
+### 실습 1 — Policy Engine + Audit
 
-핵심 코드 (`WithdrawalService#createOrGet`)
-
-```java
-return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
-        .map(existing -> validateIdempotentRequest(existing, chainType, req))
-        .orElseGet(() -> {
-            Withdrawal w = Withdrawal.requested(...);
-            Withdrawal saved = withdrawalRepository.save(w);
-
-            PolicyDecision decision = policyEngine.evaluate(req);
-            policyAuditLogRepository.save(PolicyAuditLog.of(saved.getId(), decision.allowed(), decision.reason()));
-
-            if (!decision.allowed()) {
-                saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
-                return withdrawalRepository.save(saved);
-            }
-
-            saved.transitionTo(WithdrawalStatus.W1_POLICY_CHECKED);
-            saved.transitionTo(WithdrawalStatus.W4_SIGNING);
-            Withdrawal policyPassed = withdrawalRepository.save(saved);
-
-            long nonce = nonceAllocator.reserve(req.fromAddress());
-            attemptService.createAttempt(policyPassed.getId(), req.fromAddress(), nonce);
-
-            return policyPassed;
-        });
-```
-
-- **업무 단위(Withdrawal)** 와 **체인 시도 단위(TxAttempt)** 를 분리해, 재시도/교체가 발생해도 원본 업무 객체는 1개를 유지합니다.
-- 같은 `Idempotency-Key`가 들어오면 재생성이 아니라 기존 건을 재사용합니다.
-- 정책 통과 시 `W4_SIGNING`까지 전이하고, 그 시점에 첫 `TxAttempt`를 1개 생성합니다.
-
----
-
-### 실습 2 — Retry / Replace / Included 수렴
-
-핵심 코드 (`RetryReplaceService#retry`, `#replace`, `#sync`)
+핵심 코드 (`PolicyEngine#evaluate`, `WithdrawalService#createAndBroadcast`)
 
 ```java
-// retry: 기존 canonical을 timeout 처리하고 새 nonce로 재브로드캐스트
-canonical.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
-canonical.setCanonical(false);
-long nonce = rpcAdapter.getPendingNonce(rpcAdapter.getSenderAddress()).longValue();
-TxAttempt retried = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), nonce);
-broadcast(w, retried);
+PolicyDecision decision = policyEngine.evaluate(req);
+policyAuditLogRepository.save(PolicyAuditLog.of(saved.getId(), decision.allowed(), decision.reason()));
 
-// replace: 기존 canonical을 REPLACED 처리하고 같은 nonce로 fee bump 브로드캐스트
-canonical.transitionTo(TxAttemptStatus.REPLACED);
-canonical.markException(AttemptExceptionType.REPLACED, "fee bump replacement");
-canonical.setCanonical(false);
-TxAttempt replaced = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), canonical.getNonce());
-replaced.setFeeParams(4_000_000_000L, 40_000_000_000L);
-broadcast(w, replaced);
-
-// sync: 실제 receipt를 조회해 INCLUDED/SUCCESS/FAILED로 수렴
-var receiptOpt = rpcAdapter.getReceipt(canonical.getTxHash());
-```
-
-- fake 주입이 아니라 **실제 브로드캐스트와 receipt 조회 결과**로 상태가 바뀝니다.
-- `retry`는 새 nonce, `replace`는 같은 nonce(fee bump)라는 규칙으로 canonical attempt를 교체합니다.
-- 최종 포함 여부는 `sync`에서 실제 체인 receipt로 판정합니다.
-
----
-
-### 실습 3 — Chain Adapter + Sepolia RPC
-
-핵심 코드 (`EvmMockAdapter#broadcast`)
-
-```java
-String chainId = rpcCall("eth_chainId", List.of()).asText();
-if (!SEPOLIA_CHAIN_ID_HEX.equalsIgnoreCase(chainId)) {
-    throw new IllegalStateException("Connected RPC is not Sepolia...");
+if (!decision.allowed()) {
+    saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
+    return withdrawalRepository.save(saved);
 }
-
-Credentials credentials = Credentials.create(senderPrivateKey);
-BigInteger nonce = hexToBigInteger(rpcCall("eth_getTransactionCount", List.of(fromAddress, "pending")).asText());
-BigInteger gasPrice = hexToBigInteger(rpcCall("eth_gasPrice", List.of()).asText());
-
-RawTransaction rawTransaction = RawTransaction.createEtherTransaction(
-        nonce, gasPrice, DEFAULT_GAS_LIMIT, command.to(), BigInteger.valueOf(command.amount())
-);
-
-byte[] signedMessage = TransactionEncoder.signMessage(rawTransaction, SEPOLIA_CHAIN_ID_DECIMAL.longValue(), credentials);
-String txHash = rpcCall("eth_sendRawTransaction", List.of(Numeric.toHexString(signedMessage))).asText();
 ```
 
-- 오케스트레이터는 `adapter.broadcast(command)`만 호출하고, 체인별 복잡성은 어댑터 내부로 숨깁니다.
-- EVM 어댑터는 `chainId` 검증 → nonce/gas 조회 → 로컬 서명 → `eth_sendRawTransaction` 순으로 동작합니다.
-- RPC URL이 없으면 mock hash를 반환하도록 설계되어 로컬 실습도 끊기지 않습니다.
-
----
-
-### 실습 4 — Policy Engine + Audit
-
-핵심 코드 (`PolicyEngine#evaluate`)
-
 ```java
-if (req.amount() > maxAmount) {
-    return PolicyDecision.reject("AMOUNT_LIMIT_EXCEEDED: max=" + maxAmount + ", requested=" + req.amount());
+if (req.amount().compareTo(maxAmountEth) > 0) {
+    return PolicyDecision.reject("AMOUNT_LIMIT_EXCEEDED: max=" + maxAmountEth + ", requested=" + req.amount());
 }
 
 if (!toAddressWhitelist.isEmpty() && !toAddressWhitelist.contains(req.toAddress())) {
@@ -707,28 +617,183 @@ if (!toAddressWhitelist.isEmpty() && !toAddressWhitelist.contains(req.toAddress(
 return PolicyDecision.allow();
 ```
 
-- 정책은 **허용/거절 + 이유(reason)** 를 함께 반환해야 운영 시 추적이 쉽습니다.
-- `WithdrawalService`가 policy 결과를 `policy-audits`에 항상 남기므로, “왜 거절됐는지”를 API로 확인할 수 있습니다.
-- 상태(`W0_POLICY_REJECTED`)와 감사로그(reason)를 함께 보게 하면 실무 감각이 빨리 올라옵니다.
+- 정책 판단은 `PolicyDecision(allow/reject + reason)`으로 반환하고, `WithdrawalService`가 결과를 `policy-audits`에 항상 기록합니다.
+- 정책 거절 시 상태를 `W0_POLICY_REJECTED`로 전이하고 이후 브로드캐스트 단계로 진행하지 않습니다.
+- 정책 룰은 현재 `금액 한도` + `수신 주소 화이트리스트`입니다.
 
 ---
 
-### 실습 5 (심화) — 동시성 멱등성
+### 실습 2 — Withdrawal / TxAttempt 분리 + 멱등성
 
-핵심 코드 (`WithdrawalService#createOrGet`, `@Transactional`)
+핵심 코드 (`WithdrawalService#createOrGet`, `#createAndBroadcast`, `#validateIdempotentRequest`, `AttemptService#createAttempt`)
 
 ```java
 @Transactional
 public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
+    ChainType chainType = parseChainType(req.chainType());
     return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
             .map(existing -> validateIdempotentRequest(existing, chainType, req))
-            .orElseGet(() -> { ... create withdrawal once ... });
+            .orElseGet(() -> createAndBroadcast(idempotencyKey, chainType, req));
 }
 ```
 
-- 동시 요청의 핵심은 “같은 키로 정말 1건만 생기느냐”입니다.
-- 그래서 검증 포인트가 `id 동일성` + `attempt 1개 유지`입니다.
-- 실무에서는 DB 유니크 제약(`idempotency_key`)까지 함께 두면 안전성이 더 높아집니다.
+```java
+TxAttempt attempt = attemptService.createAttempt(saved.getId(), req.fromAddress(), resolveInitialNonce(chainType, req.fromAddress()));
+broadcastAttempt(saved, attempt);
+
+if (confirmationTracker != null) {
+    confirmationTracker.startTracking(attempt);
+}
+```
+
+```java
+boolean matches = existing.getChainType() == chainType
+    && existing.getFromAddress().equals(req.fromAddress())
+    && existing.getToAddress().equals(req.toAddress())
+    && existing.getAsset().equals(req.asset())
+    && existing.getAmount() == reqWei;
+
+if (!matches) {
+    throw new IdempotencyConflictException("same Idempotency-Key cannot be used with a different request body");
+}
+```
+
+- **업무 단위(Withdrawal)** 와 **시도 단위(TxAttempt)** 를 분리해서 retry/replace가 일어나도 원본 Withdrawal은 유지합니다.
+- 같은 `Idempotency-Key` + 동일 바디면 기존 Withdrawal을 반환하고, 같은 키 + 다른 바디면 `409` 충돌을 유도합니다.
+- 생성 시점에 첫 `TxAttempt`를 만들고 브로드캐스트하며, 가능하면 `ConfirmationTracker` 비동기 추적도 시작합니다.
+- 현재 구현에는 `ApprovalService`, `LedgerService`가 선택 주입(`@Autowired(required=false)`)으로 연결될 수 있는 훅이 포함되어 있습니다.
+
+---
+
+### 실습 3 — Retry / Replace / Included 수렴
+
+핵심 코드 (`RetryReplaceService#retry`, `#replace`, `#sync`)
+
+```java
+canonical.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
+canonical.setCanonical(false);
+
+long nonce = canonical.getNonce() + 1;
+if (adapter instanceof EvmRpcAdapter rpcAdapter) {
+    nonce = rpcAdapter.getPendingNonce(canonical.getFromAddress()).longValue();
+}
+
+TxAttempt retried = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), nonce);
+broadcast(w, retried);
+```
+
+```java
+canonical.transitionTo(TxAttemptStatus.REPLACED);
+canonical.markException(AttemptExceptionType.REPLACED, "fee bump replacement");
+canonical.setCanonical(false);
+
+TxAttempt replaced = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), canonical.getNonce());
+replaced.setFeeParams(
+        bumpedFee(canonical.getMaxPriorityFeePerGas(), DEFAULT_PRIORITY_FEE),
+        bumpedFee(canonical.getMaxFeePerGas(), DEFAULT_MAX_FEE)
+);
+broadcast(w, replaced);
+```
+
+```java
+var receiptOpt = rpcAdapter.getReceipt(canonical.getTxHash());
+if (receiptOpt.isPresent()) {
+    canonical.transitionTo(TxAttemptStatus.INCLUDED);
+    if ("0x1".equalsIgnoreCase(receiptOpt.get().getStatus())) {
+        canonical.transitionTo(TxAttemptStatus.SUCCESS);
+        w.transitionTo(WithdrawalStatus.W7_INCLUDED);
+    } else {
+        canonical.transitionTo(TxAttemptStatus.FAILED);
+    }
+}
+```
+
+- `retry`는 기존 canonical attempt를 timeout 처리하고 새 nonce(가능하면 RPC pending nonce)로 재전송합니다.
+- `replace`는 같은 nonce를 유지한 채 fee bump(약 +12.5%)로 교체 전송합니다.
+- `sync`는 실제 receipt를 폴링해서 `INCLUDED/SUCCESS/FAILED`로 수렴시킵니다.
+- 현재 구현은 `retry/replace` 총 시도 수를 `3`개로 제한합니다.
+
+---
+
+### 실습 4 — Chain Adapter + EVM RPC(Sepolia/Hoodi)
+
+핵심 코드 (`EvmRpcAdapter#broadcast`, `#ensureConnectedChainIdMatchesConfigured`)
+
+```java
+if (!isValidAddress(command.to())) {
+    throw new IllegalArgumentException("Invalid EVM to-address: " + command.to());
+}
+
+ensureConnectedChainIdMatchesConfigured();
+
+BigInteger nonce = command.nonce() >= 0
+        ? BigInteger.valueOf(command.nonce())
+        : getPendingNonce(signer.getAddress());
+
+RawTransaction rawTransaction = RawTransaction.createEtherTransaction(
+        configuredChainId,
+        nonce,
+        GAS_LIMIT,
+        command.to(),
+        BigInteger.valueOf(command.amount()),
+        maxPriorityFeePerGas,
+        maxFeePerGas
+);
+
+String signedTxHex = signer.sign(rawTransaction, configuredChainId);
+EthSendTransaction sent = web3j.ethSendRawTransaction(signedTxHex).send();
+```
+
+```java
+EthChainId chainIdResponse = web3j.ethChainId().send();
+long remoteChainId = chainIdResponse.getChainId().longValue();
+if (remoteChainId != configuredChainId) {
+    throw new IllegalStateException(
+        "Connected RPC chain id mismatch. expected=" + configuredChainId + ", actual=" + remoteChainId
+    );
+}
+```
+
+- 오케스트레이터는 `ChainAdapterRouter`를 통해 체인 타입별 어댑터를 선택하고 `broadcast(command)`만 호출합니다.
+- EVM RPC 어댑터는 web3j 기반으로 EIP-1559 타입 트랜잭션을 서명/전송하며, `chainId` 불일치를 즉시 차단합니다.
+- nonce/fee는 요청값이 없으면 어댑터 기본값(`pending nonce`, 기본 fee)으로 보정됩니다.
+
+---
+
+### 실습 5 (심화) — 동시성 멱등성 + 비동기 Confirmation Tracker
+
+핵심 코드 (`WithdrawalService#createOrGet`, `ConfirmationTracker`)
+
+```java
+@Transactional
+public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
+    ChainType chainType = parseChainType(req.chainType());
+    return withdrawalRepository.findByIdempotencyKey(idempotencyKey)
+            .map(existing -> validateIdempotentRequest(existing, chainType, req))
+            .orElseGet(() -> createAndBroadcast(idempotencyKey, chainType, req));
+}
+```
+
+```java
+public void startTracking(TxAttempt attempt) {
+    executor.submit(() -> trackAttemptInternal(attempt.getId()));
+}
+
+while (tries < 60) {
+    Optional<TransactionReceipt> r = rpcAdapter.getReceipt(txHash);
+    if (r.isPresent()) {
+        toUpdateAttempt.transitionTo(TxAttemptStatus.INCLUDED);
+        toUpdateWithdrawal.transitionTo(WithdrawalStatus.W7_INCLUDED);
+        return;
+    }
+    TimeUnit.SECONDS.sleep(2);
+}
+timeoutAttempt.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
+```
+
+- `@Transactional` + 멱등성 키 조회/검증 흐름이 동시 요청에서도 중복 생성 방지의 핵심입니다.
+- 현재 `ConfirmationTracker`는 `@Scheduled`가 아니라 `ExecutorService` 기반 비동기 추적 방식입니다.
+- EVM RPC 어댑터일 때만 receipt 폴링을 수행하고, 일정 시간 내 receipt 미발견 시 `FAILED_TIMEOUT`으로 표시합니다.
 
 
 ## 보안/안전 가드
@@ -737,59 +802,56 @@ public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req
 
 ### Confirmation Tracker — Receipt Polling 및 상태 전이 (핵심 코드)
 
-아래는 Confirmation Tracker의 간단한 구현 예시입니다. 주기적으로(또는 이벤트 기반으로) 체인에서 `eth_getTransactionReceipt(txHash)`를 호출해
-영수증을 발견하면 해당 `TxAttempt`와 `Withdrawal`의 상태를 전이합니다. 핵심 원칙은 `txHash`로 시점을 정확히 확인하고,
-canonical이 변경됐을 경우에도 올바른 attempt를 찾아 업데이트하는 것입니다.
+현재 구현은 `ExecutorService` 기반 비동기 폴링입니다. 브로드캐스트 직후 `startTracking(attempt)`를 호출하면 attempt ID 기준으로 재조회 후 receipt를 추적합니다.
 
 ```java
-@Component
-public class ConfirmationTracker {
-  private final TxAttemptRepository attemptRepo;
-  private final WithdrawalRepository withdrawalRepo;
-  private final RpcAdapter rpcAdapter;
+public void startTracking(TxAttempt attempt) {
+    executor.submit(() -> trackAttemptInternal(attempt.getId()));
+}
 
-  public ConfirmationTracker(TxAttemptRepository attemptRepo,
-                 WithdrawalRepository withdrawalRepo,
-                 RpcAdapter rpcAdapter) {
-    this.attemptRepo = attemptRepo;
-    this.withdrawalRepo = withdrawalRepo;
-    this.rpcAdapter = rpcAdapter;
-  }
+private void trackAttemptInternal(UUID attemptId) {
+    ...
+    while (tries < 60) {
+        Optional<TransactionReceipt> r = rpcAdapter.getReceipt(txHash);
+        if (r.isPresent()) {
+            toUpdateAttempt.transitionTo(TxAttemptStatus.INCLUDED);
+            txAttemptRepository.save(toUpdateAttempt);
 
-  @Scheduled(fixedDelayString = "${confirmation.tracker.poll-ms:5000}")
-  @Transactional
-  public void pollPendingReceipts() {
-    List<TxAttempt> pending = attemptRepo.findCanonicalPendingAttempts(); // BROADCASTED / PENDING
-    for (TxAttempt a : pending) {
-      String txHash = a.getTxHash();
-      if (txHash == null) continue;
-
-      var receiptOpt = rpcAdapter.getReceipt(txHash);
-      if (receiptOpt.isPresent()) {
-        var receipt = receiptOpt.get();
-        a.setStatus(TxAttemptStatus.INCLUDED);
-        a.setReceiptStatus(receipt.getStatusHex());
-        attemptRepo.save(a);
-
-        Withdrawal w = withdrawalRepo.findById(a.getWithdrawalId()).orElseThrow();
-        w.transitionTo(WithdrawalStatus.W7_INCLUDED);
-        if ("0x1".equals(receipt.getStatusHex())) {
-          w.setResult(WithdrawalResult.SUCCESS);
-        } else {
-          w.setResult(WithdrawalResult.FAILED);
+            toUpdateWithdrawal.transitionTo(WithdrawalStatus.W7_INCLUDED);
+            withdrawalRepository.save(toUpdateWithdrawal);
+            return;
         }
-        withdrawalRepo.save(w);
-      }
+        TimeUnit.SECONDS.sleep(2);
     }
-  }
+    timeoutAttempt.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
 }
 ```
 
-- `findCanonicalPendingAttempts()`는 현재 canonical이며 포함되지 않은 attempt만 반환해야 합니다.
-- 트래커는 `txHash`가 canonical에 남아있는지, 또는 이미 replace/retry로 canonical이 바뀌었는지를 고려해 영수증을 적용해야 합니다.
-- 수작업 동기화(`POST /withdrawals/{id}/sync`)는 즉시 영수증을 확인해 동일한 상태 전이를 수행합니다.
+- 트래커는 엔티티를 다시 조회한 뒤 업데이트해서 stale entity 문제를 줄이도록 작성되어 있습니다.
+- 현재 구현은 receipt status(`0x1/0x0`)까지 저장하지 않고, receipt 존재 여부 기준으로 `INCLUDED`와 `W7_INCLUDED`를 전이합니다.
+- 최종 성공/실패 판정까지 필요하면 `POST /withdrawals/{id}/sync` 경로(`RetryReplaceService#sync`)를 사용하세요.
+
+### Troubleshooting — RPC 호출 오류 응답 본문 확인 (PowerShell)
+
+실습 중 RPC 관련 API 호출이 실패하면 PowerShell의 `Invoke-RestMethod`가 본문 대신 예외만 보여주는 경우가 있습니다. 아래처럼 `try/catch`로 감싸서 **응답 본문(response body)** 을 다시 읽으면 실제 오류 메시지(RPC reject 사유, validation 에러 등)를 확인할 수 있습니다.
+
+```powershell
+try {
+  Invoke-RestMethod -Method POST `
+    -Uri "$BASE_URL/withdrawals/$($w.id)/replace"
+} catch {
+  $resp = $_.Exception.Response
+  $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
+  $reader.ReadToEnd()
+}
+```
+
+- `replace`에서 `nonce too low` 같은 RPC 에러가 날 때 원인 확인에 유용합니다.
+- 다른 API(`POST /withdrawals`, `POST /withdrawals/{id}/retry`, `POST /withdrawals/{id}/sync`)에도 동일하게 사용할 수 있습니다.
+- 필요하면 `Write-Host $_.Exception.Message`도 함께 출력해 HTTP 레벨 오류 메시지를 같이 확인하세요.
 
 
 - `custody.evm.chain-id=1`(mainnet)은 부팅 시 차단됩니다.
-- `CUSTODY_CHAIN_MODE`가 `rpc`일 경우 RPC 관련 설정이 올바르게 구성되지 않으면 부팅이 실패할 수 있습니다 (RPC URL, 체인 ID, 개인키 등).
+- `custody.chain.mode=rpc`일 경우 `CUSTODY_EVM_PRIVATE_KEY`, `CUSTODY_EVM_RPC_URL` 미설정 시 `RpcModeStartupGuard`에서 부팅을 차단합니다.
+- `EvmRpcAdapter`는 브로드캐스트 전에 RPC의 실제 `eth_chainId`와 설정값(`custody.evm.chain-id`) 일치 여부를 검증합니다.
 - 개인키는 절대 커밋하지 마세요.
