@@ -176,6 +176,9 @@ public class AdapterDemoController {
         if (adapter instanceof EvmRpcAdapter rpcAdapter) {
             return rpcAdapter.getPendingNonce(rpcAdapter.getSenderAddress()).longValue();
         }
+        if (adapter instanceof EvmMockAdapter) {
+            return 0L;
+        }
         throw new IllegalArgumentException("nonce is required for non-EVM adapters");
     }
 }
