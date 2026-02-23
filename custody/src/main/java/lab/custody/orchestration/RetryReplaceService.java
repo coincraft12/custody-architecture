@@ -238,4 +238,5 @@ public class RetryReplaceService {
                 .max(Comparator.comparingInt(TxAttempt::getAttemptNo))
                 .orElseThrow(() -> new IllegalStateException("no canonical attempt"));
     }
+
 }

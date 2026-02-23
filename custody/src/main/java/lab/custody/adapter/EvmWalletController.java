@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 @RestController
@@ -94,7 +96,16 @@ public class EvmWalletController {
 
             Optional<TransactionReceipt> receipt = receiptResponse.getTransactionReceipt();
             if (receipt.isPresent()) {
-                return new TxWaitResponse(txHash, toReceipt(receipt.get()), false);
+                TxReceiptResponse mappedReceipt = toReceipt(receipt.get());
+                return new TxWaitResponse(
+                        txHash,
+                        mappedReceipt,
+                        receiptItems(mappedReceipt),
+                        mappedReceipt.status(),
+                        mappedReceipt.blockNumber(),
+                        mappedReceipt.gasUsed(),
+                        false
+                );
             }
 
             try {
@@ -105,7 +116,7 @@ public class EvmWalletController {
             }
         }
 
-        return new TxWaitResponse(txHash, null, true);
+        return new TxWaitResponse(txHash, null, List.of(), null, null, null, true);
     }
 
     private TxReceiptResponse toReceipt(TransactionReceipt receipt) {
@@ -114,6 +125,14 @@ public class EvmWalletController {
                 Numeric.toHexStringWithPrefixSafe(receipt.getBlockNumber()),
                 Numeric.toHexStringWithPrefixSafe(receipt.getGasUsed())
         );
+    }
+
+    private List<ReceiptItem> receiptItems(TxReceiptResponse receipt) {
+        List<ReceiptItem> items = new ArrayList<>();
+        items.add(new ReceiptItem("status", receipt.status()));
+        items.add(new ReceiptItem("blockNumber", receipt.blockNumber()));
+        items.add(new ReceiptItem("gasUsed", receipt.gasUsed()));
+        return items;
     }
 
     private static String toEthString(BigInteger balanceWei) {
@@ -150,6 +169,10 @@ public class EvmWalletController {
     public record TxWaitResponse(
             String txHash,
             TxReceiptResponse receipt,
+            List<ReceiptItem> receiptItems,
+            String receiptStatus,
+            String receiptBlockNumber,
+            String receiptGasUsed,
             boolean timeout
     ) {
     }
@@ -158,6 +181,12 @@ public class EvmWalletController {
             String status,
             String blockNumber,
             String gasUsed
+    ) {
+    }
+
+    public record ReceiptItem(
+            String name,
+            String value
     ) {
     }
 }
