@@ -2,6 +2,7 @@ package lab.custody.orchestration;
 
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
+import lab.custody.adapter.EvmMockAdapter;
 import lab.custody.adapter.EvmRpcAdapter;
 import lab.custody.domain.txattempt.AttemptExceptionType;
 import lab.custody.domain.txattempt.TxAttempt;
@@ -93,6 +94,9 @@ public class RetryReplaceService {
         Withdrawal w = loadWithdrawal(withdrawalId);
         TxAttempt canonical = loadCanonical(withdrawalId);
         ChainAdapter adapter = router.resolve(w.getChainType());
+        if (adapter instanceof EvmMockAdapter) {
+            return simulateConfirmation(withdrawalId);
+        }
         if (adapter instanceof EvmRpcAdapter rpcAdapter && canonical.getTxHash() != null) {
             long normalizedTimeoutMs = Math.max(timeoutMs, 0L);
             long normalizedPollMs = Math.max(pollMs, 100L);

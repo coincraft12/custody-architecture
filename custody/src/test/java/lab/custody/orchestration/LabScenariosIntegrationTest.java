@@ -227,4 +227,33 @@ class LabScenariosIntegrationTest {
                 .andExpect(jsonPath("$[0].status").value("INCLUDED"))
                 .andExpect(jsonPath("$[0].canonical").value(true));
     }
+
+    @Test
+    void sync_inMockMode_marksAttemptAndWithdrawalIncluded() throws Exception {
+        MvcResult create = mockMvc.perform(post("/withdrawals")
+                        .header("Idempotency-Key", "idem-lab-sync-mock-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "chainType": "evm",
+                                  "fromAddress": "0xfrom-sync-mock",
+                                  "toAddress": "0xto",
+                                  "asset": "USDC",
+                                  "amount": 1
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("W6_BROADCASTED"))
+                .andReturn();
+
+        String withdrawalId = objectMapper.readTree(create.getResponse().getContentAsString()).get("id").asText();
+
+        mockMvc.perform(post("/withdrawals/{id}/sync?timeoutMs=0", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("INCLUDED"));
+
+        mockMvc.perform(get("/withdrawals/{id}", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("W7_INCLUDED"));
+    }
 }
