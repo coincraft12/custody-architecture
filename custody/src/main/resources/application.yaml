@@ -18,7 +18,7 @@ spring:
 
 policy:
   max-amount: 0.1
-  whitelist-to-addresses: 0xto,0xtrusted,0x1111111111111111111111111111111111111111
+  whitelist-to-addresses: 0xto,0xtrusted,0x1111111111111111111111111111111111111111,0x78513e370210539be82D08486987f76f63673B88
 
 custody:
   chain:

@@ -41,25 +41,6 @@
 
 - Java 21+
 - Gradle Wrapper (`./gradlew`)
-- 기본 포트: `8080`
-- 권장 프로파일: `SPRING_PROFILES_ACTIVE=labs-rpc` (내부적으로 `custody.chain.mode=rpc`) — 선택 사항 (기본은 목(Mock) 모드)
- - 서비스 모드 환경변수: `CUSTODY_CHAIN_MODE` (`mock` 또는 `rpc`) — 기본값: `mock`
-   - `mock`: 네트워크 호출 없이 내부 mock adapter로 동작
-   - `rpc`: 실제 RPC를 사용해 브로드캐스트/영수증 확인 수행
-   - RPC 모드에서 필요한 세부 설정(RPC URL, 체인 ID, 개인키 등)은 애플리케이션 설정(`application.yml` 또는 환경변수)을 통해 구성하세요.
-
-   - RPC 설정(PowerShell):
-     - `$env:CUSTODY_CHAIN_MODE = "rpc"`
-     - `$env:CUSTODY_EVM_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com"`
-     - `$env:CUSTODY_EVM_CHAIN_ID = "11155111"`
-     - `$env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_PRIVATE_KEY>"`
-   - 사내 프록시 설정 (PowerShell)
-     - `$env:CUSTODY_EVM_PROXY_ENABLED = "true"`
-     - `$env:CUSTODY_EVM_PROXY_HOST = "127.0.0.1"`
-     - `$env:CUSTODY_EVM_PROXY_PORT = "8080"`
-     - 인증 프록시라면 추가:
-     - `$env:CUSTODY_EVM_PROXY_USERNAME = "<username>"`
-     - `$env:CUSTODY_EVM_PROXY_PASSWORD = "<password>"`
 
 H2 Console
 
@@ -72,28 +53,26 @@ H2 Console
 
 ## 3) 시작
 
+### 소스코드 다운로드
+
 ```bash
 git clone https://github.com/coincraft12/custody-architecture.git
-cd custody-architecture/custody
-./gradlew build clean
-./gradlew bootRun
 ```
 
-서버가 뜨면 새 터미널에서 아래 API를 호출하세요.
+### 프로젝트 빌드
 
----
+```bash
+cd custody-architecture/custody
+./gradlew build clean
+```
 
-## 4) 실습용 공통 변수
-
-### PowerShell
+### 실습용 공통 변수 입력
 
 ```powershell
 $BASE_URL = "http://localhost:8080"
 ```
 
 ### RPC 연결
-
-먼저 서비스 모드를 `rpc`로 설정하고, 프로젝트 설정에서 RPC URL/체인 ID/개인키 등을 구성하세요.
 
 ```powershell
 $env:CUSTODY_CHAIN_MODE = "rpc"
@@ -104,7 +83,15 @@ $env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_SEPOLIA_PRIVATE_KEY>"
 
 주의: RPC 모드에서 사용하는 RPC URL, 체인 ID, 개인키 등의 세부 구성은 `application.yml` 또는 환경변수로 제공합니다. 개인키는 테스트용 지갑만 사용하세요. 절대 운영/실지갑 키를 사용하지 마세요.
 
-정상 연결 확인
+### 서버 실행
+
+```bash
+./gradlew bootRun
+```
+
+※ 반드시 서버 실행 전 먼저 환경 변수를 입력하세요. 만약 서버 실행 중 환경 변수의 값이 변경되었다면 서버를 재실행해 주세요.
+
+### RPC 정상 연결 확인
 
 ```powershell
 Invoke-RestMethod -Uri "$BASE_URL/evm/wallet"
