@@ -16,6 +16,7 @@ import lab.custody.orchestration.policy.PolicyEngine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -49,6 +50,9 @@ public class WithdrawalService {
     
     @Autowired(required = false)
     private ConfirmationTracker confirmationTracker;
+
+    @Value("${custody.confirmation-tracker.auto-start:true}")
+    private boolean confirmationTrackerAutoStart;
 
     // Entry point for withdrawal creation with idempotency protection.
     // Same Idempotency-Key + same body returns the existing Withdrawal instead of rebroadcasting.
@@ -152,9 +156,15 @@ public class WithdrawalService {
         }
 
         // start async confirmation tracking if available
-        if (confirmationTracker != null) {
+        if (confirmationTracker != null && confirmationTrackerAutoStart) {
             log.info("event=withdrawal_service.confirmation_tracking.start withdrawalId={} attemptId={}", saved.getId(), attempt.getId());
             confirmationTracker.startTracking(attempt);
+        } else if (confirmationTracker != null) {
+            log.info(
+                    "event=withdrawal_service.confirmation_tracking.skipped withdrawalId={} attemptId={} reason=auto_start_disabled",
+                    saved.getId(),
+                    attempt.getId()
+            );
         }
 
         return saved;

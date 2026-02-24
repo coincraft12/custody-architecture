@@ -66,15 +66,6 @@ cd custody-architecture/custody
 ./gradlew build clean
 ```
 
-### 실습용 공통 변수 입력
-
-```powershell
-$BASE_URL = "http://localhost:8080"
-$CID_PREFIX = "lab"
-```
-
-권장: 실습 중 로그 추적이 필요한 API 호출에는 `X-Correlation-Id` 헤더를 함께 보내세요. (필수는 아니며, 미전달 시 서버가 자동 생성합니다.)
-
 ### RPC 연결
 
 ```powershell
@@ -93,6 +84,23 @@ $env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_SEPOLIA_PRIVATE_KEY>"
 ```
 
 ※ 반드시 서버 실행 전 먼저 환경 변수를 입력하세요. 만약 서버 실행 중 환경 변수의 값이 변경되었다면 서버를 재실행해 주세요.
+
+수강용 팁: 브로드캐스트 이후 `INCLUDED` 전이를 수동으로 설명/시연하려면 자동 Confirmation Tracker를 끄고 시작하세요.
+
+```powershell
+$env:CUSTODY_CONFIRMATION_TRACKER_AUTO_START = "false"
+```
+
+### 실습용 공통 변수 입력
+
+```powershell
+$BASE_URL = "http://localhost:8080"
+$CID_PREFIX = "lab"
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+$to   = "0x1111111111111111111111111111111111111111"
+```
+
+권장: 실습 중 로그 추적이 필요한 API 호출에는 `X-Correlation-Id` 헤더를 함께 보내세요. (필수는 아니며, 미전달 시 서버가 자동 생성합니다.)
 
 ### RPC 정상 연결 확인
 
@@ -123,8 +131,6 @@ balanceEth : 1.587757348527098995
 ### 5-1. 허용 케이스
 
 ```powershell
-$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
-$to   = "0x1111111111111111111111111111111111111111"
 $w    = Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/withdrawals" `
   -Headers @{ 
@@ -150,8 +156,6 @@ $w    = Invoke-RestMethod -Method POST `
 ### 5-2. 화이트리스트 거절 케이스
 
 ```powershell
-$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
-$to   = "0x2222222222222222222222222222222222222222"  # 화이트리스트에 없는 주소
 $w = Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/withdrawals" `
   -Headers @{ 
@@ -162,7 +166,7 @@ $w = Invoke-RestMethod -Method POST `
   -Body (@{
     chainType   = "EVM"
     fromAddress = $from
-    toAddress   = $to
+    toAddress   = "0x2222222222222222222222222222222222222222"
     asset       = "USDC"
     amount      = 0.00001
   } | ConvertTo-Json -Depth 10)
@@ -177,8 +181,7 @@ $w = Invoke-RestMethod -Method POST `
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/policy-audits" `
-  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab5-audit-001" }
+  -Uri "$BASE_URL/withdrawals/$($w.id)/policy-audits"
 ```
 
 예상 reason
@@ -188,9 +191,6 @@ Invoke-RestMethod -Method GET `
 ### 5-3. 금액 초과 거절 케이스
 
 ```powershell
-$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
-$to   = "0x1111111111111111111111111111111111111111"
-
 $w = Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/withdrawals" `
   -Headers @{ 
@@ -228,8 +228,6 @@ $w = Invoke-RestMethod -Method POST `
 ### 6-1. Withdrawal 생성
 
 ```powershell
-$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
-$to   = "0x1111111111111111111111111111111111111111"
 $idemp = "idem-lab1-2"
 $w = Invoke-RestMethod -Method POST `
 -Uri "$BASE_URL/withdrawals" `
@@ -284,8 +282,7 @@ $w
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts" `
-  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab6-attempts-001" }
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
 ```
 
 기대 결과
@@ -313,8 +310,6 @@ createdAt            : 2026-02-21T16:31:18.100507Z
 ### 6-4. 같은 키 + 다른 바디(충돌)
 
 ```powershell
-$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
-$to   = "0x1111111111111111111111111111111111111111"
 $idemp = "idem-lab1-2"
 $w = Invoke-RestMethod -Method POST `
 -Uri "$BASE_URL/withdrawals" `
@@ -326,7 +321,6 @@ toAddress   = $to
 asset       = "ETH"
 amount      = 0.0001  #수량 변경
 } | ConvertTo-Json)
-$w
 
 ```
 
@@ -338,10 +332,7 @@ $w
 ### 6-5. 동시 요청 실행 (PowerShell)
 
 ```powershell
-$from    = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
-$to      = "0x1111111111111111111111111111111111111111"
 $idemp   = "idem-concurrency-2"   # 동일 멱등키 고정
-
 $jobs = 1..5 | ForEach-Object {
   Start-Job -ScriptBlock {
     param($BASE_URL, $from, $to, $idemp)
@@ -404,8 +395,7 @@ Invoke-RestMethod -Method POST `
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts" `
-  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-attempts-001" }
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
 ```
 
 기대 결과
@@ -424,8 +414,7 @@ Invoke-RestMethod -Method POST `
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts" `
-  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-attempts-002" }
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
 ```
 
 기대 결과
@@ -443,6 +432,7 @@ Invoke-RestMethod -Method POST `
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/withdrawals/$($w.id)/replace" `
   -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-replace-002" }
+
 ```
 
 
@@ -462,8 +452,7 @@ Invoke-RestMethod -Method POST `
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)" `
-  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-status-001" }
+  -Uri "$BASE_URL/withdrawals/$($w.id)"
 ```
 
 - `status`가 `W7_INCLUDED`인지 확인
@@ -475,8 +464,7 @@ Invoke-RestMethod -Method GET `
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/evm/tx/{txHash}/wait" `
-  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-receipt-wait-001" }
+  -Uri "$BASE_URL/evm/tx/{txHash}/wait"
 ```
 `GET /evm/tx/{txHash}` 응답 예시(미포함):
 
@@ -519,14 +507,13 @@ Invoke-RestMethod -Method POST `
 
 
 ```powershell
-$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
 
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/adapter-demo/broadcast/evm" `
   -Headers @{ "Content-Type"="application/json"; "X-Correlation-Id" = "$CID_PREFIX-lab8-evm-broadcast-001" } `
   -Body (@{
     from   = $from
-    to     = "0x1111111111111111111111111111111111111111"
+    to     = $to
     asset  = "ETH"
     amount = 0.00001
   } | ConvertTo-Json)
@@ -595,8 +582,6 @@ $env:SPRING_PROFILES_ACTIVE = "labs-mock"
 ### 9-1. 요청 헤더로 correlation id 전달 (정상 응답/로그 확인)
 
 ```powershell
-$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
-$to   = "0x1111111111111111111111111111111111111111"
 $idemp = "lab-cid-001"
 $w = Invoke-RestMethod -Method POST `
 -Uri "$BASE_URL/withdrawals" `
@@ -625,8 +610,6 @@ $w
 ### 9-2. correlation id 미전달 시 서버 자동 생성 확인
 
 ```powershell
-$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
-$to   = "0x1111111111111111111111111111111111111111"
 $idemp = "lab-cid-002"
 $w = Invoke-RestMethod -Method POST `
 -Uri "$BASE_URL/withdrawals" `

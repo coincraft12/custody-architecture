@@ -9,7 +9,18 @@
         </encoder>
     </appender>
 
+    <appender name="JSON_PRETTY_FILE" class="ch.qos.logback.core.FileAppender">
+        <file>logs/custody-pretty.json.log</file>
+        <append>false</append>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <timeZone>UTC</timeZone>
+            <customFields>{"service":"${appName}","log_format":"json_pretty"}</customFields>
+            <jsonGeneratorDecorator class="net.logstash.logback.decorate.PrettyPrintingJsonGeneratorDecorator"/>
+        </encoder>
+    </appender>
+
     <root level="INFO">
         <appender-ref ref="JSON_CONSOLE"/>
+        <appender-ref ref="JSON_PRETTY_FILE"/>
     </root>
 </configuration>

@@ -22,9 +22,15 @@ policy:
   max-amount: 0.1
   whitelist-to-addresses: 0xto,0xtrusted,0x1111111111111111111111111111111111111111,0x78513e370210539be82D08486987f76f63673B88
 
+logging:
+  level:
+    com.zaxxer.hikari.pool.HikariPool: ERROR
+
 custody:
   chain:
     mode: ${CUSTODY_CHAIN_MODE:mock}
+  confirmation-tracker:
+    auto-start: ${CUSTODY_CONFIRMATION_TRACKER_AUTO_START:false}
   evm:
     rpc-url: ${CUSTODY_EVM_RPC_URL:https://ethereum-sepolia-rpc.publicnode.com}
     chain-id: ${CUSTODY_EVM_CHAIN_ID:11155111}
