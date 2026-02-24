@@ -11,10 +11,14 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
+
+logging:
+  pattern:
+    level: "%5p [cid:%X{correlationId:-none}]"
 
 policy:
   max-amount: 0.1
