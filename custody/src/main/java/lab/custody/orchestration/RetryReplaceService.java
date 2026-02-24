@@ -13,6 +13,7 @@ import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lab.custody.domain.withdrawal.WithdrawalStatus;
 import lab.custody.sim.fakechain.FakeChain;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,6 +23,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RetryReplaceService {
 
     private static final long DEFAULT_PRIORITY_FEE = 2_000_000_000L;
@@ -37,6 +39,7 @@ public class RetryReplaceService {
     // For EVM, the nonce is re-read from the pending state so the retry uses the latest executable nonce.
     @Transactional
     public TxAttempt retry(UUID withdrawalId) {
+        log.info("event=retry_replace.retry.start withdrawalId={}", withdrawalId);
         Withdrawal w = loadWithdrawal(withdrawalId);
         TxAttempt canonical = loadCanonical(withdrawalId);
         ensureWithinAttemptLimit(withdrawalId);
@@ -51,13 +54,23 @@ public class RetryReplaceService {
 
         TxAttempt retried = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), nonce);
         broadcast(w, retried);
-        return txAttemptRepository.save(retried);
+        TxAttempt saved = txAttemptRepository.save(retried);
+        log.info(
+                "event=retry_replace.retry.done withdrawalId={} attemptId={} nonce={} status={} canonical={}",
+                withdrawalId,
+                saved.getId(),
+                saved.getNonce(),
+                saved.getStatus(),
+                saved.isCanonical()
+        );
+        return saved;
     }
 
     // Replace keeps the same nonce and bumps fees so a stuck pending tx can be superseded (RBF-style flow).
     // The previous canonical attempt is preserved in history but no longer considered canonical.
     @Transactional
     public TxAttempt replace(UUID withdrawalId) {
+        log.info("event=retry_replace.replace.start withdrawalId={}", withdrawalId);
         Withdrawal w = loadWithdrawal(withdrawalId);
         TxAttempt canonical = loadCanonical(withdrawalId);
 
@@ -84,13 +97,25 @@ public class RetryReplaceService {
                 bumpedFee(canonical.getMaxFeePerGas(), DEFAULT_MAX_FEE)
         );
         broadcast(w, replaced);
-        return txAttemptRepository.save(replaced);
+        TxAttempt saved = txAttemptRepository.save(replaced);
+        log.info(
+                "event=retry_replace.replace.done withdrawalId={} attemptId={} nonce={} status={} canonical={} maxPriorityFeePerGas={} maxFeePerGas={}",
+                withdrawalId,
+                saved.getId(),
+                saved.getNonce(),
+                saved.getStatus(),
+                saved.isCanonical(),
+                saved.getMaxPriorityFeePerGas(),
+                saved.getMaxFeePerGas()
+        );
+        return saved;
     }
 
     // Synchronous receipt check path used by labs/manual operations.
     // This updates the canonical attempt/withdrawal based on real RPC receipt data when available.
     @Transactional
     public TxAttempt sync(UUID withdrawalId, long timeoutMs, long pollMs) {
+        log.info("event=retry_replace.sync.start withdrawalId={} timeoutMs={} pollMs={}", withdrawalId, timeoutMs, pollMs);
         Withdrawal w = loadWithdrawal(withdrawalId);
         TxAttempt canonical = loadCanonical(withdrawalId);
         ChainAdapter adapter = router.resolve(w.getChainType());
@@ -105,6 +130,7 @@ public class RetryReplaceService {
             while (System.currentTimeMillis() - start <= normalizedTimeoutMs) {
                 var receiptOpt = rpcAdapter.getReceipt(canonical.getTxHash());
                 if (receiptOpt.isPresent()) {
+                    log.info("event=retry_replace.sync.receipt_found withdrawalId={} attemptId={} txHash={}", withdrawalId, canonical.getId(), canonical.getTxHash());
                     canonical.transitionTo(TxAttemptStatus.INCLUDED);
                     if ("0x1".equalsIgnoreCase(receiptOpt.get().getStatus())) {
                         canonical.transitionTo(TxAttemptStatus.SUCCESS);
@@ -123,16 +149,26 @@ public class RetryReplaceService {
                     Thread.sleep(normalizedPollMs);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    log.warn("event=retry_replace.sync.interrupted withdrawalId={} attemptId={}", withdrawalId, canonical.getId());
                     throw new IllegalStateException("Interrupted while waiting for transaction receipt", e);
                 }
             }
         }
-        return txAttemptRepository.save(canonical);
+        TxAttempt saved = txAttemptRepository.save(canonical);
+        log.info(
+                "event=retry_replace.sync.done withdrawalId={} attemptId={} status={} canonical={}",
+                withdrawalId,
+                saved.getId(),
+                saved.getStatus(),
+                saved.isCanonical()
+        );
+        return saved;
     }
 
     // Lab helper: drive attempt state transitions without a real chain by consuming scripted fake outcomes.
     @Transactional
     public TxAttempt simulateBroadcast(UUID withdrawalId) {
+        log.info("event=retry_replace.simulate_broadcast.start withdrawalId={}", withdrawalId);
         Withdrawal withdrawal = loadWithdrawal(withdrawalId);
         TxAttempt canonical = loadCanonical(withdrawalId);
         FakeChain.NextOutcome outcome = fakeChain.consumeOutcome(withdrawalId);
@@ -143,7 +179,9 @@ public class RetryReplaceService {
             txAttemptRepository.save(canonical);
 
             TxAttempt newAttempt = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), canonical.getNonce());
-            return txAttemptRepository.save(newAttempt);
+            TxAttempt saved = txAttemptRepository.save(newAttempt);
+            log.info("event=retry_replace.simulate_broadcast.fail_system withdrawalId={} newAttemptId={}", withdrawalId, saved.getId());
+            return saved;
         }
 
         if (outcome == FakeChain.NextOutcome.REPLACED) {
@@ -153,18 +191,23 @@ public class RetryReplaceService {
             txAttemptRepository.save(canonical);
 
             TxAttempt newAttempt = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), canonical.getNonce());
-            return txAttemptRepository.save(newAttempt);
+            TxAttempt saved = txAttemptRepository.save(newAttempt);
+            log.info("event=retry_replace.simulate_broadcast.replaced withdrawalId={} newAttemptId={}", withdrawalId, saved.getId());
+            return saved;
         }
 
         canonical.transitionTo(TxAttemptStatus.INCLUDED);
         withdrawal.transitionTo(WithdrawalStatus.W7_INCLUDED);
         withdrawalRepository.save(withdrawal);
-        return txAttemptRepository.save(canonical);
+        TxAttempt saved = txAttemptRepository.save(canonical);
+        log.info("event=retry_replace.simulate_broadcast.included withdrawalId={} attemptId={}", withdrawalId, saved.getId());
+        return saved;
     }
 
     // Lab helper: simulate the "broadcasted -> included" transition while enforcing state order rules.
     @Transactional
     public TxAttempt simulateConfirmation(UUID withdrawalId) {
+        log.info("event=retry_replace.simulate_confirmation.start withdrawalId={}", withdrawalId);
         Withdrawal withdrawal = loadWithdrawal(withdrawalId);
         TxAttempt canonical = loadCanonical(withdrawalId);
 
@@ -179,7 +222,9 @@ public class RetryReplaceService {
         canonical.transitionTo(TxAttemptStatus.INCLUDED);
         withdrawal.transitionTo(WithdrawalStatus.W7_INCLUDED);
         withdrawalRepository.save(withdrawal);
-        return txAttemptRepository.save(canonical);
+        TxAttempt saved = txAttemptRepository.save(canonical);
+        log.info("event=retry_replace.simulate_confirmation.done withdrawalId={} attemptId={} status={}", withdrawalId, saved.getId(), saved.getStatus());
+        return saved;
     }
 
 
@@ -195,7 +240,9 @@ public class RetryReplaceService {
 
     // Bound the number of retries/replaces so failures become visible operationally instead of looping forever.
     private void ensureWithinAttemptLimit(UUID withdrawalId) {
-        if (txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId).size() >= 5) {
+        int attemptCount = txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId).size();
+        if (attemptCount >= 5) {
+            log.warn("event=retry_replace.attempt_limit.exceeded withdrawalId={} attemptCount={}", withdrawalId, attemptCount);
             throw new InvalidRequestException("max retry/replace attempts exceeded (5)");
         }
     }
@@ -226,6 +273,14 @@ public class RetryReplaceService {
         attempt.transitionTo(TxAttemptStatus.BROADCASTED);
         withdrawal.transitionTo(WithdrawalStatus.W6_BROADCASTED);
         withdrawalRepository.save(withdrawal);
+        log.info(
+                "event=retry_replace.broadcast.success withdrawalId={} attemptId={} txHash={} attemptStatus={} withdrawalStatus={}",
+                withdrawal.getId(),
+                attempt.getId(),
+                result.txHash(),
+                attempt.getStatus(),
+                withdrawal.getStatus()
+        );
     }
 
     // Load helpers keep controller/service methods focused on workflow logic and consistent error messages.

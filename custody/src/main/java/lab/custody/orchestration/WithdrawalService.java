@@ -14,6 +14,7 @@ import lab.custody.domain.withdrawal.WithdrawalStatus;
 import lab.custody.orchestration.policy.PolicyDecision;
 import lab.custody.orchestration.policy.PolicyEngine;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class WithdrawalService {
 
     private final WithdrawalRepository withdrawalRepository;
@@ -52,6 +54,14 @@ public class WithdrawalService {
     // Same Idempotency-Key + same body returns the existing Withdrawal instead of rebroadcasting.
     public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
         ChainType chainType = parseChainType(req.chainType());
+        log.info(
+                "event=withdrawal_service.create_or_get.start idempotencyKey={} chainType={} asset={} amount={} toAddress={}",
+                idempotencyKey,
+                chainType,
+                req.asset(),
+                req.amount(),
+                req.toAddress()
+        );
         ReentrantLock lock = idempotencyLocks.computeIfAbsent(idempotencyKey, key -> new ReentrantLock());
         lock.lock();
         try {
@@ -63,6 +73,12 @@ public class WithdrawalService {
             if (result == null) {
                 throw new IllegalStateException("failed to create or get withdrawal");
             }
+            log.info(
+                    "event=withdrawal_service.create_or_get.done idempotencyKey={} withdrawalId={} status={}",
+                    idempotencyKey,
+                    result.getId(),
+                    result.getStatus()
+            );
             return result;
         } finally {
             lock.unlock();
@@ -81,15 +97,23 @@ public class WithdrawalService {
                 req.asset(),
             amountWei
         ));
+        log.info("event=withdrawal_service.create.persisted withdrawalId={} status={}", saved.getId(), saved.getStatus());
         if (ledgerService != null) {
             saved = ledgerService.saveWithdrawal(saved);
         }
 
         PolicyDecision decision = policyEngine.evaluate(req);
         policyAuditLogRepository.save(PolicyAuditLog.of(saved.getId(), decision.allowed(), decision.reason()));
+        log.info(
+                "event=withdrawal_service.policy.evaluated withdrawalId={} allowed={} reason={}",
+                saved.getId(),
+                decision.allowed(),
+                decision.reason()
+        );
 
         if (!decision.allowed()) {
             saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
+            log.info("event=withdrawal_service.policy.rejected withdrawalId={} status={}", saved.getId(), saved.getStatus());
             if (ledgerService != null) {
                 return ledgerService.saveWithdrawal(saved);
             }
@@ -100,13 +124,22 @@ public class WithdrawalService {
         boolean approved = approvalService == null || approvalService.requestApproval(saved);
         if (!approved) {
             saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
+            log.info("event=withdrawal_service.approval.rejected withdrawalId={} status={}", saved.getId(), saved.getStatus());
             if (ledgerService != null) {
                 return ledgerService.saveWithdrawal(saved);
             }
             return withdrawalRepository.save(saved);
         }
+        log.info("event=withdrawal_service.approval.approved withdrawalId={}", saved.getId());
 
         TxAttempt attempt = attemptService.createAttempt(saved.getId(), req.fromAddress(), resolveInitialNonce(chainType, req.fromAddress()));
+        log.info(
+                "event=withdrawal_service.attempt.created withdrawalId={} attemptId={} attemptNo={} nonce={}",
+                saved.getId(),
+                attempt.getId(),
+                attempt.getAttemptNo(),
+                attempt.getNonce()
+        );
         broadcastAttempt(saved, attempt);
 
         // persist latest state via ledger if available
@@ -120,6 +153,7 @@ public class WithdrawalService {
 
         // start async confirmation tracking if available
         if (confirmationTracker != null) {
+            log.info("event=withdrawal_service.confirmation_tracking.start withdrawalId={} attemptId={}", saved.getId(), attempt.getId());
             confirmationTracker.startTracking(attempt);
         }
 
@@ -152,6 +186,14 @@ public class WithdrawalService {
         attempt.setTxHash(result.txHash());
         attempt.transitionTo(TxAttemptStatus.BROADCASTED);
         withdrawal.transitionTo(WithdrawalStatus.W6_BROADCASTED);
+        log.info(
+                "event=withdrawal_service.broadcast.success withdrawalId={} attemptId={} txHash={} withdrawalStatus={} attemptStatus={}",
+                withdrawal.getId(),
+                attempt.getId(),
+                result.txHash(),
+                withdrawal.getStatus(),
+                attempt.getStatus()
+        );
         // saving of attempt/wdl is handled by LedgerService by caller
     }
     // Enforce idempotency semantics strictly: same key can only replay the same logical request.
@@ -166,9 +208,15 @@ public class WithdrawalService {
             && existing.getAmount() == reqWei;
 
         if (!matches) {
+            log.warn(
+                    "event=withdrawal_service.idempotency.conflict existingWithdrawalId={} idempotencyKey={}",
+                    existing.getId(),
+                    existing.getIdempotencyKey()
+            );
             throw new IdempotencyConflictException("same Idempotency-Key cannot be used with a different request body");
         }
 
+        log.info("event=withdrawal_service.idempotency.hit withdrawalId={} idempotencyKey={}", existing.getId(), existing.getIdempotencyKey());
         return existing;
     }
 

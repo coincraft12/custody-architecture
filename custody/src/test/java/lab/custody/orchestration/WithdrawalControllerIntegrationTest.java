@@ -8,8 +8,11 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.startsWith;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.isEmptyOrNullString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -25,6 +28,7 @@ class WithdrawalControllerIntegrationTest {
     void create_withValidChainType_returnsCreatedWithdrawalWithParsedChainType() throws Exception {
         mockMvc.perform(post("/withdrawals")
                         .header("Idempotency-Key", "idem-bft-1")
+                        .header("X-Correlation-Id", "cid-withdrawal-create-001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -36,8 +40,27 @@ class WithdrawalControllerIntegrationTest {
                                 }
                                 """))
                 .andExpect(status().isOk())
+                .andExpect(header().string("X-Correlation-Id", "cid-withdrawal-create-001"))
                 .andExpect(jsonPath("$.chainType").value("BFT"))
                 .andExpect(jsonPath("$.status").value("W6_BROADCASTED"));
+    }
+
+    @Test
+    void create_withoutCorrelationIdHeader_generatesResponseCorrelationId() throws Exception {
+        mockMvc.perform(post("/withdrawals")
+                        .header("Idempotency-Key", "idem-generate-cid-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "chainType": "evm",
+                                  "fromAddress": "0xfrom",
+                                  "toAddress": "0xto",
+                                  "asset": "USDC",
+                                  "amount": 1
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Correlation-Id", not(isEmptyOrNullString())));
     }
 
     @Test
@@ -114,9 +137,12 @@ class WithdrawalControllerIntegrationTest {
     void create_withMalformedJson_returnsHelpfulBadRequestMessage() throws Exception {
         mockMvc.perform(post("/withdrawals")
                         .header("Idempotency-Key", "idem-malformed-json-1")
+                        .header("X-Correlation-Id", "cid-bad-json-001")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{'chainType':'evm','fromAddress':'0xfrom','toAddress':'0xto','asset':'USDC','amount':100}"))
                 .andExpect(status().isBadRequest())
+                .andExpect(header().string("X-Correlation-Id", "cid-bad-json-001"))
+                .andExpect(jsonPath("$.correlationId").value("cid-bad-json-001"))
                 .andExpect(jsonPath("$.message").value(startsWith("Invalid JSON body. If you are using PowerShell, use double quotes for JSON (or send --data-binary from a file).")));
     }
 

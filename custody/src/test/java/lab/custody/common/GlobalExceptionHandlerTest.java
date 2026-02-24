@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -27,12 +28,16 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void runtimeExceptionMessageIsSanitized() throws Exception {
-        mockMvc.perform(get("/test-error").accept(MediaType.APPLICATION_JSON))
+        mockMvc.perform(get("/test-error")
+                        .header("X-Correlation-Id", "cid-test-error-001")
+                        .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isInternalServerError())
+                .andExpect(header().string("X-Correlation-Id", "cid-test-error-001"))
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.status").value(500))
                 .andExpect(jsonPath("$.path").value("/test-error"))
-                .andExpect(jsonPath("$.message").value("Failed with secret 0x[REDACTED]"));
+                .andExpect(jsonPath("$.message").value("Failed with secret 0x[REDACTED]"))
+                .andExpect(jsonPath("$.correlationId").value("cid-test-error-001"));
     }
 
     @TestConfiguration

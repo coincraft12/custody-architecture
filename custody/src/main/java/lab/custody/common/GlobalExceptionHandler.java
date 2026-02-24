@@ -5,6 +5,7 @@ import lab.custody.domain.withdrawal.ChainType;
 import lab.custody.orchestration.IdempotencyConflictException;
 import lab.custody.orchestration.InvalidRequestException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.MDC;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -36,7 +37,8 @@ public class GlobalExceptionHandler {
         ErrorResponse body = new ErrorResponse(
                 HttpStatus.BAD_REQUEST.value(),
                 message,
-                allowedTypes
+                allowedTypes,
+                currentCorrelationId()
         );
 
         return ResponseEntity.badRequest().body(body);
@@ -48,7 +50,8 @@ public class GlobalExceptionHandler {
         ErrorResponse body = new ErrorResponse(
                 HttpStatus.BAD_REQUEST.value(),
                 sanitizeMessage(ex.getMessage()),
-                allowedChainTypes()
+                allowedChainTypes(),
+                currentCorrelationId()
         );
 
         return ResponseEntity.badRequest().body(body);
@@ -65,7 +68,8 @@ public class GlobalExceptionHandler {
         ErrorResponse body = new ErrorResponse(
                 HttpStatus.BAD_REQUEST.value(),
                 message,
-                allowedChainTypes()
+                allowedChainTypes(),
+                currentCorrelationId()
         );
 
         return ResponseEntity.badRequest()
@@ -78,7 +82,8 @@ public class GlobalExceptionHandler {
         ErrorResponse body = new ErrorResponse(
                 HttpStatus.BAD_REQUEST.value(),
                 "Missing required header: " + ex.getHeaderName(),
-                allowedChainTypes()
+                allowedChainTypes(),
+                currentCorrelationId()
         );
 
         return ResponseEntity.badRequest().body(body);
@@ -89,7 +94,8 @@ public class GlobalExceptionHandler {
         ErrorResponse body = new ErrorResponse(
                 HttpStatus.BAD_REQUEST.value(),
                 sanitizeMessage(ex.getMessage()),
-                allowedChainTypes()
+                allowedChainTypes(),
+                currentCorrelationId()
         );
 
         return ResponseEntity.badRequest().body(body);
@@ -100,7 +106,8 @@ public class GlobalExceptionHandler {
         ErrorResponse body = new ErrorResponse(
                 HttpStatus.CONFLICT.value(),
                 sanitizeMessage(ex.getMessage()),
-                allowedChainTypes()
+                allowedChainTypes(),
+                currentCorrelationId()
         );
 
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
@@ -111,7 +118,8 @@ public class GlobalExceptionHandler {
         RuntimeErrorResponse body = new RuntimeErrorResponse(
                 HttpStatus.INTERNAL_SERVER_ERROR.value(),
                 sanitizeMessage(ex.getMessage()),
-                request.getRequestURI()
+                request.getRequestURI(),
+                currentCorrelationId()
         );
 
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
@@ -130,16 +138,22 @@ public class GlobalExceptionHandler {
                 .toList();
     }
 
+    private String currentCorrelationId() {
+        return MDC.get(CorrelationIdFilter.MDC_KEY);
+    }
+
     public record ErrorResponse(
             int status,
             String message,
-            List<String> allowedTypes
+            List<String> allowedTypes,
+            String correlationId
     ) {}
 
     public record RuntimeErrorResponse(
             int status,
             String message,
-            String path
+            String path,
+            String correlationId
     ) {
     }
 }

@@ -565,7 +565,87 @@ $env:SPRING_PROFILES_ACTIVE = "labs-mock"
 
 ---
 
-## 9) 주요 API 요약
+## 9) 실습 5 — Correlation ID + 로그 표준화
+
+목표
+
+- 요청 단위 추적용 `X-Correlation-Id`를 수신/생성하고 응답 헤더로 반환
+- 애플리케이션 로그에 `cid`를 공통 포맷으로 출력
+- 컨트롤러/핵심 서비스 로그를 `event=... key=value` 형태로 표준화
+- 에러 응답 body에서도 `correlationId`를 확인 가능하게 구성
+
+### 9-1. 요청 헤더로 correlation id 전달 (정상 응답/로그 확인)
+
+```powershell
+$body = @{
+  chainType   = "EVM"
+  fromAddress = "0xfrom"
+  toAddress   = "0x1111111111111111111111111111111111111111"
+  asset       = "ETH"
+  amount      = 0.01
+} | ConvertTo-Json -Compress
+
+Invoke-WebRequest `
+  -Uri "$BASE_URL/withdrawals" `
+  -Method POST `
+  -Headers @{
+    "Idempotency-Key"  = "lab-cid-001"
+    "X-Correlation-Id" = "cid-lab-001"
+  } `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+기대 결과
+
+- 응답 헤더에 `X-Correlation-Id: cid-lab-001`
+- 애플리케이션 로그에 `[cid:cid-lab-001]`
+- 컨트롤러/서비스 로그가 `event=withdrawal.create.request ...`, `event=withdrawal_service.create_or_get.start ...` 형태로 출력
+
+### 9-2. correlation id 미전달 시 서버 자동 생성 확인
+
+```powershell
+Invoke-WebRequest `
+  -Uri "$BASE_URL/withdrawals" `
+  -Method POST `
+  -Headers @{ "Idempotency-Key" = "lab-cid-002" } `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+기대 결과
+
+- 응답 헤더 `X-Correlation-Id`가 비어 있지 않음(서버 생성 UUID)
+- 로그에도 동일한 `cid`가 출력
+
+### 9-3. 에러 응답에서 correlationId 확인 (PowerShell JSON 파싱 오류 예시)
+
+```powershell
+Invoke-WebRequest `
+  -Uri "$BASE_URL/withdrawals" `
+  -Method POST `
+  -Headers @{
+    "Idempotency-Key"  = "lab-cid-bad-json-001"
+    "X-Correlation-Id" = "cid-bad-json-001"
+  } `
+  -ContentType "application/json" `
+  -Body "{'chainType':'evm'}"
+```
+
+기대 결과
+
+- `400 Bad Request`
+- 응답 헤더에 `X-Correlation-Id: cid-bad-json-001`
+- 응답 body에 `correlationId = "cid-bad-json-001"`
+
+운영 팁
+
+- `spring.jpa.show-sql: true` 상태에서는 `Hibernate:` SQL 출력이 섞여 보일 수 있습니다.
+- `cid` 로그만 보고 싶다면 실습 중에는 `spring.jpa.show-sql: false`로 잠시 꺼두세요.
+
+---
+
+## 10) 주요 API 요약
 
 - `POST /withdrawals` (Header: `Idempotency-Key`)
 - `GET /withdrawals/{id}`
@@ -581,16 +661,18 @@ $env:SPRING_PROFILES_ACTIVE = "labs-mock"
 
 ---
 
-## 10) 다음 확장 과제 (권장)
+## 11) 다음 확장 과제 (권장)
 
 - Policy 다중 룰(우선순위/다중 사유)
 - Adapter timeout/partial failure 시나리오 확장
 - 상태 전이 불변식 테스트(canonical은 항상 1개)
-- 요청 추적용 correlation id + 로그 표준화
+- 비동기 작업(ConfirmationTracker)까지 correlation id(MDC) 전파
+- JSON 구조화 로그 적용(검색/집계 친화적 포맷)
+- 민감정보 마스킹 규칙 표준화(주소/키/원문 예외 메시지)
 
 ---
 
-## 11) 실습별 핵심 코드
+## 12) 실습별 핵심 코드
 
 ### 실습 1 — Policy Engine + Audit
 
@@ -769,7 +851,53 @@ if (remoteChainId != configuredChainId) {
 
 ---
 
-### 실습 5 (심화) — 동시성 멱등성 + 비동기 Confirmation Tracker
+### 실습 5 — Correlation ID + 로그 표준화
+
+핵심 코드 (`CorrelationIdFilter#doFilterInternal`, `GlobalExceptionHandler`, `application.yaml`, `WithdrawalController`/`WithdrawalService`)
+
+```java
+String correlationId = resolveCorrelationId(request.getHeader(CORRELATION_ID_HEADER));
+MDC.put(MDC_KEY, correlationId);
+response.setHeader(CORRELATION_ID_HEADER, correlationId);
+
+try {
+    filterChain.doFilter(request, response);
+} finally {
+    MDC.remove(MDC_KEY);
+}
+```
+
+```yaml
+logging:
+  pattern:
+    level: "%5p [cid:%X{correlationId:-none}]"
+```
+
+```java
+ErrorResponse body = new ErrorResponse(
+        HttpStatus.BAD_REQUEST.value(),
+        message,
+        allowedChainTypes(),
+        currentCorrelationId()
+);
+```
+
+```java
+log.info("event=withdrawal.create.request chainType={} asset={} amount={} toAddress={} idempotencyKeyPresent={}",
+        req.chainType(), req.asset(), req.amount(), req.toAddress(), idempotencyKey != null && !idempotencyKey.isBlank());
+
+log.info("event=withdrawal_service.create_or_get.start idempotencyKey={} chainType={} asset={} amount={} toAddress={}",
+        idempotencyKey, chainType, req.asset(), req.amount(), req.toAddress());
+```
+
+- `CorrelationIdFilter`가 요청 헤더(`X-Correlation-Id`)를 수신하거나 서버에서 생성한 값을 `MDC`에 넣고, 응답 헤더에도 동일 값을 반환합니다.
+- 로그 패턴 `%X{correlationId}`로 모든 애플리케이션 로그에 `cid`를 표시합니다.
+- 예외 응답 body(`ErrorResponse`, `RuntimeErrorResponse`)에 `correlationId`를 포함해 클라이언트/서버 로그 상호 추적을 쉽게 만듭니다.
+- 컨트롤러/서비스 로그는 `event=... key=value` 형태로 통일해 검색/필터링을 단순화합니다.
+
+---
+
+### 실습 6 (심화) — 동시성 멱등성 + 비동기 Confirmation Tracker
 
 핵심 코드 (`WithdrawalService#createOrGet`, `ConfirmationTracker`)
 
