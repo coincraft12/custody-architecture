@@ -452,7 +452,7 @@ Invoke-RestMethod -Method POST `
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)"
+  -Uri "$BASE_URL/withdrawals/$($w.id).attempts"
 ```
 
 - `status`가 `W7_INCLUDED`인지 확인
@@ -604,8 +604,9 @@ $w
 기대 결과
 
 - 응답 헤더에 `X-Correlation-Id: cid-lab-001`
-- 애플리케이션 로그에 `[cid:cid-lab-001]`
+- 콘솔/JSON 로그에 `correlationId = "cid-lab-001"`
 - 컨트롤러/서비스 로그가 `event=withdrawal.create.request ...`, `event=withdrawal_service.create_or_get.start ...` 형태로 출력
+- JSON 로그에서는 실습 편의를 위해 `clientId`, `userId`(mock 값)도 함께 출력되어 "요청 흐름"과 "요청 주체"를 같이 설명할 수 있음
 
 ### 9-2. correlation id 미전달 시 서버 자동 생성 확인
 
@@ -631,7 +632,7 @@ $w
 기대 결과
 
 - 응답 헤더 `X-Correlation-Id`가 비어 있지 않음(서버 생성 UUID)
-- 로그에도 동일한 `cid`가 출력
+- 로그에도 동일한 `correlationId`가 출력
 
 ### 9-3. 에러 응답에서 correlationId 확인 (PowerShell JSON 파싱 오류 예시)
 
@@ -656,7 +657,8 @@ Invoke-WebRequest `
 운영 팁
 
 - `spring.jpa.show-sql: true` 상태에서는 `Hibernate:` SQL 출력이 섞여 보일 수 있습니다.
-- `cid` 로그만 보고 싶다면 실습 중에는 `spring.jpa.show-sql: false`로 잠시 꺼두세요.
+- 실습용 pretty 파일 로그(`custody/logs/custody-pretty.json.log`)는 `correlationId`가 있는 요청 흐름 로그만 기록되도록 설정되어 있습니다.
+- `clean build`는 테스트용 로깅 설정을 사용하므로 pretty 파일 로그를 만들지 않으며, `clean` 시 `logs/` 디렉터리도 함께 정리됩니다.
 
 ---
 
@@ -746,8 +748,10 @@ public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req
 TxAttempt attempt = attemptService.createAttempt(saved.getId(), req.fromAddress(), resolveInitialNonce(chainType, req.fromAddress()));
 broadcastAttempt(saved, attempt);
 
-if (confirmationTracker != null) {
+if (confirmationTracker != null && confirmationTrackerAutoStart) {
     confirmationTracker.startTracking(attempt);
+} else if (confirmationTracker != null) {
+    log.info("event=withdrawal_service.confirmation_tracking.skipped ... reason=auto_start_disabled");
 }
 ```
 
@@ -767,6 +771,7 @@ if (!matches) {
 - 같은 `Idempotency-Key` + 동일 바디면 기존 Withdrawal을 반환하고, 같은 키 + 다른 바디면 `409` 충돌을 유도합니다.
 - 같은 `Idempotency-Key` 동시 요청은 `ReentrantLock`으로 직렬화하고, 락 내부에서 `TransactionTemplate`로 조회/생성/브로드캐스트를 커밋까지 묶어 중복 브로드캐스트(`already known`)를 방지합니다.
 - 생성 시점에 첫 `TxAttempt`를 만들고 브로드캐스트하며, 가능하면 `ConfirmationTracker` 비동기 추적도 시작합니다.
+- `custody.confirmation-tracker.auto-start=false`면 자동 추적을 건너뛰고(`...confirmation_tracking.skipped` 로그), 수동 `sync`/실습 절차로 포함 전이를 설명할 수 있습니다.
 - 현재 구현에는 `ApprovalService`, `LedgerService`가 선택 주입(`@Autowired(required=false)`)으로 연결될 수 있는 훅이 포함되어 있습니다.
 
 ---
@@ -817,7 +822,7 @@ if (receiptOpt.isPresent()) {
 - `retry`는 기존 canonical attempt를 timeout 처리하고 새 nonce(가능하면 RPC pending nonce)로 재전송합니다.
 - `replace`는 같은 nonce를 유지한 채 fee bump(약 +12.5%)로 교체 전송합니다.
 - `sync`는 실제 receipt를 폴링해서 `INCLUDED/SUCCESS/FAILED`로 수렴시킵니다.
-- 현재 구현은 `retry/replace` 총 시도 수를 `3`개로 제한합니다.
+- 현재 구현은 `retry/replace` 총 시도 수를 `5`개로 제한합니다.
 
 ---
 
@@ -868,24 +873,33 @@ if (remoteChainId != configuredChainId) {
 
 ### 실습 5 — Correlation ID + 로그 표준화
 
-핵심 코드 (`CorrelationIdFilter#doFilterInternal`, `GlobalExceptionHandler`, `application.yaml`, `WithdrawalController`/`WithdrawalService`)
+핵심 코드 (`CorrelationIdFilter#doFilterInternal`, `GlobalExceptionHandler`, `logback-spring.xml`, `WithdrawalController`/`WithdrawalService`)
 
 ```java
 String correlationId = resolveCorrelationId(request.getHeader(CORRELATION_ID_HEADER));
-MDC.put(MDC_KEY, correlationId);
+MDC.put(MDC_CORRELATION_ID_KEY, correlationId);
+MDC.put(MDC_CLIENT_ID_KEY, resolveMockClientId(correlationId));
+MDC.put(MDC_USER_ID_KEY, resolveMockUserId(correlationId, request));
 response.setHeader(CORRELATION_ID_HEADER, correlationId);
 
 try {
     filterChain.doFilter(request, response);
 } finally {
-    MDC.remove(MDC_KEY);
+    MDC.remove(MDC_CORRELATION_ID_KEY);
+    MDC.remove(MDC_CLIENT_ID_KEY);
+    MDC.remove(MDC_USER_ID_KEY);
 }
 ```
 
-```yaml
-logging:
-  pattern:
-    level: "%5p [cid:%X{correlationId:-none}]"
+```xml
+<appender name="JSON_PRETTY_FILE" class="ch.qos.logback.core.FileAppender">
+    <file>logs/custody-pretty.json.log</file>
+    <append>false</append>
+    <filter class="lab.custody.common.logging.RequireCorrelationIdFilter"/>
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+        <jsonGeneratorDecorator class="net.logstash.logback.decorate.PrettyPrintingJsonGeneratorDecorator"/>
+    </encoder>
+</appender>
 ```
 
 ```java
@@ -906,7 +920,8 @@ log.info("event=withdrawal_service.create_or_get.start idempotencyKey={} chainTy
 ```
 
 - `CorrelationIdFilter`가 요청 헤더(`X-Correlation-Id`)를 수신하거나 서버에서 생성한 값을 `MDC`에 넣고, 응답 헤더에도 동일 값을 반환합니다.
-- 로그 패턴 `%X{correlationId}`로 모든 애플리케이션 로그에 `cid`를 표시합니다.
+- 실습 편의를 위해 `clientId`, `userId`(mock 값)도 `MDC`에 함께 넣어 JSON 로그 필드로 출력합니다.
+- 구조화 JSON 로그를 사용하므로 `correlationId`, `clientId`, `userId`는 개별 필드로 검색/집계할 수 있습니다.
 - 예외 응답 body(`ErrorResponse`, `RuntimeErrorResponse`)에 `correlationId`를 포함해 클라이언트/서버 로그 상호 추적을 쉽게 만듭니다.
 - 컨트롤러/서비스 로그는 `event=... key=value` 형태로 통일해 검색/필터링을 단순화합니다.
 
@@ -932,7 +947,7 @@ try {
 
 ```java
 public void startTracking(TxAttempt attempt) {
-    executor.submit(() -> trackAttemptInternal(attempt.getId()));
+    submitWithMdc(() -> trackAttemptInternal(attempt.getId()));
 }
 
 while (tries < 60) {

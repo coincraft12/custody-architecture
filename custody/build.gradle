@@ -35,3 +35,9 @@ dependencies {
 tasks.named('test') {
 	useJUnitPlatform()
 }
+
+tasks.named('clean') {
+    doFirst {
+        delete 'logs'
+    }
+}

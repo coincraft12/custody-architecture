@@ -139,7 +139,7 @@ public class GlobalExceptionHandler {
     }
 
     private String currentCorrelationId() {
-        return MDC.get(CorrelationIdFilter.MDC_KEY);
+        return MDC.get(CorrelationIdFilter.MDC_CORRELATION_ID_KEY);
     }
 
     public record ErrorResponse(

@@ -12,6 +12,7 @@
     <appender name="JSON_PRETTY_FILE" class="ch.qos.logback.core.FileAppender">
         <file>logs/custody-pretty.json.log</file>
         <append>false</append>
+        <filter class="lab.custody.common.logging.RequireCorrelationIdFilter"/>
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <timeZone>UTC</timeZone>
             <customFields>{"service":"${appName}","log_format":"json_pretty"}</customFields>
@@ -21,6 +22,16 @@
 
     <root level="INFO">
         <appender-ref ref="JSON_CONSOLE"/>
-        <appender-ref ref="JSON_PRETTY_FILE"/>
     </root>
+
+    <!-- Pretty file log is for lab request-flow logs only (exclude framework/system/test noise). -->
+    <logger name="lab.custody.common" level="INFO" additivity="true">
+        <appender-ref ref="JSON_PRETTY_FILE"/>
+    </logger>
+    <logger name="lab.custody.orchestration" level="INFO" additivity="true">
+        <appender-ref ref="JSON_PRETTY_FILE"/>
+    </logger>
+    <logger name="lab.custody.adapter" level="INFO" additivity="true">
+        <appender-ref ref="JSON_PRETTY_FILE"/>
+    </logger>
 </configuration>
