@@ -11,8 +11,10 @@ import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lab.custody.domain.withdrawal.WithdrawalStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,12 +33,28 @@ public class ConfirmationTracker {
 
     // Start receipt tracking asynchronously so API callers do not block on chain confirmation time.
     public void startTracking(TxAttempt attempt) {
-        executor.submit(() -> trackAttemptInternal(attempt.getId()));
+        submitWithMdc(() -> trackAttemptInternal(attempt.getId()));
     }
 
     // Variant used by demo/manual endpoints when only the attempt id is available.
     public void startTrackingByAttemptId(java.util.UUID attemptId) {
-        executor.submit(() -> trackAttemptInternal(attemptId));
+        submitWithMdc(() -> trackAttemptInternal(attemptId));
+    }
+
+    private void submitWithMdc(Runnable task) {
+        Map<String, String> contextMap = MDC.getCopyOfContextMap();
+        executor.submit(() -> {
+            if (contextMap != null) {
+                MDC.setContextMap(contextMap);
+            } else {
+                MDC.clear();
+            }
+            try {
+                task.run();
+            } finally {
+                MDC.clear();
+            }
+        });
     }
 
     // Poll the chain for a receipt and apply confirmation state transitions when a receipt is found.

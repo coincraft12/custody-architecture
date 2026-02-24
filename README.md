@@ -70,7 +70,10 @@ cd custody-architecture/custody
 
 ```powershell
 $BASE_URL = "http://localhost:8080"
+$CID_PREFIX = "lab"
 ```
+
+권장: 실습 중 로그 추적이 필요한 API 호출에는 `X-Correlation-Id` 헤더를 함께 보내세요. (필수는 아니며, 미전달 시 서버가 자동 생성합니다.)
 
 ### RPC 연결
 
@@ -120,13 +123,14 @@ balanceEth : 1.587757348527098995
 ### 5-1. 허용 케이스
 
 ```powershell
-$from = "0x740161186057d3a948a1c16f1978937dca269070"
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
 $to   = "0x1111111111111111111111111111111111111111"
 $w    = Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/withdrawals" `
   -Headers @{ 
     "Content-Type"   = "application/json"
     "Idempotency-Key" = "idem-lab5-allow-1"
+    "X-Correlation-Id" = "$CID_PREFIX-lab5-allow-001"
   } `
   -Body (@{
     chainType   = "EVM"
@@ -146,13 +150,14 @@ $w    = Invoke-RestMethod -Method POST `
 ### 5-2. 화이트리스트 거절 케이스
 
 ```powershell
-$from = "0x740161186057d3a948a1c16f1978937dca269070"
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
 $to   = "0x2222222222222222222222222222222222222222"  # 화이트리스트에 없는 주소
 $w = Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/withdrawals" `
   -Headers @{ 
     "Content-Type"    = "application/json"
     "Idempotency-Key" = "idem-lab4-reject-whitelist-1"
+    "X-Correlation-Id" = "$CID_PREFIX-lab5-reject-whitelist-001"
   } `
   -Body (@{
     chainType   = "EVM"
@@ -172,7 +177,8 @@ $w = Invoke-RestMethod -Method POST `
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/policy-audits"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/policy-audits" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab5-audit-001" }
 ```
 
 예상 reason
@@ -182,7 +188,7 @@ Invoke-RestMethod -Method GET `
 ### 5-3. 금액 초과 거절 케이스
 
 ```powershell
-$from = "0x740161186057d3a948a1c16f1978937dca269070"
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
 $to   = "0x1111111111111111111111111111111111111111"
 
 $w = Invoke-RestMethod -Method POST `
@@ -190,6 +196,7 @@ $w = Invoke-RestMethod -Method POST `
   -Headers @{ 
     "Content-Type"    = "application/json"
     "Idempotency-Key" = "idem-lab4-reject-amount-1"
+    "X-Correlation-Id" = "$CID_PREFIX-lab5-reject-amount-001"
   } `
   -Body (@{
     chainType   = "EVM"
@@ -226,7 +233,7 @@ $to   = "0x1111111111111111111111111111111111111111"
 $idemp = "idem-lab1-2"
 $w = Invoke-RestMethod -Method POST `
 -Uri "$BASE_URL/withdrawals" `
--Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp; "X-Correlation-Id"="$CID_PREFIX-lab6-create-001" } `
 -Body (@{
 chainType   = "EVM"
 fromAddress = $from
@@ -258,7 +265,7 @@ chainType      : EVM
 ```powershell
 $w = Invoke-RestMethod -Method POST `
 -Uri "$BASE_URL/withdrawals" `
--Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp; "X-Correlation-Id"="$CID_PREFIX-lab6-replay-001" } `
 -Body (@{
 chainType   = "EVM"
 fromAddress = $from
@@ -277,7 +284,8 @@ $w
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab6-attempts-001" }
 ```
 
 기대 결과
@@ -310,7 +318,7 @@ $to   = "0x1111111111111111111111111111111111111111"
 $idemp = "idem-lab1-2"
 $w = Invoke-RestMethod -Method POST `
 -Uri "$BASE_URL/withdrawals" `
--Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp; "X-Correlation-Id"="$CID_PREFIX-lab6-conflict-001" } `
 -Body (@{
 chainType   = "EVM"
 fromAddress = $from
@@ -339,9 +347,10 @@ $jobs = 1..5 | ForEach-Object {
     param($BASE_URL, $from, $to, $idemp)
 
     try {
+      $cid = "lab6-concurrency-$([guid]::NewGuid().ToString('N').Substring(0,8))"
       Invoke-RestMethod -Method POST `
         -Uri "$BASE_URL/withdrawals" `
-        -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
+        -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp; "X-Correlation-Id"=$cid } `
         -Body (@{
           chainType="EVM"; fromAddress=$from; toAddress=$to; asset="USDC"; amount=0.00001
         } | ConvertTo-Json -Depth 10)
@@ -374,7 +383,7 @@ $jobs | Receive-Job -Wait -AutoRemoveJob
 $idemp = "idem-lab3-1"
 $w = Invoke-RestMethod -Method POST `
 -Uri "$BASE_URL/withdrawals" `
--Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp } `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp; "X-Correlation-Id"="$CID_PREFIX-lab7-create-001" } `
 -Body (@{
 chainType   = "EVM"
 fromAddress = $from
@@ -389,12 +398,14 @@ $w
 
 ```powershell
 Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/retry"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/retry" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-retry-001" }
 ```
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-attempts-001" }
 ```
 
 기대 결과
@@ -407,12 +418,14 @@ Invoke-RestMethod -Method GET `
 
 ```powershell
 Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/replace"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/replace" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-replace-001" }
 ```
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-attempts-002" }
 ```
 
 기대 결과
@@ -425,9 +438,11 @@ Invoke-RestMethod -Method GET `
 
 ```powershell
 Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/retry"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/retry" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-retry-002" }
 Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/replace"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/replace" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-replace-002" }
 ```
 
 
@@ -447,7 +462,8 @@ Invoke-RestMethod -Method POST `
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/withdrawals/$($w.id)"
+  -Uri "$BASE_URL/withdrawals/$($w.id)" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-status-001" }
 ```
 
 - `status`가 `W7_INCLUDED`인지 확인
@@ -459,7 +475,8 @@ Invoke-RestMethod -Method GET `
 
 ```powershell
 Invoke-RestMethod -Method GET `
-  -Uri "$BASE_URL/evm/tx/{txHash}/wait"
+  -Uri "$BASE_URL/evm/tx/{txHash}/wait" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-receipt-wait-001" }
 ```
 `GET /evm/tx/{txHash}` 응답 예시(미포함):
 
@@ -485,7 +502,8 @@ Invoke-RestMethod -Method GET `
 
 ```powershell
 Invoke-RestMethod -Method POST `
-  -Uri "$BASE_URL/withdrawals/$($w.id)/sync"
+  -Uri "$BASE_URL/withdrawals/$($w.id)/sync" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-sync-001" }
 ```
 
 운영 주의사항
@@ -505,7 +523,7 @@ $from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
 
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/adapter-demo/broadcast/evm" `
-  -Headers @{ "Content-Type"="application/json" } `
+  -Headers @{ "Content-Type"="application/json"; "X-Correlation-Id" = "$CID_PREFIX-lab8-evm-broadcast-001" } `
   -Body (@{
     from   = $from
     to     = "0x1111111111111111111111111111111111111111"
@@ -528,7 +546,7 @@ Invoke-RestMethod -Method POST `
 ```powershell
 Invoke-RestMethod -Method POST `
   -Uri "$BASE_URL/adapter-demo/broadcast/bft" `
-  -Headers @{ "Content-Type"="application/json" } `
+  -Headers @{ "Content-Type"="application/json"; "X-Correlation-Id" = "$CID_PREFIX-lab8-bft-broadcast-001" } `
   -Body (@{
     from   = "a"
     to     = "b"
@@ -577,23 +595,25 @@ $env:SPRING_PROFILES_ACTIVE = "labs-mock"
 ### 9-1. 요청 헤더로 correlation id 전달 (정상 응답/로그 확인)
 
 ```powershell
-$body = @{
-  chainType   = "EVM"
-  fromAddress = "0xfrom"
-  toAddress   = "0x1111111111111111111111111111111111111111"
-  asset       = "ETH"
-  amount      = 0.01
-} | ConvertTo-Json -Compress
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+$to   = "0x1111111111111111111111111111111111111111"
+$idemp = "lab-cid-001"
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{
+   "Content-Type"="application/json"
+   "Idempotency-Key"=$idemp; 
+   "X-Correlation-Id" = "cid-lab-001"
+   } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+toAddress   = $to
+asset       = "ETH"
+amount      = 0.001  # eth
+} | ConvertTo-Json)
+$w
 
-Invoke-WebRequest `
-  -Uri "$BASE_URL/withdrawals" `
-  -Method POST `
-  -Headers @{
-    "Idempotency-Key"  = "lab-cid-001"
-    "X-Correlation-Id" = "cid-lab-001"
-  } `
-  -ContentType "application/json" `
-  -Body $body
 ```
 
 기대 결과
@@ -605,12 +625,24 @@ Invoke-WebRequest `
 ### 9-2. correlation id 미전달 시 서버 자동 생성 확인
 
 ```powershell
-Invoke-WebRequest `
-  -Uri "$BASE_URL/withdrawals" `
-  -Method POST `
-  -Headers @{ "Idempotency-Key" = "lab-cid-002" } `
-  -ContentType "application/json" `
-  -Body $body
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+$to   = "0x1111111111111111111111111111111111111111"
+$idemp = "lab-cid-002"
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{
+   "Content-Type"="application/json"
+   "Idempotency-Key"=$idemp; 
+   } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+toAddress   = $to
+asset       = "ETH"
+amount      = 0.001  # eth
+} | ConvertTo-Json)
+$w
+
 ```
 
 기대 결과
@@ -943,11 +975,27 @@ timeoutAttempt.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
 
 ### Confirmation Tracker — Receipt Polling 및 상태 전이 (핵심 코드)
 
-현재 구현은 `ExecutorService` 기반 비동기 폴링입니다. 브로드캐스트 직후 `startTracking(attempt)`를 호출하면 attempt ID 기준으로 재조회 후 receipt를 추적합니다.
+현재 구현은 `ExecutorService` 기반 비동기 폴링이며, 요청 스레드의 `MDC(correlationId)`를 비동기 작업으로 전파합니다. 브로드캐스트 직후 `startTracking(attempt)`를 호출하면 attempt ID 기준으로 재조회 후 receipt를 추적합니다.
 
 ```java
 public void startTracking(TxAttempt attempt) {
-    executor.submit(() -> trackAttemptInternal(attempt.getId()));
+    submitWithMdc(() -> trackAttemptInternal(attempt.getId()));
+}
+
+private void submitWithMdc(Runnable task) {
+    Map<String, String> contextMap = MDC.getCopyOfContextMap();
+    executor.submit(() -> {
+        if (contextMap != null) {
+            MDC.setContextMap(contextMap);
+        } else {
+            MDC.clear();
+        }
+        try {
+            task.run();
+        } finally {
+            MDC.clear();
+        }
+    });
 }
 
 private void trackAttemptInternal(UUID attemptId) {
@@ -969,6 +1017,7 @@ private void trackAttemptInternal(UUID attemptId) {
 ```
 
 - 트래커는 엔티티를 다시 조회한 뒤 업데이트해서 stale entity 문제를 줄이도록 작성되어 있습니다.
+- HTTP 요청에서 시작된 추적이라면 `ConfirmationTracker` 로그에도 동일한 `cid`가 유지되어 컨트롤러/서비스 로그와 연결해서 볼 수 있습니다.
 - 현재 구현은 receipt status(`0x1/0x0`)까지 저장하지 않고, receipt 존재 여부 기준으로 `INCLUDED`와 `W7_INCLUDED`를 전이합니다.
 - 최종 성공/실패 판정까지 필요하면 `POST /withdrawals/{id}/sync` 경로(`RetryReplaceService#sync`)를 사용하세요.
 
@@ -979,7 +1028,8 @@ private void trackAttemptInternal(UUID attemptId) {
 ```powershell
 try {
   Invoke-RestMethod -Method POST `
-    -Uri "$BASE_URL/withdrawals/$($w.id)/replace"
+    -Uri "$BASE_URL/withdrawals/$($w.id)/replace" `
+    -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-troubleshoot-replace-001" }
 } catch {
   $resp = $_.Exception.Response
   $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
