@@ -77,6 +77,23 @@
 2. 어댑터는 관측 사실만 반환, 정책 결정은 상위 계층이 수행
 3. confirmations 하드코딩 대신 `FinalityPolicy`로 완료 선언
 
+### 7.3 Coinbase x402(402x) 결제 레이어 적용
+1. x402는 EIP 대체가 아니라 `HTTP 402` 기반의 API 결제 오케스트레이션 계층으로 취급
+2. 결제 흐름도 기존 7모듈 통제로 관리
+   - `API/Orchestrator`: 결제 intent/idempotency 발급
+   - `Policy/Approval`: 엔드포인트별 과금 한도, 자동 결제 이상 탐지, 고액 승인
+   - `Signer`: 결제 스코프(수신자/금액/만료/nonce) 검증 후 서명
+   - `Ledger/Audit`: usage -> reserve -> commit -> settle 이벤트를 append-only로 기록
+3. 구현 필수 요소
+   - `payment_intent_id`, `authorization_id`, `idempotency_key`, `correlation_id`
+   - `UNIQUE(idempotency_key, merchant_id, endpoint)` 및 `UNIQUE(chain, from, nonce)`
+   - `used_authorization_digest` 저장으로 replay 차단
+4. 주요 리스크와 통제
+   - 중복 과금: idempotency 강제 + 동일 응답 재사용
+   - 재생 공격: nonce/deadline/digest 재사용 금지
+   - 정산 불일치: Outbox + reconciliation + finality 이후 커밋
+   - 정책 오남용: 정책 변경 지연 반영 + 쿼럼 승인 + 감사 로그
+
 ## 8. 운영 지표 (KPI)
 1. `time_to_broadcast`
 2. `time_to_inclusion`
@@ -113,3 +130,4 @@
 - [ ] 원장 이벤트 append-only 저장
 - [ ] 재시도 정책(백오프+지터) 및 수동 개입 경계 정의
 - [ ] 멀티 RPC 불일치 대응(쿼럼/강등 모드) 구현
+- [ ] x402 결제에 `payment_intent_id/idempotency_key/authorization_digest` 통제 적용

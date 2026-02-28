@@ -148,3 +148,108 @@ EVM에서는 **from 주소와 nonce**가 사실상 체인 레벨 멱등성 키�
   **A:** 중복은 피할 수 없음을 인정하고, 멱등성 키와 상태머신·DB UNIQUE 제약·append‑only 원장·Outbox 패턴을 조합해 중복 처리가 발생해도 결과가 변하지 않도록 설계한다.
 
 본 자료는 백엔드 개발자 대상 강의를 위한 심화 학습 자료이다. 각 원칙과 전략에 대한 이론적 배경과 실제 설계 시 유의할 점을 이해하고, 돌발 질문이 나왔을 때 근거를 가지고 답변할 수 있도록 준비한다.
+
+## 7. x402(402x) 기반 결제 흐름을 수탁 지갑 신뢰성 설계에 적용하기
+
+아래 내용은 x402를 “HTTP/API 결제 오케스트레이션 계층”으로 보고, 기존 수탁 지갑의 Policy/Approval/Signer/Ledger 체계에 어떻게 접목할지 정리한 실무 가이드다.
+
+### 7.1 왜 Session6(신뢰성)에서 중요해지는가
+
+- x402류 흐름은 사용자 클릭 결제보다 **머신‑투‑머신 자동 결제 빈도**가 높다.
+- 빈도가 올라가면 장애의 본질이 “한 건 실패”가 아니라 “중복 과금·과다 청구·누락 정산”으로 바뀐다.
+- 따라서 핵심은 결제 성공률이 아니라, **중복/재시도/지연/취소가 있어도 금전 결과가 불변인지**다.
+
+### 7.2 기존 7모듈에 매핑하는 방법
+
+| 모듈 | x402 적용 시 책임 |
+|---|---|
+| API/Orchestrator | 402 challenge 발행, 결제 요청 식별자 부여, idempotency 강제 |
+| Policy Engine | 엔드포인트별 과금 한도, spender/merchant 화이트리스트, 위험 점수 적용 |
+| Approval | 고액 또는 이상 패턴 결제에 human-in-the-loop 적용 |
+| Signer | 승인된 요청만 서명, 서명 Scope(금액/수신자/만료) 검증 |
+| Broadcaster | 체인 전파, replacement/speed-up/cancel 처리 |
+| Confirmation Tracker | included/safe/finalized 판정, reorg 대응 |
+| Ledger/Audit | usage → billable → settled 이벤트 저널링, 환불/조정 이벤트 기록 |
+
+### 7.3 필수 상태머신 (결제 관점)
+
+`REQUESTED -> CHALLENGED(402) -> AUTH_SIGNED -> AUTH_VERIFIED -> RESERVED -> BROADCASTED -> INCLUDED -> FINALIZED -> LEDGER_COMMITTED -> SETTLED`
+
+예외 경로:
+- `AUTH_REJECTED`: 서명 검증 실패/만료
+- `DUPLICATE_REQUEST`: 같은 idempotency key 재요청
+- `CHAIN_FAILED`: revert/drop/replaced 처리 후 재시도 또는 취소
+- `EXPIRED`: 만료시간 초과로 결제 무효
+- `REFUND_PENDING/REFUNDED`: 과금 취소 또는 조정
+
+핵심 규칙:
+- `RESERVED` 없이 `BROADCASTED` 불가
+- `FINALIZED` 전 `LEDGER_COMMITTED` 금지(고리스크 tier 기준)
+- `SETTLED`는 단방향 종료 상태
+
+### 7.4 구현 요소 (최소 스펙)
+
+1. 식별자/키 설계
+- `payment_intent_id` (업무 단위)
+- `authorization_id` (서명 단위)
+- `idempotency_key` (요청 중복 방지)
+- `nonce_key` `(chain, from, nonce)` (체인 중복 방지)
+- `correlation_id` (MDC/trace 연동)
+
+2. DB 제약
+- `UNIQUE(idempotency_key, merchant_id, endpoint)`
+- `UNIQUE(chain, from_address, nonce)`
+- `UNIQUE(authorization_digest)` 또는 `used_authorizations` 테이블
+
+3. 서명 스코프 제한
+- 서명 payload에 최소 `payee, token, amount, valid_after, valid_before, nonce, chain_id` 포함
+- “서명 1개 = 특정 결제 1건” 원칙 (광범위 권한 금지)
+
+4. Outbox + 워커 분리
+- `PaymentReserved` 이벤트를 Outbox에 기록 후 비동기 전파
+- 브로드캐스트 실패 시 워커 재시도, 원본 요청 재처리와 분리
+
+5. 관측성
+- 모든 로그에 MDC로 `correlation_id/payment_intent_id/authorization_id/nonce_key/tx_hash` 포함
+- 결제 요청부터 정산까지 단일 trace로 조회 가능해야 함
+
+### 7.5 리스크와 구체적 통제
+
+| 리스크 | 발생 패턴 | 통제 방안 |
+|---|---|---|
+| 중복 과금 | 네트워크 타임아웃 후 클라이언트 재요청 | idempotency key + 동일 응답 재사용 |
+| 재생 공격(replay) | 서명 재사용 제출 | nonce + deadline + used digest 차단 |
+| 과다 승인 | 무제한/장기 권한 서명 | amount cap + 짧은 만료 + scope 최소화 |
+| 정산 불일치 | 체인 성공/원장 실패, 혹은 반대 | Outbox + append-only ledger + reconciliation |
+| reorg 손실 | 포함 후 롤백 | risk tier별 finality 정책, reorg 보상 이벤트 |
+| RPC 편향 | 특정 RPC 오판 | 멀티 RPC 쿼럼 + mismatch 알람 |
+| 내부자 오남용 | 정책 완화 후 자동 과금 남발 | 정책 변경 지연 + 쿼럼 승인 + 감사 로그 |
+
+### 7.6 KPI/알람 (x402 특화)
+
+핵심 KPI:
+- `payment_request_to_reserved_ms`
+- `reserved_to_broadcast_ms`
+- `broadcast_to_finalized_ms`
+- `duplicate_request_rate`
+- `authorization_replay_block_count`
+- `refund_ratio`
+- `ledger_chain_mismatch_count`
+
+핵심 알람:
+- 동일 `idempotency_key` 재요청 급증
+- `AUTH_VERIFIED` 이후 `RESERVED` 실패 비율 급증
+- `FINALIZED` 이후 `LEDGER_COMMITTED` 지연 급증
+- `authorization_replay_block_count` 증가
+- `refund_ratio` 급증(가격/정책 오류 가능성)
+
+### 7.7 운영 정책 권장안
+
+- 저위험 결제: 자동 승인 + safe 블록 기준 정산
+- 중위험 결제: 자동 승인 + finalized 기준 정산
+- 고위험 결제: 추가 승인 + finalized + 샘플링 감사
+- 정책 변경(요율/한도/화이트리스트)은 즉시 반영 금지, 지연 반영 기본값 적용
+
+### 7.8 강의에서 강조할 한 줄
+
+“x402 시대의 수탁 지갑 신뢰성은 결제를 빨리 처리하는 능력이 아니라, **같은 결제를 100번 재시도해도 돈의 결과가 한 번만 반영되게 만드는 능력**이다.”
