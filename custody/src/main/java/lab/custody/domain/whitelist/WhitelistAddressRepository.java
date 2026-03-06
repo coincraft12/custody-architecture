@@ -10,9 +10,9 @@ import java.util.UUID;
 
 public interface WhitelistAddressRepository extends JpaRepository<WhitelistAddress, UUID> {
 
-    Optional<WhitelistAddress> findByAddressAndChainType(String address, ChainType chainType);
+    Optional<WhitelistAddress> findByAddressIgnoreCaseAndChainType(String address, ChainType chainType);
 
-    boolean existsByAddressAndChainTypeAndStatus(String address, ChainType chainType, WhitelistStatus status);
+    boolean existsByAddressIgnoreCaseAndChainTypeAndStatus(String address, ChainType chainType, WhitelistStatus status);
 
     /** 스케줄러: HOLDING 중 activeAfter 경과한 항목 조회 */
     List<WhitelistAddress> findByStatusAndActiveAfterLessThanEqual(WhitelistStatus status, Instant now);

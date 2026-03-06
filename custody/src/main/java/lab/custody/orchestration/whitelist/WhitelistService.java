@@ -9,6 +9,7 @@ import lab.custody.orchestration.InvalidRequestException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,30 +38,40 @@ public class WhitelistService {
     @Transactional
     public WhitelistAddress register(RegisterAddressRequest req) {
         ChainType chainType = parseChainType(req.chainType());
+        String normalizedAddress = normalizeAddress(req.address());
 
-        whitelistRepository.findByAddressAndChainType(req.address(), chainType)
+        whitelistRepository.findByAddressIgnoreCaseAndChainType(normalizedAddress, chainType)
                 .ifPresent(existing -> {
                     throw new InvalidRequestException(
-                            "이미 등록된 주소입니다: " + req.address() + " (" + chainType + ") status=" + existing.getStatus());
+                            "이미 등록된 주소입니다: " + normalizedAddress + " (" + chainType + ") status=" + existing.getStatus());
                 });
 
         WhitelistAddress entry = WhitelistAddress.register(
-                req.address(),
+                normalizedAddress,
                 chainType,
                 req.registeredBy() != null ? req.registeredBy() : "unknown",
                 req.note(),
                 defaultHoldHours
         );
-        WhitelistAddress saved = whitelistRepository.save(entry);
-        log.info("event=whitelist.register address={} chainType={} id={} registeredBy={}",
-                saved.getAddress(), saved.getChainType(), saved.getId(), saved.getRegisteredBy());
-        return saved;
+        try {
+            WhitelistAddress saved = whitelistRepository.save(entry);
+            log.info("event=whitelist.register address={} chainType={} id={} registeredBy={}",
+                    saved.getAddress(), saved.getChainType(), saved.getId(), saved.getRegisteredBy());
+            return saved;
+        } catch (DataIntegrityViolationException e) {
+            // Concurrent duplicate register: UNIQUE(address, chainType) violated.
+            throw new InvalidRequestException("이미 등록된 주소입니다: " + normalizedAddress + " (" + chainType + ")");
+        }
     }
 
     @Transactional
     public WhitelistAddress approve(UUID id, String approvedBy) {
         WhitelistAddress entry = load(id);
-        entry.approve(approvedBy != null ? approvedBy : "unknown");
+        try {
+            entry.approve(approvedBy != null ? approvedBy : "unknown");
+        } catch (IllegalStateException e) {
+            throw new InvalidRequestException(e.getMessage());
+        }
         WhitelistAddress saved = whitelistRepository.save(entry);
         log.info("event=whitelist.approve id={} address={} approvedBy={} activeAfter={}",
                 saved.getId(), saved.getAddress(), saved.getApprovedBy(), saved.getActiveAfter());
@@ -70,7 +81,11 @@ public class WhitelistService {
     @Transactional
     public WhitelistAddress revoke(UUID id, String revokedBy) {
         WhitelistAddress entry = load(id);
-        entry.revoke(revokedBy != null ? revokedBy : "unknown");
+        try {
+            entry.revoke(revokedBy != null ? revokedBy : "unknown");
+        } catch (IllegalStateException e) {
+            throw new InvalidRequestException(e.getMessage());
+        }
         WhitelistAddress saved = whitelistRepository.save(entry);
         log.info("event=whitelist.revoke id={} address={} revokedBy={}",
                 saved.getId(), saved.getAddress(), saved.getRevokedBy());
@@ -106,10 +121,15 @@ public class WhitelistService {
 
         log.info("event=whitelist.scheduler.promote count={}", ready.size());
         for (WhitelistAddress entry : ready) {
-            entry.activate();
-            whitelistRepository.save(entry);
-            log.info("event=whitelist.activated id={} address={} chainType={}",
-                    entry.getId(), entry.getAddress(), entry.getChainType());
+            try {
+                entry.activate();
+                whitelistRepository.save(entry);
+                log.info("event=whitelist.activated id={} address={} chainType={}",
+                        entry.getId(), entry.getAddress(), entry.getChainType());
+            } catch (IllegalStateException e) {
+                // Ignore race with concurrent revoke/activate and continue.
+                log.warn("event=whitelist.scheduler.promote.skip id={} reason={}", entry.getId(), e.getMessage());
+            }
         }
     }
 
@@ -164,5 +184,16 @@ public class WhitelistService {
         } catch (IllegalArgumentException e) {
             throw new InvalidRequestException("잘못된 chainType: " + chainType);
         }
+    }
+
+    private String normalizeAddress(String address) {
+        if (address == null) {
+            throw new InvalidRequestException("address is required");
+        }
+        String normalized = address.trim().toLowerCase(Locale.ROOT);
+        if (normalized.isBlank()) {
+            throw new InvalidRequestException("address is required");
+        }
+        return normalized;
     }
 }

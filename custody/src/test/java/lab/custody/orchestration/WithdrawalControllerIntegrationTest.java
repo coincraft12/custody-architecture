@@ -99,6 +99,26 @@ class WithdrawalControllerIntegrationTest {
                 .andExpect(jsonPath("$.status").value("W6_BROADCASTED"));
     }
 
+    @Test
+    void create_normalizesAddressFieldsAtDtoBoundary() throws Exception {
+        mockMvc.perform(post("/withdrawals")
+                        .header("Idempotency-Key", "idem-normalize-address-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "chainType": "evm",
+                                  "fromAddress": "  0xFrOm  ",
+                                  "toAddress": "  0XTO  ",
+                                  "asset": "USDC",
+                                  "amount": 1
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fromAddress").value("0xfrom"))
+                .andExpect(jsonPath("$.toAddress").value("0xto"))
+                .andExpect(jsonPath("$.status").value("W6_BROADCASTED"));
+    }
+
 
 
     @Test

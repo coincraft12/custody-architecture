@@ -29,12 +29,13 @@ public class ToAddressWhitelistPolicyRule implements PolicyRule {
     @Override
     public PolicyDecision evaluate(CreateWithdrawalRequest req) {
         ChainType chainType = parseChainType(req.chainType());
+        String toAddress = normalizeAddress(req.toAddress());
 
-        boolean active = whitelistRepository.existsByAddressAndChainTypeAndStatus(
-                req.toAddress(), chainType, WhitelistStatus.ACTIVE);
+        boolean active = whitelistRepository.existsByAddressIgnoreCaseAndChainTypeAndStatus(
+                toAddress, chainType, WhitelistStatus.ACTIVE);
 
         if (!active) {
-            return PolicyDecision.reject("TO_ADDRESS_NOT_WHITELISTED: " + req.toAddress());
+            return PolicyDecision.reject("TO_ADDRESS_NOT_WHITELISTED: " + toAddress);
         }
         return PolicyDecision.allow();
     }
@@ -46,5 +47,12 @@ public class ToAddressWhitelistPolicyRule implements PolicyRule {
         } catch (IllegalArgumentException e) {
             return ChainType.EVM;
         }
+    }
+
+    private String normalizeAddress(String address) {
+        if (address == null) {
+            return "";
+        }
+        return address.trim().toLowerCase(Locale.ROOT);
     }
 }
