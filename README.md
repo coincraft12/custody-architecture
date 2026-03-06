@@ -35,6 +35,14 @@
 - BFT adapter는 기존 mock 흐름 유지
 - 오케스트레이터는 체인별 세부사항을 몰라도 동일한 호출 형태 유지
 
+### 실습 6 — 화이트리스트 주소 등록 + 48h 보류 워크플로우
+
+- `POST /whitelist`로 출금 허용 주소 등록 → `REGISTERED`
+- `POST /whitelist/{id}/approve`로 승인 → `HOLDING` (48h 보류 타이머 시작)
+- 48h 경과 후 스케줄러가 자동으로 `ACTIVE` 전환
+- `ACTIVE` 아닌 주소로 출금 시도 시 `W0_POLICY_REJECTED` 확인
+- `POST /whitelist/{id}/revoke`로 취소 → `REVOKED` (즉시 출금 차단)
+
 ---
 
 ## 2) 환경 설정
@@ -127,6 +135,10 @@ balanceEth : 1.587757348527098995
 
 - `policy.max-amount: 0.1`
 - `policy.whitelist-to-addresses: 0xto,0xtrusted, 0x1111111111111111111111111111111111111111`
+
+> 참고: 화이트리스트는 이제 DB 기반(`whitelist_addresses` 테이블)으로 동작합니다.
+> 위 `policy.whitelist-to-addresses` 주소들은 서버 시작 시 자동으로 `ACTIVE` 상태로 시드되어 기존 실습과 동일하게 동작합니다.
+> 새 주소를 허용하려면 실습 6의 `POST /whitelist` → `approve` → (48h 대기 또는 테스트에서 스케줄러 수동 실행) 워크플로우를 사용하세요.
 
 ### 5-1. 허용 케이스
 
@@ -662,7 +674,191 @@ Invoke-WebRequest `
 
 ---
 
-## 10) 주요 API 요약
+## 10) 실습 6 — 화이트리스트 주소 등록 + 48h 보류 워크플로우
+
+### 목표
+
+- 기존 정적 설정 화이트리스트 → DB 기반 동적 화이트리스트로 전환 이해
+- `REGISTERED → HOLDING(48h) → ACTIVE` 상태머신 직접 실행
+- 보류 중(`HOLDING`)이거나 취소된(`REVOKED`) 주소는 정책 엔진에서 자동 차단됨을 확인
+
+### 워크플로우 요약
+
+```
+POST /whitelist              → REGISTERED  (출금 불가)
+POST /whitelist/{id}/approve → HOLDING     (출금 불가, 48h 타이머 시작)
+[48h 경과, 스케줄러 실행]    → ACTIVE      (출금 허용)
+POST /whitelist/{id}/revoke  → REVOKED     (출금 불가)
+```
+
+### 10-1. 실습 준비 (공통 변수)
+
+```powershell
+$BASE_URL   = "http://localhost:8080"
+$NEW_ADDR   = "0x9999888877776666555544443333222211110000"
+```
+
+### 10-2. 주소 등록 → REGISTERED
+
+```powershell
+$entry = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/whitelist" `
+  -Headers @{ "Content-Type" = "application/json" } `
+  -Body (@{
+    address      = $NEW_ADDR
+    chainType    = "EVM"
+    registeredBy = "ops-admin"
+    note         = "파트너사 정산 주소"
+  } | ConvertTo-Json)
+$entry
+$wlId = $entry.id
+```
+
+기대 결과
+
+- `status = REGISTERED`
+- `approvedAt = null`, `activeAfter = null`
+
+### 10-3. REGISTERED 상태에서 출금 시도 → 정책 거부
+
+```powershell
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab6-step3"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $NEW_ADDR
+    asset       = "ETH"
+    amount      = 0.0001
+  } | ConvertTo-Json)
+$w
+```
+
+기대 결과
+
+- `status = W0_POLICY_REJECTED`
+- policy-audits 조회 시 `reason = "TO_ADDRESS_NOT_WHITELISTED: <주소>"`
+
+### 10-4. 관리자 승인 → HOLDING (48h 타이머 시작)
+
+```powershell
+$entry = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/whitelist/$wlId/approve" `
+  -Headers @{ "Content-Type" = "application/json" } `
+  -Body (@{ approvedBy = "ops-admin" } | ConvertTo-Json)
+$entry
+```
+
+기대 결과
+
+- `status = HOLDING`
+- `approvedAt` 기록됨
+- `activeAfter = approvedAt + 48h`
+
+### 10-5. HOLDING 상태에서 출금 시도 → 여전히 거부
+
+```powershell
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab6-step5"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $NEW_ADDR
+    asset       = "ETH"
+    amount      = 0.0001
+  } | ConvertTo-Json)
+$w
+```
+
+기대 결과
+
+- `status = W0_POLICY_REJECTED` (HOLDING 상태는 여전히 차단)
+
+### 10-6. 48h 경과 후 → ACTIVE (운영 환경)
+
+운영 환경에서는 서버의 `@Scheduled` 스케줄러(기본 60초 주기)가 자동으로 확인합니다.
+
+```powershell
+# activeAfter 확인
+$entry = Invoke-RestMethod -Uri "$BASE_URL/whitelist/$wlId"
+$entry.activeAfter   # 이 시각 이후 스케줄러가 ACTIVE 로 전환
+```
+
+```powershell
+# 48h 경과 후 상태 확인
+$entry = Invoke-RestMethod -Uri "$BASE_URL/whitelist/$wlId"
+$entry.status   # ACTIVE
+```
+
+### 10-7. ACTIVE 상태에서 출금 → 성공
+
+```powershell
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab6-step7"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $NEW_ADDR
+    asset       = "ETH"
+    amount      = 0.0001
+  } | ConvertTo-Json)
+$w
+```
+
+기대 결과
+
+- `status = W6_BROADCASTED` (출금 성공)
+
+### 10-8. 취소 → REVOKED
+
+```powershell
+$entry = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/whitelist/$wlId/revoke" `
+  -Headers @{ "Content-Type" = "application/json" } `
+  -Body (@{ revokedBy = "security-team" } | ConvertTo-Json)
+$entry
+```
+
+기대 결과
+
+- `status = REVOKED`
+- 이후 동일 주소 출금 시도 → `W0_POLICY_REJECTED`
+
+### 10-9. 목록 조회 (상태 필터)
+
+```powershell
+# 전체 목록
+Invoke-RestMethod -Uri "$BASE_URL/whitelist"
+
+# HOLDING 상태만
+Invoke-RestMethod -Uri "$BASE_URL/whitelist?status=HOLDING"
+
+# ACTIVE 상태만
+Invoke-RestMethod -Uri "$BASE_URL/whitelist?status=ACTIVE"
+```
+
+### 운영 설정
+
+| 환경 변수 | 기본값 | 설명 |
+|-----------|--------|------|
+| `CUSTODY_WHITELIST_HOLD_HOURS` | `48` | 승인 후 보류 시간(시간 단위) |
+| `CUSTODY_WHITELIST_SCHEDULER_DELAY_MS` | `60000` | 스케줄러 실행 주기(ms) |
+
+---
+
+## 11) 주요 API 요약
 
 - `POST /withdrawals` (Header: `Idempotency-Key`)
 - `GET /withdrawals/{id}`
@@ -675,10 +871,15 @@ Invoke-WebRequest `
 - `GET /evm/wallet` (rpc 모드에서만 활성화)
 - `GET /evm/tx/{txHash}` (rpc 모드에서만 활성화)
 - `GET /evm/tx/{txHash}/wait?timeoutMs=30000&pollMs=1500` (rpc 모드에서만 활성화)
+- `POST /whitelist` — 주소 등록
+- `POST /whitelist/{id}/approve` — 승인 (HOLDING 전환)
+- `POST /whitelist/{id}/revoke` — 취소 (REVOKED 전환)
+- `GET /whitelist` — 목록 (`?status=REGISTERED|HOLDING|ACTIVE|REVOKED`)
+- `GET /whitelist/{id}` — 단건 조회
 
 ---
 
-## 11) 다음 확장 과제 (권장)
+## 12) 다음 확장 과제 (권장)
 
 - Policy 다중 룰(우선순위/다중 사유)
 - Adapter timeout/partial failure 시나리오 확장
@@ -686,10 +887,13 @@ Invoke-WebRequest `
 - 비동기 작업(ConfirmationTracker)까지 correlation id(MDC) 전파
 - JSON 구조화 로그 적용(검색/집계 친화적 포맷)
 - 민감정보 마스킹 규칙 표준화(주소/키/원문 예외 메시지)
+- 화이트리스트 변경 이력 감사 로그(`WhitelistAuditLog`) 추가
+- 쿼럼 승인(4-eyes) — approve 호출 2회 이상이어야 HOLDING 전환
+- `activeAfter` 관리자 강제 단축/연장 기능
 
 ---
 
-## 12) 실습별 핵심 코드
+## 13) 실습별 핵심 코드
 
 ### 실습 1 — Policy Engine + Audit
 
@@ -710,7 +914,10 @@ if (req.amount().compareTo(maxAmountEth) > 0) {
     return PolicyDecision.reject("AMOUNT_LIMIT_EXCEEDED: max=" + maxAmountEth + ", requested=" + req.amount());
 }
 
-if (!toAddressWhitelist.isEmpty() && !toAddressWhitelist.contains(req.toAddress())) {
+// DB 화이트리스트 조회 — ACTIVE 상태인 경우에만 허용 (HOLDING/REGISTERED/REVOKED 는 거부)
+boolean active = whitelistRepository.existsByAddressAndChainTypeAndStatus(
+        req.toAddress(), chainType, WhitelistStatus.ACTIVE);
+if (!active) {
     return PolicyDecision.reject("TO_ADDRESS_NOT_WHITELISTED: " + req.toAddress());
 }
 
@@ -720,6 +927,7 @@ return PolicyDecision.allow();
 - 정책 판단은 `PolicyDecision(allow/reject + reason)`으로 반환하고, `WithdrawalService`가 결과를 `policy-audits`에 항상 기록합니다.
 - 정책 거절 시 상태를 `W0_POLICY_REJECTED`로 전이하고 이후 브로드캐스트 단계로 진행하지 않습니다.
 - 정책 룰은 현재 `금액 한도` + `수신 주소 화이트리스트`입니다.
+- 화이트리스트는 DB 기반(`whitelist_addresses` 테이블)으로 동작하며, `status=ACTIVE` 인 경우에만 허용합니다.
 
 ---
 
@@ -1044,3 +1252,95 @@ try {
 - `custody.chain.mode=rpc`일 경우 `CUSTODY_EVM_PRIVATE_KEY`, `CUSTODY_EVM_RPC_URL` 미설정 시 `RpcModeStartupGuard`에서 부팅을 차단합니다.
 - `EvmRpcAdapter`는 브로드캐스트 전에 RPC의 실제 `eth_chainId`와 설정값(`custody.evm.chain-id`) 일치 여부를 검증합니다.
 - 개인키는 절대 커밋하지 마세요.
+
+---
+
+### 실습 6 — 화이트리스트 주소 등록 + 48h 보류 워크플로우
+
+핵심 코드 (`WhitelistAddress`, `WhitelistService`, `ToAddressWhitelistPolicyRule`)
+
+**상태 전환 — `WhitelistAddress` 엔티티**
+
+```java
+// approve(): REGISTERED → HOLDING, activeAfter 계산
+public void approve(String approvedBy) {
+    if (this.status != WhitelistStatus.REGISTERED) {
+        throw new IllegalStateException("approve() 는 REGISTERED 상태에서만 가능합니다. 현재: " + this.status);
+    }
+    Instant now = Instant.now();
+    this.approvedBy  = approvedBy;
+    this.approvedAt  = now;
+    this.activeAfter = now.plusSeconds(holdDurationHours * 3600); // 기본 48h
+    this.status      = WhitelistStatus.HOLDING;
+    this.updatedAt   = now;
+}
+
+// activate(): HOLDING → ACTIVE (스케줄러 호출)
+public void activate() {
+    if (this.status != WhitelistStatus.HOLDING) {
+        throw new IllegalStateException("activate() 는 HOLDING 상태에서만 가능합니다.");
+    }
+    this.status    = WhitelistStatus.ACTIVE;
+    this.updatedAt = Instant.now();
+}
+```
+
+**스케줄러 — `WhitelistService`**
+
+```java
+// 60초(기본값)마다 실행: HOLDING 중 activeAfter 경과 항목 → ACTIVE 전환
+@Scheduled(fixedDelayString = "${custody.whitelist.scheduler-delay-ms:60000}")
+@Transactional
+public void promoteHoldingToActive() {
+    List<WhitelistAddress> ready =
+            whitelistRepository.findByStatusAndActiveAfterLessThanEqual(
+                    WhitelistStatus.HOLDING, Instant.now());
+
+    for (WhitelistAddress entry : ready) {
+        entry.activate();
+        whitelistRepository.save(entry);
+        log.info("event=whitelist.activated id={} address={}", entry.getId(), entry.getAddress());
+    }
+}
+```
+
+**정책 룰 — `ToAddressWhitelistPolicyRule`**
+
+```java
+// 정적 Set 대신 DB에서 status=ACTIVE 인지 조회
+@Override
+public PolicyDecision evaluate(CreateWithdrawalRequest req) {
+    ChainType chainType = parseChainType(req.chainType());
+    boolean active = whitelistRepository.existsByAddressAndChainTypeAndStatus(
+            req.toAddress(), chainType, WhitelistStatus.ACTIVE);
+
+    if (!active) {
+        return PolicyDecision.reject("TO_ADDRESS_NOT_WHITELISTED: " + req.toAddress());
+    }
+    return PolicyDecision.allow();
+}
+```
+
+**기존 정적 설정 하위 호환 — `WhitelistService.@PostConstruct`**
+
+```java
+// 서버 시작 시 policy.whitelist-to-addresses 를 읽어 DB가 비어있으면 ACTIVE 로 시드
+@PostConstruct
+@Transactional
+public void seedFromStaticConfig() {
+    if (whitelistRepository.count() > 0) return;  // 이미 데이터 있으면 스킵
+
+    for (String addr : addresses) {
+        for (ChainType chainType : ChainType.values()) {
+            WhitelistAddress entry = WhitelistAddress.register(addr, chainType, "system:seed", ...);
+            entry.approve("system:seed");
+            entry.activate();          // 보류 없이 즉시 ACTIVE
+            whitelistRepository.save(entry);
+        }
+    }
+}
+```
+
+- `ToAddressWhitelistPolicyRule`은 이제 DB에서 `status=ACTIVE` 여부만 확인하며, `HOLDING`/`REGISTERED`/`REVOKED` 모두 거부합니다.
+- 스케줄러(`@Scheduled`)가 60초마다 `activeAfter <= now` 조건을 만족하는 `HOLDING` 항목을 `ACTIVE` 로 전환합니다.
+- 테스트에서는 `custody.whitelist.default-hold-hours=0` + `scheduler-delay-ms=999999999` 으로 설정하고 `whitelistService.promoteHoldingToActive()`를 직접 호출해 48h 대기 없이 흐름을 검증합니다.
