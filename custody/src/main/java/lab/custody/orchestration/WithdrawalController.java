@@ -1,5 +1,6 @@
 package lab.custody.orchestration;
 
+import lab.custody.domain.ledger.LedgerEntry;
 import lab.custody.domain.policy.PolicyAuditLog;
 import lab.custody.domain.withdrawal.Withdrawal;
 import lombok.RequiredArgsConstructor;
@@ -58,5 +59,14 @@ public class WithdrawalController {
         List<PolicyAuditLog> audits = withdrawalService.getPolicyAudits(id);
         log.info("event=withdrawal.policy_audits.response withdrawalId={} count={}", id, audits.size());
         return ResponseEntity.ok(audits);
+    }
+
+    // Return ledger entries (RESERVE + SETTLE) to observe the financial journal records.
+    @GetMapping("/{id}/ledger")
+    public ResponseEntity<List<LedgerEntry>> getLedger(@PathVariable UUID id) {
+        log.info("event=withdrawal.ledger.request withdrawalId={}", id);
+        List<LedgerEntry> entries = withdrawalService.getLedgerEntries(id);
+        log.info("event=withdrawal.ledger.response withdrawalId={} count={}", id, entries.size());
+        return ResponseEntity.ok(entries);
     }
 }

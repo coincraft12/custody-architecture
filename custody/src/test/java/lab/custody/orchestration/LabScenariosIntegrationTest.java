@@ -256,4 +256,43 @@ class LabScenariosIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("W7_INCLUDED"));
     }
+
+    @Test
+    void lab8_fullStateMachineW7toW10() throws Exception {
+        MvcResult create = mockMvc.perform(post("/withdrawals")
+                        .header("Idempotency-Key", "idem-lab8-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "chainType": "evm",
+                                  "fromAddress": "0xfrom-lab8",
+                                  "toAddress": "0xto",
+                                  "asset": "ETH",
+                                  "amount": 0.0001
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("W6_BROADCASTED"))
+                .andReturn();
+
+        String withdrawalId = objectMapper.readTree(create.getResponse().getContentAsString()).get("id").asText();
+
+        // W6 → W7: 온체인 포함 확인
+        mockMvc.perform(post("/sim/withdrawals/{id}/confirm", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("INCLUDED"));
+
+        mockMvc.perform(get("/withdrawals/{id}", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("W7_INCLUDED"));
+
+        // W7 → W8 → W9 → W10: 최종 확정 + SETTLE 원장 기록
+        mockMvc.perform(post("/sim/withdrawals/{id}/finalize", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("W10_COMPLETED"));
+
+        mockMvc.perform(get("/withdrawals/{id}", withdrawalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("W10_COMPLETED"));
+    }
 }

@@ -14,6 +14,7 @@ import lab.custody.domain.withdrawal.WithdrawalStatus;
 import lab.custody.sim.fakechain.FakeChain;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +35,9 @@ public class RetryReplaceService {
     private final AttemptService attemptService;
     private final ChainAdapterRouter router;
     private final FakeChain fakeChain;
+
+    @Autowired(required = false)
+    private LedgerService ledgerService;
 
     // Retry creates a new canonical attempt after marking the previous canonical attempt as timed out.
     // For EVM, the nonce is re-read from the pending state so the retry uses the latest executable nonce.
@@ -227,6 +231,40 @@ public class RetryReplaceService {
         return saved;
     }
 
+
+    /**
+     * 시뮬레이션: W7_INCLUDED → W8_SAFE_FINALIZED → W9_LEDGER_POSTED → W10_COMPLETED.
+     * LedgerService.settle()이 W9/W10 전환 및 SETTLE 원장 기록을 담당.
+     */
+    @Transactional
+    public Withdrawal simulateFinalization(UUID withdrawalId) {
+        log.info("event=retry_replace.simulate_finalization.start withdrawalId={}", withdrawalId);
+        Withdrawal w = loadWithdrawal(withdrawalId);
+
+        if (w.getStatus() != WithdrawalStatus.W7_INCLUDED) {
+            throw new InvalidRequestException(
+                    "finalize requires W7_INCLUDED, current: " + w.getStatus());
+        }
+
+        w.transitionTo(WithdrawalStatus.W8_SAFE_FINALIZED);
+        withdrawalRepository.save(w);
+        log.info("event=retry_replace.simulate_finalization.W8 withdrawalId={}", withdrawalId);
+
+        if (ledgerService != null) {
+            Withdrawal settled = ledgerService.settle(w);
+            log.info("event=retry_replace.simulate_finalization.done withdrawalId={} status={}",
+                    withdrawalId, settled.getStatus());
+            return settled;
+        }
+
+        // ledgerService 없는 경우: W9 → W10 직접 전환
+        w.transitionTo(WithdrawalStatus.W9_LEDGER_POSTED);
+        w.transitionTo(WithdrawalStatus.W10_COMPLETED);
+        Withdrawal saved = withdrawalRepository.save(w);
+        log.info("event=retry_replace.simulate_finalization.done withdrawalId={} status={}",
+                withdrawalId, saved.getStatus());
+        return saved;
+    }
 
     // Guard against replace on a nonce that has already moved past pending (would fail with nonce-too-low).
     private boolean isNonceAlreadyIncluded(Withdrawal withdrawal, TxAttempt canonical) {

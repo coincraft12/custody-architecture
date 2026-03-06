@@ -43,6 +43,13 @@
 - `ACTIVE` 아닌 주소로 출금 시도 시 `W0_POLICY_REJECTED` 확인
 - `POST /whitelist/{id}/revoke`로 취소 → `REVOKED` (즉시 출금 차단)
 
+### 실습 7 — Withdrawal 상태머신 W1→W10 완성
+
+- 출금 생성 시 `W0 → W1 → W3 → W4 → W5 → W6` 전환 확인
+- `/sim/confirm`으로 온체인 포함 시뮬레이션 → `W7_INCLUDED`
+- `/sim/finalize`로 최종 확정 시뮬레이션 → `W8 → W9 → W10_COMPLETED`
+- `GET /withdrawals/{id}/ledger`로 원장 기록(RESERVE, SETTLE) 확인
+
 ---
 
 ## 2) 환경 설정
@@ -163,7 +170,7 @@ $w    = Invoke-RestMethod -Method POST `
 
 기대 결과
 
-- `status = W5_BROADCASTED`
+- `status = W6_BROADCASTED`
 
 ### 5-2. 화이트리스트 거절 케이스
 
@@ -858,12 +865,150 @@ Invoke-RestMethod -Uri "$BASE_URL/whitelist?status=ACTIVE"
 
 ---
 
-## 11) 주요 API 요약
+## 11) 실습 7 — Withdrawal 상태머신 W1→W10 완성
+
+### 목표
+
+- `createAndBroadcast()` 내 W1→W3→W4→W5→W6 전환 흐름을 이해
+- 시뮬레이션 엔드포인트(`/sim/confirm`, `/sim/finalize`)로 W7→W10까지 수동 진행
+- 원장 기록(`LedgerEntry`) — `RESERVE`(승인 시) + `SETTLE`(최종 확정 시) — 조회
+
+### 상태머신 전체 흐름 요약
+
+```
+W0_REQUESTED
+  → W1_POLICY_CHECKED    (정책+승인 통과)
+  → W3_APPROVED          (승인 완료 + RESERVE 원장 기록)
+  → W4_SIGNING           (서명 요청)
+  → W5_SIGNED            (서명 완료 — mock 어댑터는 원자적 처리)
+  → W6_BROADCASTED       (노드 제출 완료)
+  [POST /sim/confirm]
+  → W7_INCLUDED          (온체인 포함 확인)
+  [POST /sim/finalize]
+  → W8_SAFE_FINALIZED    (충분한 블록 수 확인)
+  → W9_LEDGER_POSTED     (SETTLE 원장 기록)
+  → W10_COMPLETED        (전체 완료)
+```
+
+> **참고**: W1~W5는 `createAndBroadcast()` 내 단일 트랜잭션 안에서 발생하므로 DB에는 최종 상태(`W6_BROADCASTED`)만 커밋됩니다. 코드 흐름을 직접 읽으면서 각 전환 시점의 log 출력을 확인하세요.
+
+### 11-1. 실습 준비
+
+```powershell
+$BASE_URL = "http://localhost:8080"
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+$to   = "0x1111111111111111111111111111111111111111"
+```
+
+### 11-2. 출금 생성 → W6_BROADCASTED
+
+```powershell
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab7-1"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $to
+    asset       = "ETH"
+    amount      = 0.0001
+  } | ConvertTo-Json)
+$w
+$wId = $w.id
+```
+
+기대 결과
+
+- `status = W6_BROADCASTED`
+- 서버 로그에서 `W1`, `W3`, `W4` 순으로 `event=withdrawal_service.state.*` 출력 확인
+
+### 11-3. 원장 조회 — RESERVE 엔트리 확인
+
+```powershell
+Invoke-RestMethod -Uri "$BASE_URL/withdrawals/$wId/ledger"
+```
+
+기대 결과
+
+```json
+[
+  {
+    "type": "RESERVE",
+    "asset": "ETH",
+    "amount": 100000000000000
+  }
+]
+```
+
+- W3_APPROVED 시점에 생성된 RESERVE 원장 엔트리가 1건 있음
+
+### 11-4. 온체인 포함 시뮬레이션 → W7_INCLUDED
+
+```powershell
+# attempt INCLUDED + withdrawal W7_INCLUDED
+Invoke-RestMethod -Method POST -Uri "$BASE_URL/sim/withdrawals/$wId/confirm"
+
+# 상태 확인
+Invoke-RestMethod -Uri "$BASE_URL/withdrawals/$wId"
+```
+
+기대 결과
+
+- `/confirm` 응답: `status = INCLUDED` (attempt 기준)
+- `GET /withdrawals/{id}` 응답: `status = W7_INCLUDED`
+
+### 11-5. 최종 확정 시뮬레이션 → W10_COMPLETED
+
+```powershell
+# W7 → W8 → W9 → W10
+$finalized = Invoke-RestMethod -Method POST -Uri "$BASE_URL/sim/withdrawals/$wId/finalize"
+$finalized.status   # W10_COMPLETED
+```
+
+기대 결과
+
+- 응답: `status = W10_COMPLETED`
+- 서버 로그에서 `event=ledger.settle`, `event=retry_replace.simulate_finalization.done` 확인
+
+### 11-6. 원장 조회 — RESERVE + SETTLE 엔트리 확인
+
+```powershell
+Invoke-RestMethod -Uri "$BASE_URL/withdrawals/$wId/ledger"
+```
+
+기대 결과
+
+```json
+[
+  { "type": "RESERVE", "asset": "ETH" },
+  { "type": "SETTLE",  "asset": "ETH" }
+]
+```
+
+- RESERVE (W3 시점) + SETTLE (W8 시점) 두 엔트리가 순서대로 반환됨
+
+### 11-7. 최종 상태 확인
+
+```powershell
+Invoke-RestMethod -Uri "$BASE_URL/withdrawals/$wId"
+```
+
+기대 결과
+
+- `status = W10_COMPLETED`
+
+---
+
+## 12) 주요 API 요약
 
 - `POST /withdrawals` (Header: `Idempotency-Key`)
 - `GET /withdrawals/{id}`
 - `GET /withdrawals/{id}/attempts`
 - `GET /withdrawals/{id}/policy-audits`
+- `GET /withdrawals/{id}/ledger` — 원장 기록 조회 (RESERVE, SETTLE)
 - `POST /withdrawals/{id}/retry`
 - `POST /withdrawals/{id}/replace`
 - `POST /withdrawals/{id}/sync`
@@ -876,10 +1021,14 @@ Invoke-RestMethod -Uri "$BASE_URL/whitelist?status=ACTIVE"
 - `POST /whitelist/{id}/revoke` — 취소 (REVOKED 전환)
 - `GET /whitelist` — 목록 (`?status=REGISTERED|HOLDING|ACTIVE|REVOKED`)
 - `GET /whitelist/{id}` — 단건 조회
+- `POST /sim/withdrawals/{id}/next-outcome/{outcome}` — 시뮬레이션 결과 사전 지정
+- `POST /sim/withdrawals/{id}/broadcast` — 브로드캐스트 시뮬레이션
+- `POST /sim/withdrawals/{id}/confirm` — 온체인 포함 시뮬레이션 (→ W7_INCLUDED)
+- `POST /sim/withdrawals/{id}/finalize` — 최종 확정 시뮬레이션 (→ W10_COMPLETED)
 
 ---
 
-## 12) 다음 확장 과제 (권장)
+## 13) 다음 확장 과제 (권장)
 
 - Policy 다중 룰(우선순위/다중 사유)
 - Adapter timeout/partial failure 시나리오 확장
@@ -893,7 +1042,7 @@ Invoke-RestMethod -Uri "$BASE_URL/whitelist?status=ACTIVE"
 
 ---
 
-## 13) 실습별 핵심 코드
+## 14) 실습별 핵심 코드
 
 ### 실습 1 — Policy Engine + Audit
 
@@ -1344,3 +1493,86 @@ public void seedFromStaticConfig() {
 - `ToAddressWhitelistPolicyRule`은 이제 DB에서 `status=ACTIVE` 여부만 확인하며, `HOLDING`/`REGISTERED`/`REVOKED` 모두 거부합니다.
 - 스케줄러(`@Scheduled`)가 60초마다 `activeAfter <= now` 조건을 만족하는 `HOLDING` 항목을 `ACTIVE` 로 전환합니다.
 - 테스트에서는 `custody.whitelist.default-hold-hours=0` + `scheduler-delay-ms=999999999` 으로 설정하고 `whitelistService.promoteHoldingToActive()`를 직접 호출해 48h 대기 없이 흐름을 검증합니다.
+
+---
+
+### 실습 7 — Withdrawal 상태머신 W1→W10 완성
+
+핵심 코드 (`WithdrawalService#createAndBroadcast`, `LedgerEntry`, `LedgerService`, `RetryReplaceService#simulateFinalization`)
+
+**W1→W5 전환 — `WithdrawalService#createAndBroadcast`**
+
+```java
+// 정책+승인 모두 통과 → W1
+saved.transitionTo(WithdrawalStatus.W1_POLICY_CHECKED);
+saved = withdrawalRepository.save(saved);
+
+// 승인 완료 → W3 + RESERVE 원장 기록
+saved.transitionTo(WithdrawalStatus.W3_APPROVED);
+if (ledgerService != null) {
+    ledgerService.reserve(saved);   // RESERVE LedgerEntry 생성
+}
+saved = withdrawalRepository.save(saved);
+
+// 서명 요청 → W4
+saved.transitionTo(WithdrawalStatus.W4_SIGNING);
+saved = withdrawalRepository.save(saved);
+
+// broadcastAttempt() 내부: W5 → W6
+withdrawal.transitionTo(WithdrawalStatus.W5_SIGNED);     // 서명 완료 (원자적)
+withdrawal.transitionTo(WithdrawalStatus.W6_BROADCASTED); // 노드 제출
+```
+
+> W1~W5는 단일 `TransactionTemplate` 안에서 발생하므로 DB에는 `W6_BROADCASTED`만 커밋됨.
+
+**원장 엔티티 — `LedgerEntry`**
+
+```java
+// RESERVE 팩토리: W3_APPROVED 시점에 자금 예약 기록
+public static LedgerEntry reserve(UUID withdrawalId, String asset, long amount,
+                                  String fromAddress, String toAddress) {
+    return LedgerEntry.builder()
+            .withdrawalId(withdrawalId)
+            .type(LedgerEntryType.RESERVE)
+            .asset(asset).amount(amount)
+            .fromAddress(fromAddress).toAddress(toAddress)
+            .createdAt(Instant.now())
+            .build();
+}
+
+// SETTLE 팩토리: W8_SAFE_FINALIZED 시점에 정산 기록
+public static LedgerEntry settle(UUID withdrawalId, String asset, long amount,
+                                 String fromAddress, String toAddress) {
+    return LedgerEntry.builder()
+            ...type(LedgerEntryType.SETTLE)...
+            .build();
+}
+```
+
+**W8→W10 전환 — `LedgerService#settle` + `RetryReplaceService#simulateFinalization`**
+
+```java
+// RetryReplaceService: W7 → W8 전환 후 LedgerService.settle() 위임
+@Transactional
+public Withdrawal simulateFinalization(UUID withdrawalId) {
+    Withdrawal w = loadWithdrawal(withdrawalId);
+    // W7_INCLUDED 아닌 경우 거부
+    w.transitionTo(WithdrawalStatus.W8_SAFE_FINALIZED);
+    withdrawalRepository.save(w);
+    return ledgerService.settle(w);  // W9 → W10 + SETTLE 원장 기록
+}
+
+// LedgerService: SETTLE 기록 후 W9 → W10 전환
+@Transactional
+public Withdrawal settle(Withdrawal w) {
+    ledgerEntryRepository.save(LedgerEntry.settle(...));
+    w.transitionTo(WithdrawalStatus.W9_LEDGER_POSTED);
+    w.transitionTo(WithdrawalStatus.W10_COMPLETED);
+    return withdrawalRepository.save(w);
+}
+```
+
+- `LedgerEntry`는 불변(append-only) 기록으로, 출금 생애주기 내 금융 이벤트를 `RESERVE` → `SETTLE` 순서로 저장합니다.
+- `RESERVE`는 브로드캐스트 트랜잭션과 같이 커밋되므로 브로드캐스트 실패 시 롤백됩니다.
+- `SETTLE`은 온체인 최종 확정(`W8`) 이후에만 기록되므로, 실패/timeout 케이스에서는 발생하지 않습니다.
+- 테스트에서는 `POST /sim/confirm` + `POST /sim/finalize` 두 단계로 W7→W10 흐름 전체를 검증합니다.

@@ -3,6 +3,7 @@ package lab.custody.orchestration;
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.adapter.EvmRpcAdapter;
+import lab.custody.domain.ledger.LedgerEntry;
 import lab.custody.domain.policy.PolicyAuditLog;
 import lab.custody.domain.policy.PolicyAuditLogRepository;
 import lab.custody.domain.txattempt.TxAttempt;
@@ -125,6 +126,7 @@ public class WithdrawalService {
         }
 
         // Approval stage (currently auto-approved). If ApprovalService is not present, default to approved.
+        // W2_APPROVAL_PENDING은 비동기 외부 승인 시스템 연동 시 사용 (현재는 동기 자동 승인).
         boolean approved = approvalService == null || approvalService.requestApproval(saved);
         if (!approved) {
             saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
@@ -134,6 +136,25 @@ public class WithdrawalService {
             }
             return withdrawalRepository.save(saved);
         }
+
+        // W1: 정책 + 승인 모두 통과
+        saved.transitionTo(WithdrawalStatus.W1_POLICY_CHECKED);
+        saved = withdrawalRepository.save(saved);
+        log.info("event=withdrawal_service.state.W1 withdrawalId={}", saved.getId());
+
+        // W3: 승인 완료 → RESERVE 원장 기록
+        saved.transitionTo(WithdrawalStatus.W3_APPROVED);
+        if (ledgerService != null) {
+            ledgerService.reserve(saved);
+        }
+        saved = withdrawalRepository.save(saved);
+        log.info("event=withdrawal_service.state.W3 withdrawalId={}", saved.getId());
+
+        // W4: 서명 요청
+        saved.transitionTo(WithdrawalStatus.W4_SIGNING);
+        saved = withdrawalRepository.save(saved);
+        log.info("event=withdrawal_service.state.W4 withdrawalId={}", saved.getId());
+
         log.info("event=withdrawal_service.approval.approved withdrawalId={}", saved.getId());
 
         TxAttempt attempt = attemptService.createAttempt(saved.getId(), req.fromAddress(), resolveInitialNonce(chainType, req.fromAddress()));
@@ -144,7 +165,7 @@ public class WithdrawalService {
                 attempt.getAttemptNo(),
                 attempt.getNonce()
         );
-        broadcastAttempt(saved, attempt);
+        broadcastAttempt(saved, attempt); // W5_SIGNED → W6_BROADCASTED 내부 처리
 
         // persist latest state via ledger if available
         if (ledgerService != null) {
@@ -195,6 +216,9 @@ public class WithdrawalService {
 
         attempt.setTxHash(result.txHash());
         attempt.transitionTo(TxAttemptStatus.BROADCASTED);
+        // W5: 서명 완료 (mock/EVM 어댑터는 서명+브로드캐스트 원자적 처리 → 논리적 중간 전환)
+        withdrawal.transitionTo(WithdrawalStatus.W5_SIGNED);
+        // W6: 노드 제출 완료
         withdrawal.transitionTo(WithdrawalStatus.W6_BROADCASTED);
         log.info(
                 "event=withdrawal_service.broadcast.success withdrawalId={} attemptId={} txHash={} withdrawalStatus={} attemptStatus={}",
@@ -239,6 +263,12 @@ public class WithdrawalService {
     @Transactional(readOnly = true)
     public List<PolicyAuditLog> getPolicyAudits(UUID withdrawalId) {
         return policyAuditLogRepository.findByWithdrawalIdOrderByCreatedAtAsc(withdrawalId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<LedgerEntry> getLedgerEntries(UUID withdrawalId) {
+        if (ledgerService == null) return List.of();
+        return ledgerService.getLedgerEntries(withdrawalId);
     }
 
     private ChainType parseChainType(String chainType) {

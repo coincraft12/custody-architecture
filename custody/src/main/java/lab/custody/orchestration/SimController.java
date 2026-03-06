@@ -31,4 +31,10 @@ public class SimController {
     public Object confirm(@PathVariable UUID id) {
         return retryReplaceService.simulateConfirmation(id);
     }
+
+    // Simulate finalization: W7_INCLUDED → W8_SAFE_FINALIZED → W9_LEDGER_POSTED → W10_COMPLETED.
+    @PostMapping("/withdrawals/{id}/finalize")
+    public Object finalize(@PathVariable UUID id) {
+        return retryReplaceService.simulateFinalization(id);
+    }
 }
