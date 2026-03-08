@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: custody-postgres
+    environment:
+      POSTGRES_DB: custody
+      POSTGRES_USER: custody
+      POSTGRES_PASSWORD: custody
+    ports:
+      - "5432:5432"
+    volumes:
+      - custody-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U custody -d custody"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  custody-postgres-data:
