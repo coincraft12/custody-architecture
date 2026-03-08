@@ -177,7 +177,347 @@
 
 현재 저장소는 **교육용 custody 백엔드의 핵심 뼈대**는 구현되어 있다. 즉, `Withdrawal/TxAttempt`, idempotency, retry/replace, reserve/settle, whitelist, fake-chain 기반 실습은 작동한다. 반면 운영 완성형 custody에서 필요한 approval 실체화, nonce reservation DB화, 멀티 RPC, finality policy, reconciliation/outbox는 아직 남아 있다.
 
-## 10. 구현 로드맵
+## 10. 운영형 DB 스키마 초안
+
+아래 초안은 PostgreSQL 같은 관계형 DB를 기준으로 한 운영형 custody 스키마다. 목표는 단순 저장이 아니라, **중복 방지, 동시성 제어, 감사 가능성, 장애 복구 가능성**을 DB 레벨에서 보장하는 것이다.
+
+### 10.1 설계 원칙
+
+1. 업무 단위와 체인 실행 단위를 분리한다.
+2. 핵심 멱등성 키는 DB 유니크 제약으로 강제한다.
+3. ledger와 audit는 append-only를 기본으로 한다.
+4. 정책/승인/서명/브로드캐스트/확정 이벤트를 서로 추적 가능해야 한다.
+5. 운영자가 조회할 인덱스를 처음부터 설계한다.
+
+### 10.2 핵심 테이블
+
+#### `withdrawals`
+
+업무 단위 출금 요청.
+
+주요 컬럼:
+
+| 컬럼 | 타입 예시 | 설명 |
+|---|---|---|
+| `id` | `uuid` PK | withdrawal 식별자 |
+| `idempotency_key` | `varchar(128)` | API 요청 멱등성 키 |
+| `chain_type` | `varchar(32)` | `EVM`, `BTC`, `COSMOS` 등 |
+| `from_address` | `varchar(128)` | 출금 지갑 주소 |
+| `to_address` | `varchar(128)` | 목적지 주소 |
+| `asset` | `varchar(32)` | 자산 코드 |
+| `amount` | `numeric(38,0)` | smallest unit 기준 금액 |
+| `status` | `varchar(32)` | `W0_REQUESTED` 등 |
+| `policy_decision_id` | `uuid` nullable | 연결된 정책 판정 |
+| `approval_bundle_id` | `uuid` nullable | 연결된 승인 묶음 |
+| `correlation_id` | `varchar(128)` | 로그/트레이스 연결 |
+| `requested_by` | `varchar(128)` | 요청자 |
+| `created_at` | `timestamptz` | 생성 시각 |
+| `updated_at` | `timestamptz` | 수정 시각 |
+
+제약/인덱스:
+
+- `PRIMARY KEY (id)`
+- `UNIQUE (idempotency_key)`
+- `INDEX (status, created_at)`
+- `INDEX (from_address, created_at)`
+- `INDEX (correlation_id)`
+
+#### `tx_attempts`
+
+체인 시도 단위. 동일 withdrawal에 여러 건 존재 가능.
+
+주요 컬럼:
+
+| 컬럼 | 타입 예시 | 설명 |
+|---|---|---|
+| `id` | `uuid` PK | attempt 식별자 |
+| `withdrawal_id` | `uuid` FK | 상위 withdrawal |
+| `attempt_no` | `int` | 1..N |
+| `from_address` | `varchar(128)` | 발신 주소 |
+| `nonce` | `bigint` | 계정 기반 체인의 nonce |
+| `attempt_group_key` | `varchar(180)` | `(chain, from, nonce)` 파생 키 |
+| `tx_hash` | `varchar(80)` nullable | 브로드캐스트 후 채워짐 |
+| `status` | `varchar(32)` | attempt 상태 |
+| `canonical` | `boolean` | 현재 대표 attempt 여부 |
+| `exception_type` | `varchar(32)` nullable | `REPLACED`, `FAILED_SYSTEM` 등 |
+| `exception_detail` | `varchar(500)` nullable | 상세 설명 |
+| `max_priority_fee_per_gas` | `numeric(38,0)` nullable | EVM fee |
+| `max_fee_per_gas` | `numeric(38,0)` nullable | EVM fee |
+| `broadcasted_at` | `timestamptz` nullable | 전파 시각 |
+| `included_at` | `timestamptz` nullable | 포함 시각 |
+| `finalized_at` | `timestamptz` nullable | 확정 시각 |
+| `created_at` | `timestamptz` | 생성 시각 |
+
+제약/인덱스:
+
+- `PRIMARY KEY (id)`
+- `FOREIGN KEY (withdrawal_id) REFERENCES withdrawals(id)`
+- `UNIQUE (withdrawal_id, attempt_no)`
+- `INDEX (withdrawal_id, attempt_no)`
+- `INDEX (attempt_group_key)`
+- `INDEX (tx_hash)`
+- `INDEX (status, canonical)`
+
+#### `nonce_reservations`
+
+운영형 핵심 테이블. `(chain, from, nonce)`를 DB 레벨에서 보호.
+
+주요 컬럼:
+
+| 컬럼 | 타입 예시 | 설명 |
+|---|---|---|
+| `id` | `uuid` PK | reservation 식별자 |
+| `chain_type` | `varchar(32)` | 체인 |
+| `from_address` | `varchar(128)` | nonce 공유 주소 |
+| `nonce` | `bigint` | 예약된 nonce |
+| `withdrawal_id` | `uuid` FK nullable | 연결된 withdrawal |
+| `attempt_id` | `uuid` FK nullable | 연결된 attempt |
+| `status` | `varchar(32)` | `RESERVED`, `BROADCASTED`, `FINALIZED`, `RELEASED`, `SUPERSEDED` |
+| `expires_at` | `timestamptz` nullable | 미사용 reservation 만료 |
+| `created_at` | `timestamptz` | 생성 시각 |
+| `updated_at` | `timestamptz` | 수정 시각 |
+
+제약/인덱스:
+
+- `PRIMARY KEY (id)`
+- `UNIQUE (chain_type, from_address, nonce)`
+- `INDEX (withdrawal_id)`
+- `INDEX (attempt_id)`
+- `INDEX (status, expires_at)`
+
+#### `ledger_entries`
+
+append-only 원장 이벤트.
+
+주요 컬럼:
+
+| 컬럼 | 타입 예시 | 설명 |
+|---|---|---|
+| `id` | `uuid` PK | ledger entry 식별자 |
+| `withdrawal_id` | `uuid` FK | 연결된 withdrawal |
+| `attempt_id` | `uuid` FK nullable | 관련 attempt |
+| `entry_type` | `varchar(32)` | `RESERVE`, `SETTLE`, `RELEASE`, `ADJUSTMENT` |
+| `asset` | `varchar(32)` | 자산 |
+| `amount` | `numeric(38,0)` | 금액 |
+| `from_address` | `varchar(128)` | 출발 주소 |
+| `to_address` | `varchar(128)` | 목적지 주소 |
+| `reference_id` | `varchar(128)` nullable | 외부 참조 |
+| `created_at` | `timestamptz` | 생성 시각 |
+
+제약/인덱스:
+
+- `PRIMARY KEY (id)`
+- `INDEX (withdrawal_id, created_at)`
+- `INDEX (attempt_id, created_at)`
+- `INDEX (entry_type, created_at)`
+
+#### `policy_decisions`
+
+정책 판정 결과 저장.
+
+주요 컬럼:
+
+| 컬럼 | 타입 예시 | 설명 |
+|---|---|---|
+| `id` | `uuid` PK | policy decision 식별자 |
+| `withdrawal_id` | `uuid` FK | 대상 withdrawal |
+| `decision` | `varchar(16)` | `ALLOW`, `REJECT`, `REVIEW` |
+| `reason_code` | `varchar(64)` | 규칙 코드 |
+| `reason_detail` | `varchar(500)` | 상세 설명 |
+| `rule_snapshot` | `jsonb` | 당시 룰 스냅샷 |
+| `created_at` | `timestamptz` | 생성 시각 |
+
+제약/인덱스:
+
+- `PRIMARY KEY (id)`
+- `INDEX (withdrawal_id, created_at)`
+- `INDEX (decision, created_at)`
+
+#### `approval_tasks`
+
+사람 승인 workflow.
+
+주요 컬럼:
+
+| 컬럼 | 타입 예시 | 설명 |
+|---|---|---|
+| `id` | `uuid` PK | approval task 식별자 |
+| `withdrawal_id` | `uuid` FK | 대상 withdrawal |
+| `risk_tier` | `varchar(16)` | `LOW`, `MEDIUM`, `HIGH` |
+| `required_approvals` | `int` | 필요 승인 수 |
+| `status` | `varchar(32)` | `PENDING`, `APPROVED`, `REJECTED`, `EXPIRED` |
+| `expires_at` | `timestamptz` nullable | 승인 만료 |
+| `created_at` | `timestamptz` | 생성 시각 |
+| `updated_at` | `timestamptz` | 수정 시각 |
+
+제약/인덱스:
+
+- `PRIMARY KEY (id)`
+- `INDEX (withdrawal_id)`
+- `INDEX (status, expires_at)`
+
+#### `approval_decisions`
+
+개별 승인자 결정 이력.
+
+주요 컬럼:
+
+| 컬럼 | 타입 예시 | 설명 |
+|---|---|---|
+| `id` | `uuid` PK | 개별 승인 식별자 |
+| `approval_task_id` | `uuid` FK | 상위 approval task |
+| `approver_id` | `varchar(128)` | 승인자 |
+| `decision` | `varchar(16)` | `APPROVE`, `REJECT` |
+| `comment` | `varchar(500)` nullable | 코멘트 |
+| `created_at` | `timestamptz` | 생성 시각 |
+
+제약/인덱스:
+
+- `PRIMARY KEY (id)`
+- `UNIQUE (approval_task_id, approver_id)`
+- `INDEX (approval_task_id, created_at)`
+
+#### `whitelist_addresses`
+
+목적지 주소 화이트리스트.
+
+주요 컬럼:
+
+| 컬럼 | 타입 예시 | 설명 |
+|---|---|---|
+| `id` | `uuid` PK | 항목 식별자 |
+| `address` | `varchar(128)` | 주소 |
+| `chain_type` | `varchar(32)` | 체인 |
+| `status` | `varchar(32)` | `REGISTERED`, `APPROVED`, `HOLDING`, `ACTIVE`, `REVOKED`, `EXPIRED` |
+| `registered_by` | `varchar(128)` | 등록자 |
+| `approved_by` | `varchar(128)` nullable | 승인자 |
+| `revoked_by` | `varchar(128)` nullable | 회수자 |
+| `note` | `varchar(500)` nullable | 메모 |
+| `active_after` | `timestamptz` nullable | hold 종료 시각 |
+| `registered_at` | `timestamptz` | 등록 시각 |
+| `updated_at` | `timestamptz` | 수정 시각 |
+
+제약/인덱스:
+
+- `PRIMARY KEY (id)`
+- `UNIQUE (address, chain_type)`
+- `INDEX (status, active_after)`
+
+#### `policy_change_requests`
+
+정책 변경 상태머신.
+
+주요 컬럼:
+
+| 컬럼 | 타입 예시 | 설명 |
+|---|---|---|
+| `id` | `uuid` PK | 정책 변경 요청 식별자 |
+| `change_type` | `varchar(64)` | 한도 변경, whitelist rule 변경 등 |
+| `status` | `varchar(32)` | `PROPOSED`, `QUORUM_APPROVED`, `DELAYED`, `APPLIED`, `ROLLED_BACK` |
+| `payload` | `jsonb` | 변경 내용 |
+| `requested_by` | `varchar(128)` | 요청자 |
+| `approved_at` | `timestamptz` nullable | 승인 시각 |
+| `apply_after` | `timestamptz` nullable | 지연 적용 시각 |
+| `applied_at` | `timestamptz` nullable | 실제 반영 시각 |
+| `created_at` | `timestamptz` | 생성 시각 |
+
+제약/인덱스:
+
+- `PRIMARY KEY (id)`
+- `INDEX (status, apply_after)`
+
+#### `outbox_events`
+
+외부 호출/후속 처리 분리를 위한 outbox.
+
+주요 컬럼:
+
+| 컬럼 | 타입 예시 | 설명 |
+|---|---|---|
+| `id` | `uuid` PK | 이벤트 식별자 |
+| `aggregate_type` | `varchar(64)` | `WITHDRAWAL`, `ATTEMPT`, `LEDGER` |
+| `aggregate_id` | `uuid` | 대상 aggregate |
+| `event_type` | `varchar(64)` | `WITHDRAWAL_RESERVED`, `ATTEMPT_BROADCASTED` 등 |
+| `payload` | `jsonb` | 이벤트 payload |
+| `status` | `varchar(32)` | `PENDING`, `SENT`, `FAILED`, `DEAD_LETTER` |
+| `attempt_count` | `int` | relay 재시도 횟수 |
+| `available_at` | `timestamptz` | 재시도 가능 시각 |
+| `created_at` | `timestamptz` | 생성 시각 |
+| `sent_at` | `timestamptz` nullable | 전송 완료 시각 |
+
+제약/인덱스:
+
+- `PRIMARY KEY (id)`
+- `INDEX (status, available_at)`
+- `INDEX (aggregate_type, aggregate_id)`
+
+#### `rpc_observation_snapshots`
+
+멀티 RPC 운영용 관측 스냅샷.
+
+주요 컬럼:
+
+| 컬럼 | 타입 예시 | 설명 |
+|---|---|---|
+| `id` | `uuid` PK | 스냅샷 식별자 |
+| `provider_name` | `varchar(64)` | RPC 공급자 이름 |
+| `chain_type` | `varchar(32)` | 체인 |
+| `tx_hash` | `varchar(80)` nullable | 대상 tx |
+| `head_number` | `bigint` nullable | 관측 head |
+| `receipt_found` | `boolean` nullable | receipt 존재 여부 |
+| `receipt_block_number` | `bigint` nullable | receipt block |
+| `observation_type` | `varchar(32)` | `HEAD`, `RECEIPT`, `TX_LOOKUP` |
+| `raw_payload` | `jsonb` nullable | 원문 |
+| `created_at` | `timestamptz` | 생성 시각 |
+
+제약/인덱스:
+
+- `PRIMARY KEY (id)`
+- `INDEX (provider_name, chain_type, created_at)`
+- `INDEX (tx_hash, created_at)`
+
+### 10.3 운영형 필수 유니크 제약
+
+가장 중요한 유니크 제약은 아래 4개다.
+
+1. `withdrawals.idempotency_key`
+2. `nonce_reservations (chain_type, from_address, nonce)`
+3. `tx_attempts (withdrawal_id, attempt_no)`
+4. `approval_decisions (approval_task_id, approver_id)`
+
+### 10.4 운영자가 자주 쓰는 조회 패턴
+
+운영형 DB는 쓰기만 중요한 것이 아니라, “사고 났을 때 바로 찾을 수 있는가”도 중요하다.
+
+필수 조회 예시:
+
+- 특정 `withdrawal_id`의 전체 상태 이력 조회
+- 특정 `(chain, from, nonce)`의 canonical attempt 찾기
+- `RESERVE`는 있는데 `SETTLE`이 없는 withdrawal 목록 찾기
+- 특정 RPC provider의 `head_mismatch_rate` 집계
+- `HOLDING` 상태에서 곧 `ACTIVE`가 될 whitelist 주소 조회
+- `PENDING` outbox 이벤트 적체 조회
+
+### 10.5 PostgreSQL 기준 구현 우선순위
+
+1. `withdrawals`, `tx_attempts`, `ledger_entries`, `whitelist_addresses`
+2. `nonce_reservations`, `policy_decisions`
+3. `approval_tasks`, `approval_decisions`, `policy_change_requests`
+4. `outbox_events`, `rpc_observation_snapshots`
+
+### 10.6 현재 코드와의 직접 갭
+
+현재 코드 기준으로 가장 먼저 메워야 하는 DB 갭은 아래다.
+
+| 우선순위 | 부족한 점 | 왜 중요한가 |
+|---|---|---|
+| P0 | `nonce_reservations` 없음 | 운영형 동시성 제어의 핵심 |
+| P0 | 운영형 approval 테이블 없음 | auto-approve에서 실제 승인으로 전환 불가 |
+| P1 | outbox 없음 | DB 상태와 외부 호출 불일치 위험 |
+| P1 | RPC observation 저장 없음 | 멀티 RPC quorum 운영 불가 |
+| P1 | policy change 상태머신 테이블 없음 | 지연 적용/롤백 통제 불가 |
+
+## 11. 구현 로드맵
 
 ### 10.1 우선순위 로드맵
 
@@ -255,7 +595,7 @@
 - EVM 외 adapter 추가
 - x402 intent/auth/settlement 모델 실험 가능
 
-## 11. 티켓 단위 TODO List
+## 12. 티켓 단위 TODO List
 
 아래 항목은 실제 이슈 트래커에 바로 옮길 수 있도록 잘게 쪼갠 작업 단위다.
 
@@ -364,7 +704,7 @@
 - [ ] `T28` x402 duplicate charge 방지 구현
   - `UNIQUE(idempotency_key, merchant_id, endpoint)`
 
-## 12. 구현 체크리스트
+## 13. 구현 체크리스트
 - [ ] `correlation_id`를 생성/전파하고 MDC에 주입해 로그에 항상 출력
 - [ ] `withdrawal_id`, `attempt_id`, `idempotency_key`, `nonce_key`를 전 구간 추적
 - [ ] `(chain, from, nonce)` 유니크 제약 적용

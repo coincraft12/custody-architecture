@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    url: ${CUSTODY_DB_URL:jdbc:postgresql://localhost:5432/custody}
+    driver-class-name: org.postgresql.Driver
+    username: ${CUSTODY_DB_USERNAME:custody}
+    password: ${CUSTODY_DB_PASSWORD:custody}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration/postgresql
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+logging:
+  level:
+    org.flywaydb: INFO
