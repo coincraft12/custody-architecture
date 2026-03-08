@@ -40,6 +40,21 @@ Withdrawal 상태기계는 업무 관점에서 출금 요청이 어떤 단계에
 
 Withdrawal 상태는 **업무 로직**을 담당하며, 각 단계에서 자동화/승인 정책을 적용할 수 있습니다. 예를 들어 W1에서 정책 검사 실패시 출금이 거절되거나 HOLD 상태에 둘 수 있습니다.
 
+### 2.1 강의용 주석: 목표 상태기계와 현재 실습 구현의 차이
+
+강의에서는 위 상태기계를 **목표 모델(target operating model)** 로 설명하되, 현재 실습 구현은 일부 단계를 단순화한 교육용 베이스라인일 수 있음을 먼저 알려 주는 편이 좋습니다. 이 구분이 없으면 수강생은 “문서와 코드가 왜 다르지?”라는 질문에 오래 머물게 됩니다.
+
+| 구분 | 목표 모델 | 현재 실습 구현에서 흔히 보이는 모습 | 강의 포인트 |
+|---|---|---|---|
+| Confirmation 단계 | `W7_INCLUDED -> W8_SAFE_FINALIZED -> W9_LEDGER_POSTED -> W10_COMPLETED` | receipt 발견 시점의 `INCLUDED` 전이 중심, safe/finalized와 settle 자동화는 제한적일 수 있음 | “실습은 포함 확인까지, 운영계는 finality까지”를 분리해 설명 |
+| TxAttempt 단계 | `CREATED -> SIGNED -> SENT_TO_RPC -> SEEN_IN_MEMPOOL -> INCLUDED -> CONFIRMED -> FINALIZED` | 구현 단순화를 위해 mempool/confirmed/finalized를 별도 상태로 두지 않을 수 있음 | 상태 수가 적어도 운영상 필요성은 사라지지 않음 |
+| Ledger 반영 | `RESERVE` 후 finality 충족 시 `SETTLE` | `RESERVE`는 보이지만 `SETTLE`은 수동 실습 또는 후속 과제로 남을 수 있음 | 왜 reserve와 settle을 분리하는지 교육 포인트로 활용 |
+| 예외 분류 | 6종 예외를 상태/런북으로 운영 | 일부 예외만 로그 또는 상태로 직접 표면화될 수 있음 | 강의안은 최소 구현이 아니라 운영 완성형을 기준으로 설명 |
+
+강사가 덧붙이면 좋은 한 문장:
+
+> “실습 코드는 상태기계의 모든 운영 단계를 완전히 자동화한 제품이 아니라, 핵심 경계와 전이 원리를 보여 주는 교육용 베이스라인이다.”
+
 ## 3. TxAttempt 상태기계
 
 각 TxAttempt는 체인에 전송한 실제 트랜잭션을 추적합니다. 동일한 Withdrawal에 대해 여러 TxAttempt가 생성될 수 있으므로 시도 단위의 상태 추적이 필요합니다.
@@ -70,6 +85,25 @@ Withdrawal과 TxAttempt 상태를 분리하면 `Dropped`나 `Replaced`가 발생
 | **6) RPC_INCONSISTENT** | 여러 RPC 노드 간에 트랜잭션 관측 상태가 달라서 결정적 판단을 내릴 수 없음. 공용 RPC는 과부하, 지연, 재구성 등으로 신뢰도가 떨어질 수 있음【273389558209925†L54-L87】. | A 노드에는 트랜잭션 있음, B 노드에는 없음; receipt 정보가 불일치. | ☑ 다른 경로로 재전송 가능 | ⚠ 필요 | 다중 RPC 쿼럼을 구성하여 다수결에 따라 결정을 내리거나, 자체 노드 및 백업 노드를 운영하여 “소스 오브 트루스”를 확보. | [Medium] RPC 엔드포인트가 불안정할 수 있으므로 여러 제공자를 사용하고 모니터링해야 함【273389558209925†L103-L117】. |
 
 
+### 4.1 운영 런북으로 바꾸면 어떻게 보이는가
+
+강의안을 실무형으로 만들려면 “예외 정의”에서 멈추지 말고, 운영자가 실제로 무엇을 해야 하는지까지 적어 두는 편이 좋습니다.
+
+| 예외 | 1차 자동 조치 | 알람 조건 | 사람 개입 기준 | 종료 조건 |
+|---|---|---|---|---|
+| `FAILED` | 동일 요청 중복 여부 확인 후 재시도 큐에 재적재 | 동일 원인 3회 이상 반복 | KMS/HSM/RPC 공급자 자체 장애 의심 시 | 새 attempt가 정상 브로드캐스트 |
+| `EXPIRED` | fee 재산정 후 speed-up 또는 replacement 검토 | `pending_age`가 SLA 초과 | 고액 출금, 고객 만기 임박, 수수료 급등 상황 | 포함되거나 사용자가 취소 결정 |
+| `DROPPED` | 같은 nonce로 재전송 | 특정 주소에서 dropped 급증 | 같은 주소에서 연속 drop 발생 시 | 새 txHash가 mempool 또는 block에서 관측 |
+| `REPLACED` | canonical txHash 재지정 | replacement 비율 급증 | replacement 원인이 정책 오류인지 확인 필요 시 | 새 canonical attempt 기준으로 추적 전환 |
+| `REVERTED` | 자동 재시도 금지 | 즉시 알람 | 계약 상태, calldata, 승인 경로 재검토 필요 | 원인 수정 후 새 withdrawal로 재개 |
+| `RPC_INCONSISTENT` | 다중 RPC 재질의, 쿼럼 판정 보류 | head mismatch, receipt mismatch 임계치 초과 | 단일 공급자 장애 또는 체인 리오그 의심 시 | 쿼럼 수렴 또는 수동 강등 모드 전환 |
+
+강의 중 수강생에게 던질 질문:
+
+- 이 예외는 새 Attempt를 만들 문제인가, 기존 Attempt를 재분류할 문제인가?
+- 자동 재시도 전에 먼저 확인해야 할 키는 `txHash`인가, `(chain, from, nonce)`인가?
+- 사람 개입 기준은 횟수인가, 금액과 리스크 tier인가?
+
 ## 5. Nonce 관리와 병렬 출금 처리
 
 ### 5.1 Nonce gap 문제
@@ -82,6 +116,39 @@ Withdrawal과 TxAttempt 상태를 분리하면 `Dropped`나 `Replaced`가 발생
 2. **Single writer per address**: 한 번에 하나의 프로세스만 nonce를 할당하여 데이터 경쟁을 방지합니다. 다른 스레드는 대기하거나 큐에 넣어 순차적으로 처리합니다.
 3. **Nonce gap detection**: 현재 계정의 confirmed nonce(블록에 포함된 트랜잭션 수)를 모니터링하고, pending한 TxAttempt들의 nonce 목록과 비교해 누락된 nonce가 있는지 확인합니다. Blocknative는 누락된 nonce를 찾은 후 그 nonce로 다시 전송해야 higher nonce 트랜잭션들이 처리될 수 있다고 설명합니다【40021122132328†L250-L276】.
 4. **Nonce gap recovery**: 누락된 nonce가 발견되면 가스 가격을 재설정해 동일 nonce 트랜잭션을 재전송합니다【913356510559277†L688-L706】.
+
+### 5.2.1 실무 구현으로 내려오는 최소 규칙
+
+Nonce 설명이 추상적이면 수강생은 “그냥 최신 pending nonce를 조회해서 쓰면 되지 않나?”라고 오해하기 쉽습니다. 강의안에는 아래 4가지를 **동시에** 만족해야 한다고 적는 편이 좋습니다.
+
+1. `UNIQUE(chain, from_address, nonce)` 제약이 있어야 합니다. 애플리케이션 락만으로는 재기동·장애 상황의 중복 예약을 막지 못합니다.
+2. 주소별 single-writer 원칙이 있어야 합니다. 같은 `from` 주소에 대해 여러 워커가 동시에 nonce를 할당하면 race condition이 거의 반드시 발생합니다.
+3. reservation과 broadcast는 논리적으로 분리해야 합니다. nonce를 예약했다고 해서 체인에 전파된 것은 아니므로, 예약된 시도와 전파된 시도를 별도로 추적해야 합니다.
+4. “txHash가 없다”와 “nonce가 없다”는 다른 장애입니다. 전자는 브로드캐스트 전후 문제이고, 후자는 동시성 제어 문제입니다.
+
+예시 스키마:
+
+| 컬럼 | 의미 |
+|---|---|
+| `chain` | EVM, BTC, COSMOS 등 체인 식별자 |
+| `from_address` | nonce를 공유하는 발신 주소 |
+| `nonce` | 예약된 실행 순번 |
+| `withdrawal_id` | 어떤 업무 출금에 묶였는지 |
+| `attempt_id` | 어떤 체인 시도인지 |
+| `status` | `RESERVED`, `BROADCASTED`, `SUPERSEDED`, `FINALIZED` 등 |
+| `expires_at` | 장시간 미사용 예약을 감지하기 위한 만료 시점 |
+
+강의에서 강조할 포인트:
+
+- `eth_getTransactionCount(..., "pending")`는 참고값일 뿐, 동시성 제어의 단일 진실은 아니다.
+- 최종 기준은 우리 DB의 reservation 상태와 체인 관측 결과를 합친 모델이어야 한다.
+- 처리량을 높이려면 주소를 늘리거나 파이프라인 전략을 설계해야지, 동일 주소에 대한 무잠금 병렬 nonce 할당으로 해결하면 안 된다.
+
+### 5.2.2 강의용 설계 리뷰 질문
+
+- 같은 주소에서 동시에 20건의 출금 요청이 들어오면 누가 nonce를 배정하는가?
+- 워커가 nonce를 예약한 뒤 죽으면, 그 reservation은 언제 어떻게 회수되는가?
+- 이미 `nonce=105`가 브로드캐스트된 상태에서 `nonce=104`가 비어 있으면, 새 attempt를 어디에 연결할 것인가?
 
 ### 5.3 Replacement, Cancel, Speed‑up
 
@@ -130,6 +197,29 @@ RESERVE가 기록된 이후 잔액 계산 시 예약된 자금을 차감하면, 
 ### 7.3 SETTLE의 역할
 
 W8_SAFE_FINALIZED 시점에 SETTLE 엔트리를 기록합니다. 온체인에서 최종 확정(finality)이 된 이후에만 원장에 반영하는 이유는, 확정 전에 리오그(reorg)가 발생하면 트랜잭션이 무효화될 수 있기 때문입니다. SETTLE이 기록됨과 동시에 Withdrawal은 W9_LEDGER_POSTED → W10_COMPLETED로 전환됩니다.
+
+### 7.3.1 Included 시점에 원장을 확정하면 왜 위험한가
+
+실무에서 자주 생기는 오해는 “receipt가 나왔으니 ledger도 끝난 것 아닌가?”입니다. 강의에서는 아래를 명확히 구분해야 합니다.
+
+- `INCLUDED`: 블록에 들어갔다는 사실
+- `SAFE`: 리오그 가능성이 낮아졌다는 정책적 판단
+- `FINALIZED`: 더 이상 되돌릴 수 없다고 보는 완료 기준
+- `LEDGER_POSTED`: 내부 원장이 최종 자금 이탈을 인정한 상태
+
+즉, **체인 관측의 사실**과 **회계적 확정의 선언**은 같은 사건이 아닙니다. 특히 고액 출금이나 리스크가 큰 자산은 `INCLUDED` 직후 원장을 확정하면 안 됩니다.
+
+추천 강의 멘트:
+
+> “체인에서 보인 것과 우리 돈이 확정된 것은 다른 층위의 사건이다. 원장은 finality policy를 통과한 뒤에만 settle한다.”
+
+### 7.3.2 강의용 decision table
+
+| 리스크 tier | Included 후 고객 화면 | 내부 ledger 처리 | 비고 |
+|---|---|---|---|
+| Low | “처리 중, 곧 확정 예정” | safe 도달 시 settle 가능 | 소액/저위험 자산 |
+| Medium | “체인 포함됨, 확정 대기 중” | finalized 기준 settle 권장 | 기본 운영값 |
+| High | “승인된 출금, 최종 확인 중” | finalized + 추가 점검 후 settle | 대형 출금, 신규 주소, 사고 대응 중 |
 
 ### 7.4 append-only 원장의 원칙
 

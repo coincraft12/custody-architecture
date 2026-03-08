@@ -103,6 +103,22 @@
 6. `pending_age_p95`
 7. `reserve_without_commit_count`
 
+### 8.2 KPI 대시보드 예시 (권장 최소 구성)
+
+아래 4개 패널만 있어도 운영자는 병목 지점을 빠르게 좁힐 수 있다.
+
+| 패널 | 보는 질문 |
+|---|---|
+| `Broadcast -> Inclusion` 시간 분포 | 지금 문제는 전파 지연인가 |
+| `Pending Age P95` + `Dropped/Replaced` 추이 | 수수료 정책 또는 mempool 문제가 커지고 있는가 |
+| RPC 공급자별 `error_rate/head_mismatch_rate` | 특정 RPC 공급자가 오판 또는 장애 상태인가 |
+| `Reserve without Commit/Settle` 건수 | 체인 성공 후 원장 반영이 밀리고 있는가 |
+
+강의용 메모:
+
+- 대시보드는 “지표를 많이 보여 주는 화면”이 아니라 “원인 분류를 빨리 하는 화면”이어야 한다.
+- 저위험 실습에서는 1~2개 패널만 보여 줘도 충분하지만, 운영 강의에서는 최소 4개 패널 구성이 좋다.
+
 ### 8.1 Correlation ID / MDC 로깅 표준
 1. 모든 요청 시작 시 `correlation_id`를 생성(또는 전달값 재사용)하고 전 구간 전파
 2. 애플리케이션 로그 출력 시 MDC에 다음 키를 기본 주입
@@ -115,12 +131,240 @@
 3. 로그 포맷(JSON 또는 패턴)에 MDC 필드를 강제 포함
 4. 외부 호출(RPC/KMS/메시지 큐)에도 동일 `correlation_id`를 헤더/메타데이터로 전달
 
-## 9. 단계별 구축 로드맵
-1. Phase 1: 7모듈 분리, 상태머신/원장/감사 로그 확립
-2. Phase 2: 화이트리스트+보류, 쿼럼 승인, nonce manager, retry 엔진
-3. Phase 3: 멀티 RPC 쿼럼, 멀티체인 어댑터, 정책 변경 지연/롤백, 고급 모니터링
+## 9. 현재 코드 기준 구현 현황
 
-## 10. 구현 체크리스트
+아래 표는 현재 저장소의 코드 기준으로 “어디까지 구현되어 있는가”를 정리한 것이다. 이 문서의 앞부분은 **목표 아키텍처**이고, 본 절은 **현재 교육용 구현 상태**다.
+
+### 9.1 구현 완료
+
+| 영역 | 현재 상태 | 관련 코드/메모 |
+|---|---|---|
+| 출금 생성 + 멱등성 | `Idempotency-Key` 기반으로 동일 요청 중복 생성 방지 | `WithdrawalService#createOrGet`, `Withdrawal.idempotencyKey` |
+| Withdrawal / TxAttempt 분리 | 출금 1건에 대해 여러 시도 생성 및 이력 조회 가능 | `AttemptService`, `TxAttempt`, `/withdrawals/{id}/attempts` |
+| 기본 출금 상태 전이 | `W0 -> W1 -> W3 -> W4 -> W5 -> W6 -> W7` 흐름 구현 | `WithdrawalService`, `RetryReplaceService#sync/simulateConfirmation` |
+| Retry / Replace | retry는 새 nonce, replace는 동일 nonce fee bump로 처리 | `RetryReplaceService#retry`, `#replace` |
+| Ledger RESERVE / SETTLE | 승인 시 `RESERVE`, finalize 시 `SETTLE` 기록 | `LedgerService#reserve`, `#settle` |
+| Broadcaster / Tracker 분리 | 브로드캐스트와 포함 확인 책임이 분리되어 있음 | `EvmRpcAdapter`, `ConfirmationTracker` |
+| 정책 엔진 기본형 | 금액 제한 + 목적지 화이트리스트 룰 적용 | `AmountLimitPolicyRule`, `ToAddressWhitelistPolicyRule` |
+| 화이트리스트 워크플로우 | `REGISTERED -> APPROVED -> HOLDING -> ACTIVE -> REVOKED` 및 scheduler 승격 구현 | `WhitelistService`, `WhitelistController` |
+| 실습/시뮬레이션 경로 | fake chain 기반으로 confirm/finalize/replaced 시나리오 재현 가능 | `SimController`, `FakeChain`, 통합테스트 |
+
+### 9.2 부분 구현
+
+| 영역 | 현재 상태 | 앞으로 구현해야 할 부분 |
+|---|---|---|
+| Approval | 구조는 있으나 현재는 auto-approve placeholder | 실제 승인 task, quorum, 승인자 기록, human-in-the-loop |
+| Signer 경계 검증 | 실제 서명 경로는 있으나 강의안 수준의 구조화 입력 검증은 부족 | `policy_decision_id`, `approval_bundle`, `deadline`, `verifyingContract` 검증 |
+| Confirmation Tracker | receipt polling 후 `INCLUDED` 반영 중심 | `SAFE/FINALIZED` 분리, 리오그 대응, finality policy 적용 |
+| TxAttempt 상태머신 | `CREATED/BROADCASTED/INCLUDED/SUCCESS/FAILED/REPLACED` 수준 | `SEEN_IN_MEMPOOL`, `CONFIRMED`, `FINALIZED`, dropped/expired 분리 |
+| 예외 처리 | 일부 exception type과 retry/replace 흐름 존재 | `DROPPED`, `EXPIRED`, `RPC_INCONSISTENT`, `REVERTED` 자동 분류와 런북 연결 |
+| 관측성 | 로그와 API는 있으나 운영 대시보드/알람 체계는 코드에 녹아 있지 않음 | MDC 일관화, metrics, alerts, provider별 관측 저장 |
+| 멀티체인 추상화 | `ChainAdapter` 인터페이스와 EVM adapter는 존재 | UTXO/Cosmos/Solana용 adapter, capability 선언, finality 차등 처리 |
+
+### 9.3 미구현
+
+| 영역 | 현재 상태 | 앞으로 구현해야 할 부분 |
+|---|---|---|
+| NonceReservation DB 모델 | 현재 운영형 reservation 테이블 없음 | `UNIQUE(chain, from, nonce)` 제약, reservation lifecycle, recovery 로직 |
+| 멀티 RPC 쿼럼 | 단일 RPC adapter 중심 | 다중 provider 조회, quorum 판정, provider degrade mode |
+| 운영형 finality policy | 코드상 체인별 safe/finalized 완료 선언 없음 | 체인/금액/risk tier별 완료 기준 테이블 |
+| Outbox / 비동기 메시징 | DB-외부호출 분리용 outbox 없음 | broadcast/ledger/reconciliation 이벤트 outbox 도입 |
+| Reconciliation 엔진 | ledger와 chain 사이 상시 대사 엔진 없음 | chain snapshot 대사, 예외 큐, 수동 개입 플로우 |
+| 정책 변경 상태머신 | 강의안에는 있으나 코드엔 없음 | `PROPOSED -> QUORUM_APPROVED -> DELAYED -> APPLIED` 구현 |
+| x402 결제 계층 | 설계 문서상 확장 아이디어만 존재 | payment intent, auth digest, duplicate charge 방지 구현 |
+
+### 9.4 현재 코드에 대한 한 줄 평가
+
+현재 저장소는 **교육용 custody 백엔드의 핵심 뼈대**는 구현되어 있다. 즉, `Withdrawal/TxAttempt`, idempotency, retry/replace, reserve/settle, whitelist, fake-chain 기반 실습은 작동한다. 반면 운영 완성형 custody에서 필요한 approval 실체화, nonce reservation DB화, 멀티 RPC, finality policy, reconciliation/outbox는 아직 남아 있다.
+
+## 10. 구현 로드맵
+
+### 10.1 우선순위 로드맵
+
+| 단계 | 우선순위 | 목표 | 핵심 산출물 |
+|---|---|---|---|
+| Phase A | P0 | 교육용 구현을 “운영형 기초” 수준으로 끌어올리기 | NonceReservation DB화, MDC/metrics, tracker 고도화 |
+| Phase B | P1 | 승인/서명/정책 경계를 운영 수준으로 강화 | Approval workflow, Signer input contract, policy change workflow |
+| Phase C | P1 | 외부 의존성과 체인 불확실성에 강한 구조 만들기 | 멀티 RPC quorum, degrade mode, finality policy |
+| Phase D | P2 | 회계/운영 완성도 강화 | Outbox, reconciliation, 운영 대시보드 |
+| Phase E | P3 | 확장 주제 적용 | 멀티체인 adapter 확장, x402 결제 계층 |
+
+### 10.2 단계별 설명
+
+#### Phase A: 운영형 기초 완성
+
+목표:
+
+1. 현재 데모 중심 상태머신을 운영형 최소 수준으로 보강
+2. nonce, tracking, observability에서 사고 가능성이 높은 부분부터 닫기
+
+완료 기준:
+
+- `(chain, from, nonce)` 유니크 제약이 DB에 존재
+- `correlation_id`, `withdrawal_id`, `attempt_id`, `nonce_key`, `tx_hash`가 로그에 일관되게 남음
+- tracker가 `INCLUDED`와 `SAFE/FINALIZED`를 구분할 준비를 갖춤
+
+#### Phase B: 승인/서명 경계 강화
+
+목표:
+
+1. auto-approve placeholder를 실제 승인 흐름으로 교체
+2. signer를 “서명기”에서 “구조화 입력을 검증하는 마지막 방어선”으로 강화
+
+완료 기준:
+
+- 승인 task, 승인자 기록, quorum 확인이 존재
+- signer 요청에 `policy_decision_id`, `approval_bundle_id`, `chain_id`, `deadline` 등이 포함됨
+- 승인 없는 서명 요청은 거부됨
+
+#### Phase C: 체인 불확실성 대응
+
+목표:
+
+1. 단일 RPC 의존 제거
+2. 체인별 finality와 provider 불일치를 정책적으로 다루기
+
+완료 기준:
+
+- 다중 RPC provider에서 head/receipt quorum 판정 가능
+- `NORMAL/DEGRADED_READ/DEGRADED_WRITE` 수준의 강등 운용 가능
+- 체인/리스크 tier별 finality policy가 존재
+
+#### Phase D: 회계/운영 완성도 강화
+
+목표:
+
+1. DB 상태와 외부 호출의 불일치를 줄임
+2. ledger와 chain 사이 대사 프로세스를 도입
+
+완료 기준:
+
+- outbox 기반 비동기 이벤트 전파 도입
+- reserve without settle, chain-ledger mismatch를 탐지
+- reconciliation 예외 큐와 수동 처리 플로우 존재
+
+#### Phase E: 확장 주제
+
+목표:
+
+1. 멀티체인 지원을 실질적으로 확장
+2. 같은 통제 원칙을 x402 같은 API 결제 계층까지 확장
+
+완료 기준:
+
+- EVM 외 adapter 추가
+- x402 intent/auth/settlement 모델 실험 가능
+
+## 11. 티켓 단위 TODO List
+
+아래 항목은 실제 이슈 트래커에 바로 옮길 수 있도록 잘게 쪼갠 작업 단위다.
+
+### 11.1 P0 티켓
+
+- [ ] `T01` `NonceReservation` 엔티티/리포지토리 추가
+  - `chain`, `from_address`, `nonce` 유니크 제약
+  - reservation 상태와 만료시간 포함
+
+- [ ] `T02` 메모리 기반 nonce 처리 제거 또는 축소
+  - `NonceAllocator`를 DB reservation 기반 흐름으로 대체
+
+- [ ] `T03` `WithdrawalService`에서 nonce 예약 흐름 연결
+  - attempt 생성 전 reservation 생성
+  - 실패 시 reservation release/recovery 규칙 정의
+
+- [ ] `T04` 로그 MDC 표준화
+  - `correlation_id`, `withdrawal_id`, `attempt_id`, `idempotency_key`, `nonce_key`, `tx_hash` 주입
+
+- [ ] `T05` 핵심 메트릭 추가
+  - `time_to_broadcast`
+  - `time_to_inclusion`
+  - `pending_age`
+  - `replaced/dropped` 카운트
+
+- [ ] `T06` `ConfirmationTracker` 상태 고도화 1차
+  - `INCLUDED`와 `SUCCESS/FAILED`를 더 명확히 분리
+  - 리오그 대비 확장 포인트 추가
+
+- [ ] `T07` `TxAttemptStatus` 확장
+  - `SEEN_IN_MEMPOOL`, `CONFIRMED`, `FINALIZED`, `DROPPED`, `EXPIRED` 검토
+
+- [ ] `T08` 운영용 실패 분류 기초 추가
+  - `FAILED`, `REPLACED`, `REVERTED`, `RPC_INCONSISTENT` 저장 구조 보강
+
+### 11.2 P1 티켓
+
+- [ ] `T09` Approval task 모델 추가
+  - 승인 요청/승인자/승인시각/코멘트 저장
+
+- [ ] `T10` quorum approval 정책 도입
+  - 금액 구간별 요구 승인 수 정의
+
+- [ ] `T11` high-risk withdrawal human-in-the-loop 추가
+  - 금액/신규 주소/정책 변경 직후 조건 연동
+
+- [ ] `T12` Signer input contract 정의
+  - `request_id`, `withdrawal_id`, `attempt_id`, `chain_id`, `deadline`, `policy_decision_id`, `approval_bundle_id`
+
+- [ ] `T13` signer 재검증 로직 구현
+  - 승인 payload와 서명 payload 일치 여부 검사
+  - 만료/재사용 request 거부
+
+- [ ] `T14` 정책 변경 상태머신 모델 추가
+  - `PROPOSED -> QUORUM_APPROVED -> DELAYED -> APPLIED`
+
+- [ ] `T15` whitelist와 policy change 감사 로그 추가
+  - 변경자, 승인자, 만료시각, 사유 저장
+
+### 11.3 P1-P2 티켓
+
+- [ ] `T16` 멀티 RPC provider 추상화 도입
+  - provider 목록 관리
+  - provider별 health 정보 저장
+
+- [ ] `T17` head/receipt quorum 판정 로직 구현
+  - 단일 provider 오판 방지
+
+- [ ] `T18` degrade mode 정책 구현
+  - `NORMAL`, `DEGRADED_READ`, `DEGRADED_WRITE`, `MANUAL_APPROVAL_ONLY`
+
+- [ ] `T19` finality policy 테이블 추가
+  - 체인/리스크 tier별 완료 기준 설정
+
+- [ ] `T20` tracker의 `SAFE/FINALIZED` 판정 구현
+  - settlement 이전 finality 확인
+
+### 11.4 P2 티켓
+
+- [ ] `T21` outbox 테이블 및 relay worker 추가
+  - DB 커밋과 외부 호출 분리
+
+- [ ] `T22` ledger/chain reconciliation 배치 추가
+  - reserve without settle 탐지
+  - chain success but ledger miss 탐지
+
+- [ ] `T23` reconciliation 예외 큐 추가
+  - 수동 개입 대상 분류
+
+- [ ] `T24` 운영 대시보드 초안 구성
+  - provider 상태
+  - inclusion latency
+  - reserve without settle
+
+### 11.5 P3 티켓
+
+- [ ] `T25` UTXO adapter 초안 추가
+  - input selection / tx status snapshot 모델 정의
+
+- [ ] `T26` Cosmos adapter 초안 추가
+  - `account_number`, `sequence` 반영
+
+- [ ] `T27` x402 payment intent / authorization 모델 설계
+  - `payment_intent_id`, `authorization_id`, `authorization_digest`
+
+- [ ] `T28` x402 duplicate charge 방지 구현
+  - `UNIQUE(idempotency_key, merchant_id, endpoint)`
+
+## 12. 구현 체크리스트
 - [ ] `correlation_id`를 생성/전파하고 MDC에 주입해 로그에 항상 출력
 - [ ] `withdrawal_id`, `attempt_id`, `idempotency_key`, `nonce_key`를 전 구간 추적
 - [ ] `(chain, from, nonce)` 유니크 제약 적용
