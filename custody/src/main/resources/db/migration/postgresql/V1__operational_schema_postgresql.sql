@@ -7,7 +7,7 @@ CREATE TABLE withdrawals (
     from_address varchar(128) NOT NULL,
     to_address varchar(128) NOT NULL,
     asset varchar(32) NOT NULL,
-    amount numeric(38,0) NOT NULL,
+    amount bigint NOT NULL,
     status varchar(32) NOT NULL,
     policy_decision_id uuid,
     approval_bundle_id uuid,
@@ -39,8 +39,8 @@ CREATE TABLE tx_attempts (
     canonical boolean NOT NULL DEFAULT false,
     exception_type varchar(32),
     exception_detail varchar(500),
-    max_priority_fee_per_gas numeric(38,0),
-    max_fee_per_gas numeric(38,0),
+    max_priority_fee_per_gas bigint,
+    max_fee_per_gas bigint,
     broadcasted_at timestamptz,
     included_at timestamptz,
     finalized_at timestamptz,
@@ -95,9 +95,9 @@ CREATE TABLE ledger_entries (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     withdrawal_id uuid NOT NULL,
     attempt_id uuid,
-    entry_type varchar(32) NOT NULL,
+    type varchar(16) NOT NULL,
     asset varchar(32) NOT NULL,
-    amount numeric(38,0) NOT NULL,
+    amount bigint NOT NULL,
     from_address varchar(128) NOT NULL,
     to_address varchar(128) NOT NULL,
     reference_id varchar(128),
@@ -114,8 +114,21 @@ CREATE INDEX idx_ledger_entries_withdrawal_created_at
 CREATE INDEX idx_ledger_entries_attempt_created_at
     ON ledger_entries (attempt_id, created_at);
 
-CREATE INDEX idx_ledger_entries_entry_type_created_at
-    ON ledger_entries (entry_type, created_at);
+CREATE INDEX idx_ledger_entries_type_created_at
+    ON ledger_entries (type, created_at);
+
+CREATE TABLE policy_audit_logs (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    withdrawal_id uuid NOT NULL,
+    allowed boolean NOT NULL,
+    reason varchar(255) NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT fk_policy_audit_logs_withdrawal
+        FOREIGN KEY (withdrawal_id) REFERENCES withdrawals (id)
+);
+
+CREATE INDEX idx_policy_audit_logs_withdrawal
+    ON policy_audit_logs (withdrawal_id);
 
 CREATE TABLE policy_decisions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -179,8 +192,10 @@ CREATE TABLE whitelist_addresses (
     approved_by varchar(128),
     revoked_by varchar(128),
     note varchar(500),
+    hold_duration_hours bigint NOT NULL DEFAULT 48,
     active_after timestamptz,
     registered_at timestamptz NOT NULL DEFAULT now(),
+    approved_at timestamptz,
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT uq_whitelist_addresses_address_chain
         UNIQUE (address, chain_type)

@@ -1576,3 +1576,79 @@ public Withdrawal settle(Withdrawal w) {
 - `RESERVE`는 브로드캐스트 트랜잭션과 같이 커밋되므로 브로드캐스트 실패 시 롤백됩니다.
 - `SETTLE`은 온체인 최종 확정(`W8`) 이후에만 기록되므로, 실패/timeout 케이스에서는 발생하지 않습니다.
 - 테스트에서는 `POST /sim/confirm` + `POST /sim/finalize` 두 단계로 W7→W10 흐름 전체를 검증합니다.
+---
+
+## 14) PostgreSQL + Flyway 운영형 실행
+
+기본 `./gradlew build` 는 컴파일/테스트만 수행합니다. PostgreSQL 테이블 자동 생성은 `postgres` 프로필로 서버를 실행할 때 Flyway가 수행합니다.
+
+### 14-1. PostgreSQL 실행
+
+```powershell
+cd F:\Workplace\custody
+docker compose up -d
+```
+
+기본 접속 정보
+
+- DB: `custody`
+- username: `custody`
+- password: `custody`
+- port: `5432`
+
+설정 파일: [docker-compose.yml](/f:/Workplace/custody/docker-compose.yml)
+
+### 14-2. `postgres` 프로필로 서버 실행
+
+```powershell
+cd F:\Workplace\custody\custody
+$env:CUSTODY_DB_URL = "jdbc:postgresql://localhost:5432/custody"
+$env:CUSTODY_DB_USERNAME = "custody"
+$env:CUSTODY_DB_PASSWORD = "custody"
+.\gradlew bootRun --args='--spring.profiles.active=postgres'
+```
+
+프로필 설정 파일: [application-postgres.yaml](/f:/Workplace/custody/custody/src/main/resources/application-postgres.yaml)
+
+### 14-3. Flyway 마이그레이션 확인
+
+서버가 정상 기동되면 Flyway가 아래 마이그레이션을 실행합니다.
+
+- [V1__operational_schema_postgresql.sql](/f:/Workplace/custody/custody/src/main/resources/db/migration/postgresql/V1__operational_schema_postgresql.sql)
+
+테이블 생성 확인
+
+```powershell
+docker exec -it custody-postgres psql -U custody -d custody -c "\dt"
+```
+
+예상 테이블 예시
+
+- `withdrawals`
+- `tx_attempts`
+- `nonce_reservations`
+- `ledger_entries`
+- `policy_decisions`
+- `approval_tasks`
+- `approval_decisions`
+- `whitelist_addresses`
+- `policy_change_requests`
+- `outbox_events`
+- `rpc_observation_snapshots`
+
+Flyway 실행 이력 확인
+
+```powershell
+docker exec -it custody-postgres psql -U custody -d custody -c "select installed_rank, version, description, success from flyway_schema_history order by installed_rank;"
+```
+
+예상 결과
+
+- `version = 1`
+- `description = operational schema postgresql`
+- `success = true`
+
+### 14-4. 참고
+
+- 기본 H2/test 경로에서는 Flyway를 끄고 있습니다.
+- 운영형 DB 검증은 Docker가 설치된 환경에서 실행해야 합니다.

@@ -715,3 +715,641 @@ append-only 원장 이벤트.
 - [ ] 재시도 정책(백오프+지터) 및 수동 개입 경계 정의
 - [ ] 멀티 RPC 불일치 대응(쿼럼/강등 모드) 구현
 - [ ] x402 결제에 `payment_intent_id/idempotency_key/authorization_digest` 통제 적용
+
+## 14. 운영형 Custody 회사 기준 상세 TODO List
+
+아래 목록은 "우리가 실제로 커스터디 지갑을 운영하는 회사"라고 가정했을 때 필요한 실행 항목을 세부 작업 단위로 정리한 것이다.
+
+핵심 원칙:
+
+1. 출금 성공률보다 먼저 "잘못된 출금이 절대 나가지 않는 구조"를 만든다.
+2. 코드 구현과 동시에 운영 통제, 감사 가능성, 사고 대응 체계를 같이 만든다.
+3. "나중에 문서화"가 아니라, 정책/런북/승인 기준/알람 기준을 구현과 같이 남긴다.
+
+### 14.1 Program / Governance
+
+- [ ] `OPS-001` 서비스 범위 정의
+  - 어떤 자산을 커스터디할지 결정
+  - 어떤 체인을 1차 지원할지 결정
+  - hot / warm / cold wallet 비율 정의
+  - 내부 자금과 고객 자금의 분리 원칙 정의
+
+- [ ] `OPS-002` 리스크 등급 체계 정의
+  - 소액/중액/고액 출금 구간 정의
+  - 신규 주소, 신규 체인, 신규 자산에 대한 high-risk 기준 정의
+  - 고객 등급별 추가 통제 여부 정의
+
+- [ ] `OPS-003` 권한 모델 정의
+  - requester / approver / signer-operator / finance-operator / auditor / incident-commander 역할 분리
+  - 역할별 가능한 API/화면/운영 액션 목록 정의
+  - 한 사람이 동시에 가질 수 없는 역할 조합 정의
+
+- [ ] `OPS-004` 변경관리 프로세스 정의
+  - 정책 변경, 화이트리스트 변경, signer 교체, RPC provider 추가의 승인 절차 정의
+  - emergency change와 normal change를 구분
+  - 변경 후 rollback 조건 정의
+
+- [ ] `OPS-005` 보관 정책 정의
+  - 거래 이력, 감사 로그, 승인 기록, 운영 로그의 보관 기간 정의
+  - 법무/컴플라이언스 요구사항 반영
+
+### 14.2 Product / Business Rules
+
+- [ ] `PRD-001` 입출금 상태 정의서 작성
+  - 고객에게 노출할 상태와 내부 상태를 분리
+  - `REQUESTED`, `PENDING`, `BROADCASTED`, `CONFIRMED`, `COMPLETED`, `REJECTED`, `MANUAL_REVIEW` 정의
+
+- [ ] `PRD-002` SLA 정의
+  - 출금 접수 후 승인까지 목표 시간
+  - 승인 후 broadcast까지 목표 시간
+  - broadcast 후 chain inclusion까지 목표 시간
+  - 수동 심사 건의 최대 처리 시간
+
+- [ ] `PRD-003` 취소 가능 구간 정의
+  - 요청 접수 후 취소 가능한지
+  - approval 완료 후 취소 가능한지
+  - 서명 이후에는 무조건 불가인지 명시
+
+- [ ] `PRD-004` 고객 통지 정책 정의
+  - 출금 요청 수신, 수동 심사 진입, 승인 완료, 브로드캐스트, 완료 시점 알림 정의
+  - 실패 사유를 고객에게 어느 수준까지 노출할지 정의
+
+### 14.3 Wallet / Treasury Architecture
+
+- [ ] `WAL-001` 지갑 계층 구조 설계
+  - hot, warm, cold wallet 역할 정의
+  - 체인별 운영 지갑 수량 정의
+  - sweep / refill 전략 정의
+
+- [ ] `WAL-002` treasury 운영 정책 정의
+  - hot wallet 최소 잔고
+  - refill 임계치
+  - cold -> warm -> hot 이동 승인 절차
+
+- [ ] `WAL-003` wallet inventory 테이블 설계
+  - wallet_id, chain_type, wallet_tier, address, status, owner_team, created_at
+  - 사용 중지, rotation 예정, 폐기 상태 정의
+
+- [ ] `WAL-004` 주소 생성/등록 절차 정의
+  - 새 운영 주소 발급 절차
+  - 서명 키와 주소 매핑 검증
+  - 등록 후 health check 및 소액 송금 검증
+
+### 14.4 Key Management / HSM / Signer
+
+- [ ] `KEY-001` signer 배치 모델 정의
+  - self-hosted signer인지
+  - HSM/KMS 기반인지
+  - MPC를 사용할지 결정
+
+- [ ] `KEY-002` 키 생명주기 정의
+  - 생성
+  - 활성화
+  - 회전
+  - 폐기
+  - 사고 시 비상 폐기
+
+- [ ] `KEY-003` signer 입력 계약 고정
+  - `request_id`
+  - `withdrawal_id`
+  - `attempt_id`
+  - `chain_id`
+  - `from_address`
+  - `to_address`
+  - `asset`
+  - `amount`
+  - `nonce`
+  - `deadline`
+  - `policy_decision_id`
+  - `approval_bundle_id`
+  - `authorization_digest`
+
+- [ ] `KEY-004` signer 재검증 규칙 구현
+  - approval payload와 sign payload 일치 검증
+  - chain_id mismatch 거부
+  - deadline 초과 거부
+  - 이미 사용된 request_id 재사용 거부
+
+- [ ] `KEY-005` signer 감사 로그 저장
+  - 누가 어떤 request_id를 서명했는지 기록
+  - 서명 요청 원문 digest 저장
+  - 거부된 요청도 기록
+
+- [ ] `KEY-006` signer 장애 격리
+  - signer 장애 시 자동 재시도 정책
+  - signer 완전 중단 시 출금 중지 기준
+  - 대체 signer 전환 절차
+
+### 14.5 Approval / Policy / Whitelist
+
+- [ ] `POL-001` 정책 룰 카탈로그 작성
+  - amount limit
+  - destination whitelist
+  - velocity limit
+  - 신규 주소 제한
+  - 체인별 리스크 제한
+  - 운영자 수동 심사 강제 규칙
+
+- [ ] `POL-002` policy versioning 도입
+  - policy snapshot 저장
+  - 언제 어떤 버전이 적용되었는지 기록
+  - 과거 거래 재현 가능성 확보
+
+- [ ] `POL-003` approval matrix 작성
+  - 금액 구간별 필요한 승인자 수 정의
+  - 팀 간 분리 승인 원칙 정의
+  - 야간/주말 승인 예외 정책 정의
+
+- [ ] `POL-004` whitelist lifecycle 운영 문서화
+  - 등록
+  - 승인
+  - hold
+  - 활성화
+  - 회수
+  - 재등록
+
+- [ ] `POL-005` 정책 변경 delay 적용
+  - policy change는 즉시 적용 금지
+  - `PROPOSED -> QUORUM_APPROVED -> DELAYED -> APPLIED`
+  - delay 중 취소/rollback 가능
+
+- [ ] `POL-006` break-glass 정책 정의
+  - emergency allowlist
+  - emergency withdrawal stop
+  - emergency signer disable
+  - 사용 시 사후 감사 필수화
+
+### 14.6 Core Domain / State Machine
+
+- [ ] `DOM-001` `Withdrawal` 상태기계 확정
+  - 상태 전이 허용표 작성
+  - 금지 전이 명시
+  - 수동 개입 가능한 상태 표시
+
+- [ ] `DOM-002` `TxAttempt` 상태기계 확정
+  - `CREATED`
+  - `BROADCASTED`
+  - `INCLUDED`
+  - `FINALIZED`
+  - `REPLACED`
+  - `DROPPED`
+  - `REVERTED`
+  - `FAILED`
+  - `EXPIRED`
+
+- [ ] `DOM-003` canonical attempt 규칙 명시
+  - 같은 withdrawal에 canonical attempt가 하나만 존재하는지 보장
+  - replace/retry 시 canonical 교체 규칙 명시
+
+- [ ] `DOM-004` withdrawal 완료 기준 확정
+  - `INCLUDED`를 완료로 볼지
+  - `SAFE/FINALIZED`만 완료로 볼지
+  - 자산/체인/리스크별 차등 적용할지 정의
+
+### 14.7 Nonce / Concurrency / Idempotency
+
+- [ ] `TX-001` `nonce_reservations` 운영형 구현
+  - `chain_type + from_address + nonce` 유니크 강제
+  - reservation 생성/해제/만료 정책 정의
+  - stuck reservation 복구 잡 추가
+
+- [ ] `TX-002` address 단위 single-writer 전략 구현
+  - 같은 주소에서 동시에 nonce를 잡지 않도록 보장
+  - DB 락 또는 큐 기반 직렬화 선택
+
+- [ ] `TX-003` idempotency 운영 규칙 정의
+  - 키 TTL
+  - 같은 키에 다른 body가 들어오면 conflict
+  - 응답 캐싱 범위 정의
+
+- [ ] `TX-004` retry / replace 기준 정의
+  - 어떤 실패는 retry
+  - 어떤 실패는 replace
+  - 어떤 실패는 수동개입
+
+- [ ] `TX-005` fee bump 정책 정의
+  - base fee/priority fee 상한
+  - 최대 재시도 횟수
+  - 급등 시 중단 기준
+
+### 14.8 Chain Integration / RPC / Finality
+
+- [ ] `CHN-001` 체인별 지원 범위 정의
+  - EVM mainnet/L2
+  - Bitcoin/UTXO
+  - Cosmos
+  - Solana
+  - 각 체인별 지원 단계 구분
+
+- [ ] `CHN-002` provider 전략 정의
+  - primary/secondary/tertiary provider
+  - 공급자별 SLA와 비용 기준
+  - 장애 시 failover 정책
+
+- [ ] `CHN-003` 멀티 RPC quorum 구현
+  - head number quorum
+  - receipt quorum
+  - inconsistent provider 격리
+
+- [ ] `CHN-004` finality policy 구현
+  - 체인별 최소 confirmation 수
+  - SAFE/FINALIZED 판정 기준
+  - 리오그 시 역전 규칙
+
+- [ ] `CHN-005` mempool 관측 전략 정의
+  - tx seen 여부를 얼마나 신뢰할지
+  - provider 간 mempool 차이를 어떻게 처리할지
+
+- [ ] `CHN-006` chain exception taxonomy 확정
+  - `FAILED_SYSTEM`
+  - `FAILED_POLICY`
+  - `FAILED_CHAIN_REJECTED`
+  - `REPLACED`
+  - `DROPPED`
+  - `REVERTED`
+  - `RPC_INCONSISTENT`
+  - `EXPIRED`
+
+### 14.9 Ledger / Accounting / Reconciliation
+
+- [ ] `LED-001` ledger 이벤트 사전 정의
+  - `RESERVE`
+  - `RELEASE`
+  - `SETTLE`
+  - `REVERSAL`
+  - `FEE_ACCRUAL`
+
+- [ ] `LED-002` append-only 원장 원칙 강제
+  - update/delete 금지
+  - reversal로만 정정
+  - 원장 변경 감사 로그 분리
+
+- [ ] `LED-003` 출금 회계 처리 규칙 정의
+  - reserve 시점
+  - settle 시점
+  - 실패/만료/replaced 시 release 여부
+  - 수수료 회계 처리
+
+- [ ] `LED-004` reconciliation 배치 설계
+  - reserve without settle 탐지
+  - settle without chain finality 탐지
+  - chain success but no ledger 탐지
+  - ledger settled but tx missing 탐지
+
+- [ ] `LED-005` finance operator 큐 설계
+  - 대사 불일치 건 수동 처리 큐
+  - 처리자, 처리시각, 처리사유, 재발방지 메모 저장
+
+### 14.10 Security / Infra / Platform
+
+- [ ] `SEC-001` 비밀정보 관리 체계 구축
+  - private key 직접 환경변수 주입 금지
+  - secret manager/KMS 사용
+  - 운영/개발 비밀 분리
+
+- [ ] `SEC-002` 네트워크 분리
+  - signer 네트워크 분리
+  - admin API 접근 제어
+  - bastion 또는 zero trust 경유
+
+- [ ] `SEC-003` 관리자 인증 강화
+  - SSO
+  - MFA
+  - IP 제한
+  - 세션 만료 정책
+
+- [ ] `SEC-004` DB 보안
+  - at-rest encryption
+  - backup encryption
+  - PITR
+  - schema migration 승인 절차
+
+- [ ] `SEC-005` 공급망 보안
+  - dependency scan
+  - container image scan
+  - build provenance
+  - 배포 artifact 서명
+
+### 14.11 SRE / Monitoring / Alerting
+
+- [ ] `SRE-001` 표준 로그 필드 확정
+  - `correlation_id`
+  - `withdrawal_id`
+  - `attempt_id`
+  - `idempotency_key`
+  - `nonce_key`
+  - `tx_hash`
+  - `policy_decision_id`
+  - `approval_task_id`
+
+- [ ] `SRE-002` 핵심 메트릭 확정
+  - approval latency
+  - broadcast latency
+  - inclusion latency
+  - finalization latency
+  - reserve without settle count
+  - dropped/replaced/reverted count
+  - provider mismatch rate
+
+- [ ] `SRE-003` 알람 기준 정의
+  - 고액 출금 대기 시간 초과
+  - provider quorum 실패
+  - signer unavailable
+  - reserve without settle 증가
+  - reconciliation mismatch 발생
+
+- [ ] `SRE-004` 대시보드 구성
+  - 출금 funnel
+  - attempt 상태 분포
+  - provider health
+  - whitelist pending queue
+  - approval backlog
+
+- [ ] `SRE-005` capacity plan 작성
+  - QPS
+  - peak hour
+  - provider 호출량
+  - DB write/read 부하
+
+### 14.12 Operations / Runbook / Incident Response
+
+- [ ] `RUN-001` 예외 6종 런북 작성
+  - `FAILED`
+  - `EXPIRED`
+  - `DROPPED`
+  - `REPLACED`
+  - `REVERTED`
+  - `RPC_INCONSISTENT`
+
+- [ ] `RUN-002` incident severity 체계 정의
+  - Sev1: 잘못된 출금 또는 잠재적 자금 손실
+  - Sev2: 출금 중단 또는 대규모 지연
+  - Sev3: 부분 기능 장애
+
+- [ ] `RUN-003` 출금 중지 스위치 구현
+  - 전체 중지
+  - 체인별 중지
+  - 자산별 중지
+  - 고위험 출금만 중지
+
+- [ ] `RUN-004` signer compromise 대응 절차 작성
+  - 즉시 출금 중지
+  - 신규 signer 로테이션
+  - whitelist/policy 재검토
+  - 고객 공지 초안
+
+- [ ] `RUN-005` chain reorg 대응 절차 작성
+  - included -> dropped/reverted 역전 시 처리 규칙
+  - ledger reversal 규칙
+  - 고객 상태 수정 규칙
+
+- [ ] `RUN-006` provider outage 대응 절차 작성
+  - provider 강등
+  - write 중지 여부 판단
+  - 수동 승인 모드 전환
+
+### 14.13 Audit / Compliance / Legal
+
+- [ ] `AUD-001` 감사 추적성 정의
+  - "누가 요청했고, 누가 승인했고, 누가 서명했고, 어떤 정책이 적용되었는가"를 한 건 기준으로 재구성 가능해야 함
+
+- [ ] `AUD-002` immutable audit trail 저장 전략 수립
+  - DB 감사 로그
+  - object storage 보관
+  - tamper-evidence 전략
+
+- [ ] `AUD-003` 정기 접근권한 리뷰
+  - 관리자 계정 분기별 리뷰
+  - 퇴사자/직무변경자 회수 절차
+
+- [ ] `AUD-004` 법무/컴플라이언스 요구사항 매핑
+  - 국가별 보관기간
+  - 출금 거절 사유 기록 요건
+  - 고객 자금 분리 원칙
+
+### 14.14 QA / Simulation / Drill
+
+- [ ] `QA-001` 시뮬레이션 시나리오 확장
+  - 정상 출금
+  - 승인 지연
+  - signer timeout
+  - provider mismatch
+  - reorg
+  - dropped tx
+  - replace storm
+
+- [ ] `QA-002` 운영 리허설 수행
+  - 주간 출금 중지 훈련
+  - signer failover 훈련
+  - reconciliation mismatch 훈련
+
+- [ ] `QA-003` chaos test 도입
+  - provider 1개 장애
+  - provider 2개 불일치
+  - DB failover
+  - signer latency 급증
+
+- [ ] `QA-004` 출시 게이트 정의
+  - P0 보안 이슈 0건
+  - Sev1/Sev2 런북 완성
+  - 주요 체인에 대한 dry-run 완료
+  - 감사 로그 재구성 테스트 통과
+
+### 14.15 추천 실행 순서
+
+실제 운영 전환은 아래 순서가 가장 현실적이다.
+
+1. `Governance + 권한모델 + 정책 기준` 먼저 확정
+2. `Nonce / Approval / Signer / Ledger` 같은 자금통제 핵심 구현
+3. `멀티 RPC / finality / reconciliation` 같은 체인 불확실성 대응 구현
+4. `런북 / 알람 / incident drill` 준비
+5. `제한된 자산/체인/고객군`으로 pilot 운영
+6. pilot 결과를 반영해 production 확대
+
+### 14.16 운영 시작 전 최종 Go-Live Gate
+
+- [ ] 승인 없이 서명되는 경로가 0개인가
+- [ ] `(chain, from, nonce)` 중복이 구조적으로 불가능한가
+- [ ] reserve without settle를 탐지하고 처리할 수 있는가
+- [ ] provider 불일치 시 write 중지 또는 강등 운용이 가능한가
+- [ ] signer 장애 시 수동/대체 절차가 문서화되어 있는가
+- [ ] 잘못된 출금이 발생했을 때 30분 내 상황 파악이 가능한가
+- [ ] 감사인이 특정 출금 1건의 전체 이력을 재구성할 수 있는가
+- [ ] hot wallet 잔고/리필/중지 정책이 정의되어 있는가
+- [ ] 운영자 교체/퇴사 시 권한 회수 절차가 자동화되어 있는가
+- [ ] 출시 후 첫 2주 동안 daily review 항목이 정의되어 있는가
+
+## 15. 운영형 실행 우선순위 재정렬 + 팀 소유자
+
+아래 표는 14장의 상세 TODO를 실제 실행 순서 기준으로 다시 묶은 것이다.
+
+소유팀 정의:
+
+- `ENG`: 애플리케이션/데이터/플랫폼 엔지니어링
+- `SEC`: 보안/키관리/접근통제
+- `OPS`: 운영/SRE/온콜/런북
+- `FIN`: 재무/원장/대사/정산 운영
+
+### 15.1 P0: 운영 시작 전 반드시 막아야 하는 항목
+
+P0는 "잘못된 출금 방지", "중복 출금 방지", "승인 없는 서명 방지", "사고 시 즉시 중지 가능"에 직결되는 항목이다.
+
+| Priority | ID | 항목 | 주 소유팀 | 보조팀 | 완료 기준 |
+|---|---|---|---|---|---|
+| P0 | `OPS-001` | 서비스 범위/자산/체인/hot-warm-cold 범위 확정 | OPS | ENG, FIN | 지원 자산/체인과 운영 범위가 문서로 고정됨 |
+| P0 | `OPS-002` | 리스크 등급 체계 정의 | OPS | FIN, SEC | 소액/중액/고액 및 high-risk 기준이 승인됨 |
+| P0 | `OPS-003` | 권한 모델 정의 | SEC | OPS, ENG | requester/approver/signer/auditor 역할 분리 완료 |
+| P0 | `OPS-004` | 정책/화이트리스트/서명기 변경관리 절차 정의 | OPS | SEC, ENG | normal/emergency change 절차와 rollback 기준 확정 |
+| P0 | `WAL-001` | 지갑 계층 구조 설계 | OPS | FIN, SEC | hot/warm/cold 지갑 역할과 이동 경로가 정의됨 |
+| P0 | `WAL-002` | hot wallet 최소 잔고/리필 정책 정의 | FIN | OPS, ENG | refill threshold와 승인 절차 문서화 완료 |
+| P0 | `KEY-001` | signer/HSM/MPC 운영 모델 확정 | SEC | ENG, OPS | 운영 signer 구조가 확정되고 승인됨 |
+| P0 | `KEY-002` | 키 생명주기 정의 | SEC | OPS | 생성/활성/회전/폐기/비상폐기 절차 확정 |
+| P0 | `KEY-003` | signer 입력 계약 고정 | ENG | SEC | signer 요청 스키마가 문서와 코드로 고정됨 |
+| P0 | `KEY-004` | signer 재검증 규칙 구현 | ENG | SEC | approval/policy mismatch, deadline 초과, replay 거부 |
+| P0 | `POL-001` | 정책 룰 카탈로그 작성 | OPS | FIN, SEC, ENG | 금액/화이트리스트/velocity/manual review 기준 확정 |
+| P0 | `POL-003` | approval matrix 작성 | OPS | FIN, SEC | 금액 구간별 승인자 수와 분리승인 규칙 확정 |
+| P0 | `POL-004` | whitelist lifecycle 운영 정의 | OPS | SEC | 등록/승인/보류/활성/회수 절차 확정 |
+| P0 | `POL-006` | break-glass 정책 정의 | SEC | OPS | emergency allow/stop/signer disable 절차 승인 |
+| P0 | `DOM-001` | Withdrawal 상태기계 확정 | ENG | OPS | 허용/금지 전이표와 수동 개입 구간 문서화 |
+| P0 | `DOM-002` | TxAttempt 상태기계 확정 | ENG | OPS | replace/dropped/reverted/failed 상태 정의 확정 |
+| P0 | `DOM-003` | canonical attempt 규칙 확정 | ENG | OPS | canonical attempt 1개 규칙이 코드/DB로 보장됨 |
+| P0 | `TX-001` | `nonce_reservations` 운영형 구현 | ENG | OPS | `(chain, from, nonce)` 유니크와 만료/복구 규칙 구현 |
+| P0 | `TX-002` | address 단위 single-writer 구현 | ENG | OPS | 동일 주소 동시 nonce 경쟁이 구조적으로 차단됨 |
+| P0 | `TX-003` | idempotency 운영 규칙 확정 | ENG | OPS | 동일 키 재요청/충돌/TTL 정책이 구현됨 |
+| P0 | `TX-004` | retry/replace/수동개입 기준 정의 | OPS | ENG | 실패 유형별 자동/수동 처리 기준표 확정 |
+| P0 | `LED-001` | ledger 이벤트 사전 정의 | FIN | ENG, OPS | RESERVE/RELEASE/SETTLE/REVERSAL/FEE_ACCRUAL 정의 확정 |
+| P0 | `LED-002` | append-only 원장 원칙 강제 | ENG | FIN | 원장 update/delete 금지와 reversal-only 정정 구현 |
+| P0 | `LED-003` | 출금 회계 처리 규칙 정의 | FIN | OPS, ENG | reserve/settle/release 시점과 수수료 규칙 확정 |
+| P0 | `SEC-001` | 비밀정보 관리 체계 구축 | SEC | ENG | private key 환경변수 직접 주입 금지, secret manager 적용 |
+| P0 | `SEC-003` | 관리자 인증 강화 | SEC | ENG, OPS | SSO/MFA/IP 제한이 운영 경로에 적용됨 |
+| P0 | `SRE-001` | 표준 로그 필드 확정 | OPS | ENG | correlation/withdrawal/attempt/nonce/tx 추적 가능 |
+| P0 | `SRE-003` | 치명 알람 기준 정의 | OPS | ENG, FIN | signer down, provider quorum fail, reserve-settle mismatch 알람 설정 |
+| P0 | `RUN-001` | 예외 6종 런북 작성 | OPS | ENG, FIN | FAILED/EXPIRED/DROPPED/REPLACED/REVERTED/RPC_INCONSISTENT 런북 완료 |
+| P0 | `RUN-003` | 출금 중지 스위치 구현 | ENG | OPS, SEC | 전체/체인별/자산별/고위험 중지 가능 |
+| P0 | `RUN-004` | signer compromise 대응 절차 작성 | SEC | OPS, ENG | 키 유출 가정 사고 절차와 공지 초안 완성 |
+| P0 | `AUD-001` | 감사 추적성 정의 | OPS | SEC, FIN, ENG | 1건 출금을 end-to-end 재구성 가능한 항목 확정 |
+| P0 | `QA-004` | 출시 게이트 정의 | OPS | ENG, SEC, FIN | go-live 승인 조건이 체크리스트로 고정됨 |
+
+### 15.2 P1: 운영 안정화와 대규모 사고 방지
+
+P1은 "운영은 되지만 아직 불안한 상태"를 넘어서, provider 불일치/최종성/대사 불일치에 버티게 만드는 항목이다.
+
+| Priority | ID | 항목 | 주 소유팀 | 보조팀 | 완료 기준 |
+|---|---|---|---|---|---|
+| P1 | `PRD-001` | 고객 노출 상태 vs 내부 상태 분리 | OPS | ENG | 외부 상태 모델과 내부 상태 모델이 분리됨 |
+| P1 | `PRD-002` | SLA 정의 | OPS | FIN | approval/broadcast/finalization SLA 합의 |
+| P1 | `PRD-004` | 고객 통지 정책 정의 | OPS | FIN, ENG | 상태 변화와 실패 시 고객 통지 규칙 확정 |
+| P1 | `WAL-003` | wallet inventory 테이블 설계 | ENG | OPS, FIN | 운영 주소 inventory 관리 가능 |
+| P1 | `WAL-004` | 주소 생성/등록 절차 정의 | OPS | SEC | 신규 주소 발급/검증 절차 확정 |
+| P1 | `KEY-005` | signer 감사 로그 저장 | ENG | SEC | signer request/reject/sign 기록 저장 |
+| P1 | `KEY-006` | signer 장애 격리/대체 signer 전환 | SEC | OPS, ENG | signer failover 절차 구현 |
+| P1 | `POL-002` | policy versioning 도입 | ENG | OPS | policy snapshot과 버전 이력 저장 |
+| P1 | `POL-005` | 정책 변경 delay 적용 | ENG | OPS, SEC | `PROPOSED -> QUORUM_APPROVED -> DELAYED -> APPLIED` 구현 |
+| P1 | `DOM-004` | withdrawal 완료 기준 확정 | OPS | ENG, FIN | chain/asset/risk tier별 completion 기준 합의 |
+| P1 | `TX-005` | fee bump 정책 정의 | OPS | FIN, ENG | 최대 bump, 재시도 횟수, 중단 기준 정의 |
+| P1 | `CHN-002` | provider 전략 정의 | OPS | ENG | primary/secondary/tertiary provider 정책 수립 |
+| P1 | `CHN-003` | 멀티 RPC quorum 구현 | ENG | OPS | head/receipt quorum 및 inconsistent provider 격리 구현 |
+| P1 | `CHN-004` | finality policy 구현 | ENG | OPS, FIN | 체인/리스크별 SAFE/FINALIZED 기준 구현 |
+| P1 | `CHN-005` | mempool 관측 전략 정의 | OPS | ENG | mempool 신뢰도와 처리 정책 정의 |
+| P1 | `CHN-006` | chain exception taxonomy 확정 | OPS | ENG | chain 예외 유형과 후속 액션 기준 확정 |
+| P1 | `LED-004` | reconciliation 배치 설계 | FIN | ENG, OPS | reserve-settle-chain mismatch 탐지 배치 구현 |
+| P1 | `LED-005` | finance operator 큐 설계 | FIN | OPS, ENG | 대사 불일치 수동 처리 큐 구축 |
+| P1 | `SEC-002` | 네트워크 분리 | SEC | ENG | signer/admin 경로 분리 및 bastion/zero trust 적용 |
+| P1 | `SEC-004` | DB 보안 | SEC | ENG | backup encryption, PITR, migration 승인 절차 적용 |
+| P1 | `SRE-002` | 핵심 메트릭 확정 | OPS | ENG, FIN | approval/broadcast/inclusion/finalization/대사 메트릭 확정 |
+| P1 | `SRE-004` | 운영 대시보드 구성 | OPS | ENG, FIN | provider health, approval backlog, reserve-settle 대시보드 운영 |
+| P1 | `RUN-002` | incident severity 체계 정의 | OPS | SEC, ENG | Sev1/2/3 정의와 호출 체계 확정 |
+| P1 | `RUN-005` | chain reorg 대응 절차 | OPS | ENG, FIN | reorg 시 고객 상태/원장 reversal 규칙 문서화 |
+| P1 | `RUN-006` | provider outage 대응 절차 | OPS | ENG | provider 강등 및 write stop 기준 확정 |
+| P1 | `AUD-002` | immutable audit trail 저장 전략 | SEC | ENG, OPS | tamper-evident audit 저장 전략 수립 |
+| P1 | `AUD-004` | 법무/컴플라이언스 요구사항 매핑 | OPS | FIN, SEC | 보관기간/거절사유/자금분리 요구사항 반영 |
+| P1 | `QA-001` | 시뮬레이션 시나리오 확장 | ENG | OPS | provider mismatch/reorg/dropped/replace storm 시뮬레이션 가능 |
+| P1 | `QA-002` | 운영 리허설 수행 | OPS | ENG, SEC, FIN | signer failover/withdrawal stop/reconciliation mismatch 훈련 완료 |
+
+### 15.3 P2: 확장성, 효율화, 감사 고도화
+
+P2는 운영이 가능한 상태를 넘어서, 규모 확장과 장기 운영 효율을 위한 항목이다.
+
+| Priority | ID | 항목 | 주 소유팀 | 보조팀 | 완료 기준 |
+|---|---|---|---|---|---|
+| P2 | `PRD-003` | 취소 가능 구간 정의 | OPS | ENG | 취소 허용 구간과 UI/API 반영 |
+| P2 | `CHN-001` | 체인별 지원 범위 확장 | OPS | ENG | EVM 외 체인 지원 단계 로드맵 확정 |
+| P2 | `SEC-005` | 공급망 보안 | SEC | ENG | dependency/image/build provenance 통제 적용 |
+| P2 | `SRE-005` | capacity plan 작성 | OPS | ENG, FIN | peak traffic/DB/provider 호출량 계획 수립 |
+| P2 | `AUD-003` | 정기 접근권한 리뷰 | SEC | OPS | 분기별 access review 자동화 |
+| P2 | `QA-003` | chaos test 도입 | ENG | OPS | provider/DB/signer 장애 chaos test 운영 |
+| P2 | `OPS-005` | 로그/승인/감사 보관 정책 확정 | OPS | SEC, FIN | 보관기간과 파기정책 확정 |
+
+### 15.4 팀별 1차 책임 범위
+
+#### Engineering
+
+- `KEY-003`, `KEY-004`
+- `DOM-001`, `DOM-002`, `DOM-003`
+- `TX-001`, `TX-002`, `TX-003`
+- `LED-002`
+- `RUN-003`
+- `CHN-003`, `CHN-004`
+- `POL-005`
+
+#### Security
+
+- `OPS-003`
+- `KEY-001`, `KEY-002`
+- `POL-006`
+- `SEC-001`, `SEC-002`, `SEC-003`, `SEC-004`, `SEC-005`
+- `RUN-004`
+- `AUD-002`, `AUD-003`
+
+#### Operations
+
+- `OPS-001`, `OPS-002`, `OPS-004`
+- `POL-001`, `POL-003`, `POL-004`
+- `TX-004`, `TX-005`
+- `CHN-002`, `CHN-005`, `CHN-006`
+- `SRE-001`, `SRE-002`, `SRE-003`, `SRE-004`, `SRE-005`
+- `RUN-001`, `RUN-002`, `RUN-005`, `RUN-006`
+- `QA-002`, `QA-004`
+
+#### Finance
+
+- `WAL-002`
+- `LED-001`, `LED-003`, `LED-004`, `LED-005`
+- `PRD-002`
+- `AUD-004`
+
+### 15.5 추천 첫 6주 실행안
+
+#### Week 1-2
+
+- `OPS-001`, `OPS-002`, `OPS-003`, `POL-001`, `POL-003`
+- `KEY-001`, `KEY-003`
+- `DOM-001`, `DOM-002`
+- `TX-001`, `TX-002`, `TX-003`
+
+#### Week 3-4
+
+- `KEY-004`, `POL-004`, `POL-006`
+- `LED-001`, `LED-002`, `LED-003`
+- `SEC-001`, `SEC-003`
+- `SRE-001`, `SRE-003`
+- `RUN-001`, `RUN-003`, `RUN-004`
+
+#### Week 5-6
+
+- `CHN-002`, `CHN-003`, `CHN-004`
+- `LED-004`, `LED-005`
+- `SRE-002`, `SRE-004`
+- `RUN-005`, `RUN-006`
+- `QA-001`, `QA-002`
+
+### 15.6 P0 승인 기준
+
+P0가 끝났다고 말하려면 최소 아래가 충족돼야 한다.
+
+- 승인 없이 서명되는 경로가 없어야 한다.
+- 동일 `(chain, from, nonce)` 중복 출금이 구조적으로 불가능해야 한다.
+- 고액 출금은 무조건 human-in-the-loop를 거쳐야 한다.
+- ledger는 append-only로 기록돼야 한다.
+- signer compromise와 provider outage에 대한 중지 절차가 문서화돼 있어야 한다.
+- 운영자가 로그와 DB만으로 1건 출금의 전체 이력을 추적할 수 있어야 한다.
