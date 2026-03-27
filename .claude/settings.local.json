@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /f/Workplace -type f \\\\\\( -iname \"*brand*\" -o -iname \"*guideline*\" -o -iname \"*style*\" -o -iname \"*design*\" \\\\\\) 2>/dev/null | grep -v node_modules | grep -v \".git\" | head -100)"
+    ]
+  }
+}
