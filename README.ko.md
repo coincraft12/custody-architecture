@@ -1,0 +1,1654 @@
+# custody-architecture
+
+## 0) 이 프로젝트의 목표
+이 프로젝트는 출금(Withdrawal) 오케스트레이션을 중심으로, 커스터디 시스템의 핵심 흐름(정책 검증, 멱등성, 시도/재시도/대체, 체인 어댑터 연동, 감사 로그)을 실습하고 검증하기 위한 학습용 아키텍처 프로젝트입니다.
+
+코드를 모두 읽지 않아도 API 호출과 시나리오 실행만으로 위 흐름을 단계별로 확인할 수 있도록 구성했습니다.
+
+주의: 기본 설정은 목(Mock) 모드입니다. 별도 RPC 설정을 하지 않으면(예: `CUSTODY_CHAIN_MODE`가 `mock`일 때) 서버는 목 어댑터를 사용해 네트워크 없이 동작합니다. 실제 체인 RPC를 사용하려면 `CUSTODY_CHAIN_MODE`를 `rpc`로 설정하고, RPC 관련 세부 설정(RPC URL, 체인 ID, 개인키 등)을 애플리케이션 설정(`application.yml` 또는 환경변수)에서 구성하세요.  
+
+---
+
+## 1) 실습 전체 지도
+
+### 실습 1 — Policy Engine + Audit
+
+- 금액 제한
+- 수신 주소 화이트리스트
+- 허용/거절 근거를 감사 로그(`policy-audits`)로 확인
+
+### 실습 2 — Withdrawal + 멱등성
+
+- `POST /withdrawals`는 DB 저장 + 실제 RPC 브로드캐스트까지 수행
+- 동일 `Idempotency-Key` 재호출 시 재브로드캐스트 없이 기존 canonical `txHash` 유지
+- `GET /evm/tx/{txHash}/wait`로 포함 여부 확인
+
+### 실습 3 — Retry / Replace (실체인 규칙)
+
+- `POST /withdrawals/{id}/retry`: 새 nonce로 새 attempt 브로드캐스트
+- `POST /withdrawals/{id}/replace`: 같은 nonce fee bump로 canonical 교체
+- `GET /withdrawals/{id}/attempts`로 누적/전환 확인
+
+### 실습 4 — Chain Adapter + EVM RPC(Sepolia/Hoodi) 연동
+
+- `custody.chain.mode=rpc`일 때 EVM adapter는 실제 RPC(Sepolia/Hoodi)에 EIP-1559 타입2 서명 트랜잭션(`eth_sendRawTransaction`)을 전송
+- BFT adapter는 기존 mock 흐름 유지
+- 오케스트레이터는 체인별 세부사항을 몰라도 동일한 호출 형태 유지
+
+### 실습 6 — 화이트리스트 주소 등록 + 48h 보류 워크플로우
+
+- `POST /whitelist`로 출금 허용 주소 등록 → `REGISTERED`
+- `POST /whitelist/{id}/approve`로 승인 → `HOLDING` (48h 보류 타이머 시작)
+- 48h 경과 후 스케줄러가 자동으로 `ACTIVE` 전환
+- `ACTIVE` 아닌 주소로 출금 시도 시 `W0_POLICY_REJECTED` 확인
+- `POST /whitelist/{id}/revoke`로 취소 → `REVOKED` (즉시 출금 차단)
+
+### 실습 7 — Withdrawal 상태머신 W1→W10 완성
+
+- 출금 생성 시 `W0 → W1 → W3 → W4 → W5 → W6` 전환 확인
+- `/sim/confirm`으로 온체인 포함 시뮬레이션 → `W7_INCLUDED`
+- `/sim/finalize`로 최종 확정 시뮬레이션 → `W8 → W9 → W10_COMPLETED`
+- `GET /withdrawals/{id}/ledger`로 원장 기록(RESERVE, SETTLE) 확인
+
+---
+
+## 2) 환경 설정
+
+- Java 21+
+- Gradle Wrapper (`./gradlew`)
+
+H2 Console
+
+- URL: `http://localhost:8080/h2`
+- JDBC URL: `jdbc:h2:mem:testdb`
+- username: `sa`
+- password: 빈 값
+
+---
+
+## 3) 시작
+
+### 소스코드 다운로드
+
+```bash
+git clone https://github.com/coincraft12/custody-architecture.git
+```
+
+### 프로젝트 빌드
+
+```bash
+cd custody-architecture/custody
+./gradlew build clean
+```
+
+### RPC 연결
+
+```powershell
+$env:CUSTODY_CHAIN_MODE = "rpc"
+$env:CUSTODY_EVM_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com"
+$env:CUSTODY_EVM_CHAIN_ID = "11155111"
+$env:CUSTODY_EVM_PRIVATE_KEY = "<YOUR_SEPOLIA_PRIVATE_KEY>"
+```
+
+주의: RPC 모드에서 사용하는 RPC URL, 체인 ID, 개인키 등의 세부 구성은 `application.yml` 또는 환경변수로 제공합니다. 개인키는 테스트용 지갑만 사용하세요. 절대 운영/실지갑 키를 사용하지 마세요.
+
+### 서버 실행
+
+```bash
+./gradlew bootRun
+```
+
+※ 반드시 서버 실행 전 먼저 환경 변수를 입력하세요. 만약 서버 실행 중 환경 변수의 값이 변경되었다면 서버를 재실행해 주세요.
+
+수강용 팁: 브로드캐스트 이후 `INCLUDED` 전이를 수동으로 설명/시연하려면 자동 Confirmation Tracker를 끄고 시작하세요.
+
+```powershell
+$env:CUSTODY_CONFIRMATION_TRACKER_AUTO_START = "false"
+```
+
+### 실습용 공통 변수 입력
+
+```powershell
+$BASE_URL = "http://localhost:8080"
+$CID_PREFIX = "lab"
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+$to   = "0x1111111111111111111111111111111111111111"
+```
+
+권장: 실습 중 로그 추적이 필요한 API 호출에는 `X-Correlation-Id` 헤더를 함께 보내세요. (필수는 아니며, 미전달 시 서버가 자동 생성합니다.)
+
+### RPC 정상 연결 확인
+
+```powershell
+Invoke-RestMethod -Uri "$BASE_URL/evm/wallet"
+```
+
+결과
+
+```powershell
+mode       : rpc
+chainId    : 11155111
+rpc        : https://ethereum-sepolia-rpc.publicnode.com
+address    : 0x740161186057d3a948a1c16f1978937dca269070
+balanceWei : 1587757348527098995
+balanceEth : 1.587757348527098995
+```
+
+---
+
+## 5) 실습 1 — Policy + Audit
+
+기본 정책 (`src/main/resources/application.yaml`)
+
+- `policy.max-amount: 0.1`
+- `policy.whitelist-to-addresses: 0xto,0xtrusted, 0x1111111111111111111111111111111111111111`
+
+> 참고: 화이트리스트는 이제 DB 기반(`whitelist_addresses` 테이블)으로 동작합니다.
+> 위 `policy.whitelist-to-addresses` 주소들은 서버 시작 시 자동으로 `ACTIVE` 상태로 시드되어 기존 실습과 동일하게 동작합니다.
+> 새 주소를 허용하려면 실습 6의 `POST /whitelist` → `approve` → (48h 대기 또는 테스트에서 스케줄러 수동 실행) 워크플로우를 사용하세요.
+
+### 5-1. 허용 케이스
+
+```powershell
+$w    = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ 
+    "Content-Type"   = "application/json"
+    "Idempotency-Key" = "idem-lab5-allow-1"
+    "X-Correlation-Id" = "$CID_PREFIX-lab5-allow-001"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $to
+    asset       = "ETH"
+    amount      = 0.00001
+  } | ConvertTo-Json -Depth 10)
+  $w
+
+```
+
+기대 결과
+
+- `status = W6_BROADCASTED`
+
+### 5-2. 화이트리스트 거절 케이스
+
+```powershell
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ 
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab4-reject-whitelist-1"
+    "X-Correlation-Id" = "$CID_PREFIX-lab5-reject-whitelist-001"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = "0x2222222222222222222222222222222222222222"
+    asset       = "USDC"
+    amount      = 0.00001
+  } | ConvertTo-Json -Depth 10)
+  $w
+
+```
+
+기대 결과
+
+- `status = W0_POLICY_REJECTED`
+- 이후 audit 조회:
+
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/policy-audits"
+```
+
+예상 reason
+
+- `TO_ADDRESS_NOT_WHITELISTED: 0xnot-allowed`
+
+### 5-3. 금액 초과 거절 케이스
+
+```powershell
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{ 
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab4-reject-amount-1"
+    "X-Correlation-Id" = "$CID_PREFIX-lab5-reject-amount-001"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $to
+    asset       = "USDC"
+    amount      = 0.2   # 정책 한도 초과 값
+  } | ConvertTo-Json -Depth 10)
+  $w
+
+```
+
+기대 결과
+
+- `status = W0_POLICY_REJECTED`
+- audit reason:
+  - `AMOUNT_LIMIT_EXCEEDED: max=0.1, requested=0.2`
+
+
+## 6) 실습 2 — 멱등성 + 초기 Attempt 생성
+
+실습 2 동시성 멱등성 점검
+
+### 목표
+
+- 동시 요청에서도 동일 `Idempotency-Key`가 1개의 Withdrawal만 생성하는지 확인
+- 결과적으로 attempt가 불필요하게 증가하지 않는지 확인
+
+### 6-1. Withdrawal 생성
+
+```powershell
+$idemp = "idem-lab1-2"
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp; "X-Correlation-Id"="$CID_PREFIX-lab6-create-001" } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = $from
+toAddress   = $to
+asset       = "ETH"
+amount      = 0.001  # eth
+} | ConvertTo-Json)
+$w
+
+```
+
+예시 결과
+
+```powershell
+id             : 4d540b1e-281e-43d9-87b6-992042214893
+idempotencyKey : idem-lab1-1
+fromAddress    : 0x740161186057d3a948a1c16f1978937dca269070
+toAddress      : 0x1111111111111111111111111111111111111111
+asset          : ETH
+amount         : 1000000000000
+status         : W6_BROADCASTED
+createdAt      : 2026-02-21T16:31:17.649081Z
+updatedAt      : 2026-02-21T16:31:18.901122Z
+chainType      : EVM
+```
+
+### 6-2. 같은 키 + 같은 바디 재요청
+
+```powershell
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp; "X-Correlation-Id"="$CID_PREFIX-lab6-replay-001" } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = $from
+toAddress   = $to
+asset       = "ETH"
+amount      = 0.001
+} | ConvertTo-Json)
+$w
+```
+
+기대 결과
+
+- 첫 요청과 **같은 withdrawal id** 반환
+
+### 6-3. Attempt 목록 확인
+
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
+```
+
+기대 결과
+
+```powershell
+id                   : 4a7b8db4-17dd-430c-8095-ddbb850c75b5
+withdrawalId         : 4d540b1e-281e-43d9-87b6-992042214893
+attemptNo            : 1
+fromAddress          : 0x740161186057d3a948a1c16f1978937dca269070
+nonce                : 41
+attemptGroupKey      : 0x740161186057d3a948a1c16f1978937dca269070:41
+txHash               : 0x180b8e21f3dc5eddef1379b523cc69eba7047e6a15941e45a74d3ff3f09be16a
+maxPriorityFeePerGas :
+maxFeePerGas         :
+status               : BROADCASTED
+canonical            : True
+exceptionType        :
+exceptionDetail      :
+createdAt            : 2026-02-21T16:31:18.100507Z
+```
+
+> 참고: `attemptCount = 0`이면 해당 withdrawal은 아직 브로드캐스트 시도가 없다는 뜻입니다
+> (예: policy rejected된 건).
+
+### 6-4. 같은 키 + 다른 바디(충돌)
+
+```powershell
+$idemp = "idem-lab1-2"
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp; "X-Correlation-Id"="$CID_PREFIX-lab6-conflict-001" } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = $from
+toAddress   = $to
+asset       = "ETH"
+amount      = 0.0001  #수량 변경
+} | ConvertTo-Json)
+
+```
+
+기대 결과
+
+- HTTP 409
+- 메시지: `same Idempotency-Key cannot be used with a different request body`
+
+### 6-5. 동시 요청 실행 (PowerShell)
+
+```powershell
+$idemp   = "idem-concurrency-2"   # 동일 멱등키 고정
+$jobs = 1..5 | ForEach-Object {
+  Start-Job -ScriptBlock {
+    param($BASE_URL, $from, $to, $idemp)
+
+    try {
+      $cid = "lab6-concurrency-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+      Invoke-RestMethod -Method POST `
+        -Uri "$BASE_URL/withdrawals" `
+        -Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp; "X-Correlation-Id"=$cid } `
+        -Body (@{
+          chainType="EVM"; fromAddress=$from; toAddress=$to; asset="USDC"; amount=0.00001
+        } | ConvertTo-Json -Depth 10)
+    } catch {
+      $r = $_.Exception.Response
+      $sr = New-Object System.IO.StreamReader($r.GetResponseStream())
+      $sr.ReadToEnd()
+    }
+  } -ArgumentList $BASE_URL, $from, $to, $idemp
+}
+
+$jobs | Receive-Job -Wait -AutoRemoveJob
+
+
+```
+
+### 6-6. 확인 포인트
+
+- 반환된 `id`가 모두 동일한지
+- `/withdrawals/{id}/attempts`에서 초기 attempt가 1개로 유지되는지
+
+
+---
+
+## 7) 실습 3 — Retry / Replace / Included
+
+### 7-1. Withdrawal 생성
+
+```powershell
+$idemp = "idem-lab3-1"
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{ "Content-Type"="application/json"; "Idempotency-Key"=$idemp; "X-Correlation-Id"="$CID_PREFIX-lab7-create-001" } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = $from
+toAddress   = $to
+asset       = "USDC"
+amount      = 0.0001  # wei
+} | ConvertTo-Json)
+$w
+```
+
+### 7-2. retry 실행 (새 nonce로 재전송)
+
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/retry" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-retry-001" }
+```
+
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
+```
+
+기대 결과
+
+- attempt 2개
+- 이전 attempt: `canonical=false`, `status=FAILED_TIMEOUT`
+- 최신 attempt: `canonical=true` (새 nonce로 broadcast)
+
+### 7-3. replace 실행 (같은 nonce, fee bump)
+
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/replace" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-replace-001" }
+```
+
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/attempts"
+```
+
+기대 결과
+
+- attempt 3개
+- 이전 canonical attempt가 `REPLACED`, `canonical=false`
+- 최신 attempt `canonical=true` (같은 nonce로 교체 전송)
+- 단, retry 이후 이미 해당 nonce가 블록에 포함된 상태라면 replace는 `nonce too low` 상황이므로 안내 메시지와 함께 거절됩니다. 이 경우 새 nonce를 사용하는 retry를 다시 수행하세요.
+- 네트워크 상태에 따라 retry 트랜잭션이 너무 빨리 블록체 포함되는 경우라면 아래와 같이 두개의 트랜잭션을 연달아 실행해 보세요.
+
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/retry" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-retry-002" }
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/replace" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-replace-002" }
+
+```
+
+
+### 7-4. Confirmation Tracker — 영수증(Receipt) 확인 후 Included 전이
+
+설명: 실제 RPC를 통해 영수증(receipt)을 확인하는 백그라운드 트래커(Confirmation Tracker)가 실행될 때,
+영수증이 확인되면 해당 canonical `TxAttempt`와 `Withdrawal`이 자동으로 `INCLUDED` 상태로 전이되는 흐름을 확인합니다.
+
+- Confirmation Tracker는 주기적으로(또는 이벤트 기반) `eth_getTransactionReceipt(txHash)`를 호출해 receipt를 확인합니다.
+
+절차
+
+1. 브로드캐스트된 `txHash`를 확보
+2. Confirmation Tracker가 receipt를 발견하면 내부에서 `attempt.status -> INCLUDED`, `withdrawal.status -> W7_INCLUDED`로 전이
+
+확인 방법
+
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/withdrawals/$($w.id).attempts"
+```
+
+- `status`가 `W7_INCLUDED`인지 확인
+- canonical attempt의 상태가 `INCLUDED`인지 확인
+
+디버깅 / 수동 강제 확인
+
+- txHash에 대해 체인에서 수동으로 receipt를 확인하려면 `GET /evm/tx/{txHash}/wait` 사용
+
+```powershell
+Invoke-RestMethod -Method GET `
+  -Uri "$BASE_URL/evm/tx/{txHash}/wait"
+```
+`GET /evm/tx/{txHash}` 응답 예시(미포함):
+
+```json
+{
+  "txHash": "0x...",
+  "seen": true,
+  "receipt": null
+}
+```
+
+`GET /evm/tx/{txHash}/wait` 응답 예시(타임아웃):
+
+```json
+{
+  "txHash": "0x...",
+  "receipt": null,
+  "timeout": true
+}
+```
+
+- 즉시 영수증 조회 및 수동 동기화: `POST /withdrawals/{withdrawalId}/sync` 호출
+
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals/$($w.id)/sync" `
+  -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-lab7-sync-001" }
+```
+
+운영 주의사항
+
+- Confirmation Tracker는 재시도/replace에 의해 바뀐 canonical에 대해 올바른 txHash를 추적해야 합니다.
+- 다중 체인/네트워크 지연을 고려해 poll 간격과 타임아웃을 적절히 설정하세요.
+
+---
+
+## 8) 실습 4 — ChainAdapter 2종 검증
+
+### 8-1. EVM adapter (Sepolia RPC 실제 호출)
+
+
+```powershell
+
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/adapter-demo/broadcast/evm" `
+  -Headers @{ "Content-Type"="application/json"; "X-Correlation-Id" = "$CID_PREFIX-lab8-evm-broadcast-001" } `
+  -Body (@{
+    from   = $from
+    to     = $to
+    asset  = "ETH"
+    amount = 0.00001
+  } | ConvertTo-Json)
+
+```
+
+기대 결과
+
+- `accepted = true`
+- 설정한 `custody.evm.chain-id`와 RPC의 `eth_chainId`가 일치하는지 확인
+- nonce를 생략하면 서버가 현재 `eth_getTransactionCount(..., "pending")` 값을 조회해 사용
+- 고정 가스값 사용: `gasLimit=21000`, `maxPriorityFee=2 gwei`, `maxFee=20 gwei`
+- `txHash`는 실제 EVM 해시(예: `0x...`)
+
+### 8-2. BFT adapter
+
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/adapter-demo/broadcast/bft" `
+  -Headers @{ "Content-Type"="application/json"; "X-Correlation-Id" = "$CID_PREFIX-lab8-bft-broadcast-001" } `
+  -Body (@{
+    from   = "a"
+    to     = "b"
+    asset  = "TOKEN"
+    amount = 0.00001
+    nonce  = 1
+  } | ConvertTo-Json)
+```
+
+기대 결과
+
+- `accepted = true`
+- `txHash` prefix: `BFT_`
+
+---
+
+목 테스트 (Mock Tests)
+
+설명: 로컬 개발/CI에서 체인 RPC를 직접 호출하지 않고 동작을 확인하려면 목 모드로 테스트를 실행하세요. 목 테스트는 실제 네트워크 연결 없이 내부 mock adapter/fixture를 사용합니다.
+
+방법 (PowerShell 예)
+
+```powershell
+# 1) 간단히: 모드만 mock으로 설정
+$env:CUSTODY_CHAIN_MODE = "mock"
+./gradlew test --tests "**IntegrationTest*"
+
+# 또는 프로파일을 사용한다면(프로젝트에 설정된 경우)
+$env:SPRING_PROFILES_ACTIVE = "labs-mock"
+./gradlew test
+```
+
+주의: 프로젝트의 프로파일/설정은 환경에 따라 다를 수 있습니다. 목 테스트는 네트워크 불안정성의 영향을 받지 않으므로 로컬 개발과 CI에서 빠른 확인용으로 사용하세요.
+
+---
+
+## 9) 실습 5 — Correlation ID + 로그 표준화
+
+목표
+
+- 요청 단위 추적용 `X-Correlation-Id`를 수신/생성하고 응답 헤더로 반환
+- 애플리케이션 로그에 `cid`를 공통 포맷으로 출력
+- 컨트롤러/핵심 서비스 로그를 `event=... key=value` 형태로 표준화
+- 에러 응답 body에서도 `correlationId`를 확인 가능하게 구성
+
+### 9-1. 요청 헤더로 correlation id 전달 (정상 응답/로그 확인)
+
+```powershell
+$idemp = "lab-cid-001"
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{
+   "Content-Type"="application/json"
+   "Idempotency-Key"=$idemp; 
+   "X-Correlation-Id" = "cid-lab-001"
+   } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+toAddress   = $to
+asset       = "ETH"
+amount      = 0.001  # eth
+} | ConvertTo-Json)
+$w
+
+```
+
+기대 결과
+
+- 응답 헤더에 `X-Correlation-Id: cid-lab-001`
+- 콘솔/JSON 로그에 `correlationId = "cid-lab-001"`
+- 컨트롤러/서비스 로그가 `event=withdrawal.create.request ...`, `event=withdrawal_service.create_or_get.start ...` 형태로 출력
+- JSON 로그에서는 실습 편의를 위해 `clientId`, `userId`(mock 값)도 함께 출력되어 "요청 흐름"과 "요청 주체"를 같이 설명할 수 있음
+
+### 9-2. correlation id 미전달 시 서버 자동 생성 확인
+
+```powershell
+$idemp = "lab-cid-002"
+$w = Invoke-RestMethod -Method POST `
+-Uri "$BASE_URL/withdrawals" `
+-Headers @{
+   "Content-Type"="application/json"
+   "Idempotency-Key"=$idemp; 
+   } `
+-Body (@{
+chainType   = "EVM"
+fromAddress = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+toAddress   = $to
+asset       = "ETH"
+amount      = 0.001  # eth
+} | ConvertTo-Json)
+$w
+
+```
+
+기대 결과
+
+- 응답 헤더 `X-Correlation-Id`가 비어 있지 않음(서버 생성 UUID)
+- 로그에도 동일한 `correlationId`가 출력
+
+### 9-3. 에러 응답에서 correlationId 확인 (PowerShell JSON 파싱 오류 예시)
+
+```powershell
+Invoke-WebRequest `
+  -Uri "$BASE_URL/withdrawals" `
+  -Method POST `
+  -Headers @{
+    "Idempotency-Key"  = "lab-cid-bad-json-001"
+    "X-Correlation-Id" = "cid-bad-json-001"
+  } `
+  -ContentType "application/json" `
+  -Body "{'chainType':'evm'}"
+```
+
+기대 결과
+
+- `400 Bad Request`
+- 응답 헤더에 `X-Correlation-Id: cid-bad-json-001`
+- 응답 body에 `correlationId = "cid-bad-json-001"`
+
+운영 팁
+
+- `spring.jpa.show-sql: true` 상태에서는 `Hibernate:` SQL 출력이 섞여 보일 수 있습니다.
+- 실습용 pretty 파일 로그(`custody/logs/custody-pretty.json.log`)는 `correlationId`가 있는 요청 흐름 로그만 기록되도록 설정되어 있습니다.
+- `clean build`는 테스트용 로깅 설정을 사용하므로 pretty 파일 로그를 만들지 않으며, `clean` 시 `logs/` 디렉터리도 함께 정리됩니다.
+
+---
+
+## 10) 실습 6 — 화이트리스트 주소 등록 + 48h 보류 워크플로우
+
+### 목표
+
+- 기존 정적 설정 화이트리스트 → DB 기반 동적 화이트리스트로 전환 이해
+- `REGISTERED → HOLDING(48h) → ACTIVE` 상태머신 직접 실행
+- 보류 중(`HOLDING`)이거나 취소된(`REVOKED`) 주소는 정책 엔진에서 자동 차단됨을 확인
+
+### 워크플로우 요약
+
+```
+POST /whitelist              → REGISTERED  (출금 불가)
+POST /whitelist/{id}/approve → HOLDING     (출금 불가, 48h 타이머 시작)
+[48h 경과, 스케줄러 실행]    → ACTIVE      (출금 허용)
+POST /whitelist/{id}/revoke  → REVOKED     (출금 불가)
+```
+
+### 10-1. 실습 준비 (공통 변수)
+
+```powershell
+$BASE_URL   = "http://localhost:8080"
+$NEW_ADDR   = "0x9999888877776666555544443333222211110000"
+```
+
+### 10-2. 주소 등록 → REGISTERED
+
+```powershell
+$entry = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/whitelist" `
+  -Headers @{ "Content-Type" = "application/json" } `
+  -Body (@{
+    address      = $NEW_ADDR
+    chainType    = "EVM"
+    registeredBy = "ops-admin"
+    note         = "파트너사 정산 주소"
+  } | ConvertTo-Json)
+$entry
+$wlId = $entry.id
+```
+
+기대 결과
+
+- `status = REGISTERED`
+- `approvedAt = null`, `activeAfter = null`
+
+### 10-3. REGISTERED 상태에서 출금 시도 → 정책 거부
+
+```powershell
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab6-step3"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $NEW_ADDR
+    asset       = "ETH"
+    amount      = 0.0001
+  } | ConvertTo-Json)
+$w
+```
+
+기대 결과
+
+- `status = W0_POLICY_REJECTED`
+- policy-audits 조회 시 `reason = "TO_ADDRESS_NOT_WHITELISTED: <주소>"`
+
+### 10-4. 관리자 승인 → HOLDING (48h 타이머 시작)
+
+```powershell
+$entry = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/whitelist/$wlId/approve" `
+  -Headers @{ "Content-Type" = "application/json" } `
+  -Body (@{ approvedBy = "ops-admin" } | ConvertTo-Json)
+$entry
+```
+
+기대 결과
+
+- `status = HOLDING`
+- `approvedAt` 기록됨
+- `activeAfter = approvedAt + 48h`
+
+### 10-5. HOLDING 상태에서 출금 시도 → 여전히 거부
+
+```powershell
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab6-step5"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $NEW_ADDR
+    asset       = "ETH"
+    amount      = 0.0001
+  } | ConvertTo-Json)
+$w
+```
+
+기대 결과
+
+- `status = W0_POLICY_REJECTED` (HOLDING 상태는 여전히 차단)
+
+### 10-6. 48h 경과 후 → ACTIVE (운영 환경)
+
+운영 환경에서는 서버의 `@Scheduled` 스케줄러(기본 60초 주기)가 자동으로 확인합니다.
+
+```powershell
+# activeAfter 확인
+$entry = Invoke-RestMethod -Uri "$BASE_URL/whitelist/$wlId"
+$entry.activeAfter   # 이 시각 이후 스케줄러가 ACTIVE 로 전환
+```
+
+```powershell
+# 48h 경과 후 상태 확인
+$entry = Invoke-RestMethod -Uri "$BASE_URL/whitelist/$wlId"
+$entry.status   # ACTIVE
+```
+
+### 10-7. ACTIVE 상태에서 출금 → 성공
+
+```powershell
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab6-step7"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $NEW_ADDR
+    asset       = "ETH"
+    amount      = 0.0001
+  } | ConvertTo-Json)
+$w
+```
+
+기대 결과
+
+- `status = W6_BROADCASTED` (출금 성공)
+
+### 10-8. 취소 → REVOKED
+
+```powershell
+$entry = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/whitelist/$wlId/revoke" `
+  -Headers @{ "Content-Type" = "application/json" } `
+  -Body (@{ revokedBy = "security-team" } | ConvertTo-Json)
+$entry
+```
+
+기대 결과
+
+- `status = REVOKED`
+- 이후 동일 주소 출금 시도 → `W0_POLICY_REJECTED`
+
+### 10-9. 목록 조회 (상태 필터)
+
+```powershell
+# 전체 목록
+Invoke-RestMethod -Uri "$BASE_URL/whitelist"
+
+# HOLDING 상태만
+Invoke-RestMethod -Uri "$BASE_URL/whitelist?status=HOLDING"
+
+# ACTIVE 상태만
+Invoke-RestMethod -Uri "$BASE_URL/whitelist?status=ACTIVE"
+```
+
+### 운영 설정
+
+| 환경 변수 | 기본값 | 설명 |
+|-----------|--------|------|
+| `CUSTODY_WHITELIST_HOLD_HOURS` | `48` | 승인 후 보류 시간(시간 단위) |
+| `CUSTODY_WHITELIST_SCHEDULER_DELAY_MS` | `60000` | 스케줄러 실행 주기(ms) |
+
+---
+
+## 11) 실습 7 — Withdrawal 상태머신 W1→W10 완성
+
+### 목표
+
+- `createAndBroadcast()` 내 W1→W3→W4→W5→W6 전환 흐름을 이해
+- 시뮬레이션 엔드포인트(`/sim/confirm`, `/sim/finalize`)로 W7→W10까지 수동 진행
+- 원장 기록(`LedgerEntry`) — `RESERVE`(승인 시) + `SETTLE`(최종 확정 시) — 조회
+
+### 상태머신 전체 흐름 요약
+
+```
+W0_REQUESTED
+  → W1_POLICY_CHECKED    (정책+승인 통과)
+  → W3_APPROVED          (승인 완료 + RESERVE 원장 기록)
+  → W4_SIGNING           (서명 요청)
+  → W5_SIGNED            (서명 완료 — mock 어댑터는 원자적 처리)
+  → W6_BROADCASTED       (노드 제출 완료)
+  [POST /sim/confirm]
+  → W7_INCLUDED          (온체인 포함 확인)
+  [POST /sim/finalize]
+  → W8_SAFE_FINALIZED    (충분한 블록 수 확인)
+  → W9_LEDGER_POSTED     (SETTLE 원장 기록)
+  → W10_COMPLETED        (전체 완료)
+```
+
+> **참고**: W1~W5는 `createAndBroadcast()` 내 단일 트랜잭션 안에서 발생하므로 DB에는 최종 상태(`W6_BROADCASTED`)만 커밋됩니다. 코드 흐름을 직접 읽으면서 각 전환 시점의 log 출력을 확인하세요.
+
+### 11-1. 실습 준비
+
+```powershell
+$BASE_URL = "http://localhost:8080"
+$from = (Invoke-RestMethod -Uri "$BASE_URL/evm/wallet").address
+$to   = "0x1111111111111111111111111111111111111111"
+```
+
+### 11-2. 출금 생성 → W6_BROADCASTED
+
+```powershell
+$w = Invoke-RestMethod -Method POST `
+  -Uri "$BASE_URL/withdrawals" `
+  -Headers @{
+    "Content-Type"    = "application/json"
+    "Idempotency-Key" = "idem-lab7-1"
+  } `
+  -Body (@{
+    chainType   = "EVM"
+    fromAddress = $from
+    toAddress   = $to
+    asset       = "ETH"
+    amount      = 0.0001
+  } | ConvertTo-Json)
+$w
+$wId = $w.id
+```
+
+기대 결과
+
+- `status = W6_BROADCASTED`
+- 서버 로그에서 `W1`, `W3`, `W4` 순으로 `event=withdrawal_service.state.*` 출력 확인
+
+### 11-3. 원장 조회 — RESERVE 엔트리 확인
+
+```powershell
+Invoke-RestMethod -Uri "$BASE_URL/withdrawals/$wId/ledger"
+```
+
+기대 결과
+
+```json
+[
+  {
+    "type": "RESERVE",
+    "asset": "ETH",
+    "amount": 100000000000000
+  }
+]
+```
+
+- W3_APPROVED 시점에 생성된 RESERVE 원장 엔트리가 1건 있음
+
+### 11-4. 온체인 포함 시뮬레이션 → W7_INCLUDED
+
+```powershell
+# attempt INCLUDED + withdrawal W7_INCLUDED
+Invoke-RestMethod -Method POST -Uri "$BASE_URL/sim/withdrawals/$wId/confirm"
+
+# 상태 확인
+Invoke-RestMethod -Uri "$BASE_URL/withdrawals/$wId"
+```
+
+기대 결과
+
+- `/confirm` 응답: `status = INCLUDED` (attempt 기준)
+- `GET /withdrawals/{id}` 응답: `status = W7_INCLUDED`
+
+### 11-5. 최종 확정 시뮬레이션 → W10_COMPLETED
+
+```powershell
+# W7 → W8 → W9 → W10
+$finalized = Invoke-RestMethod -Method POST -Uri "$BASE_URL/sim/withdrawals/$wId/finalize"
+$finalized.status   # W10_COMPLETED
+```
+
+기대 결과
+
+- 응답: `status = W10_COMPLETED`
+- 서버 로그에서 `event=ledger.settle`, `event=retry_replace.simulate_finalization.done` 확인
+
+### 11-6. 원장 조회 — RESERVE + SETTLE 엔트리 확인
+
+```powershell
+Invoke-RestMethod -Uri "$BASE_URL/withdrawals/$wId/ledger"
+```
+
+기대 결과
+
+```json
+[
+  { "type": "RESERVE", "asset": "ETH" },
+  { "type": "SETTLE",  "asset": "ETH" }
+]
+```
+
+- RESERVE (W3 시점) + SETTLE (W8 시점) 두 엔트리가 순서대로 반환됨
+
+### 11-7. 최종 상태 확인
+
+```powershell
+Invoke-RestMethod -Uri "$BASE_URL/withdrawals/$wId"
+```
+
+기대 결과
+
+- `status = W10_COMPLETED`
+
+---
+
+## 12) 주요 API 요약
+
+- `POST /withdrawals` (Header: `Idempotency-Key`)
+- `GET /withdrawals/{id}`
+- `GET /withdrawals/{id}/attempts`
+- `GET /withdrawals/{id}/policy-audits`
+- `GET /withdrawals/{id}/ledger` — 원장 기록 조회 (RESERVE, SETTLE)
+- `POST /withdrawals/{id}/retry`
+- `POST /withdrawals/{id}/replace`
+- `POST /withdrawals/{id}/sync`
+- `POST /adapter-demo/broadcast/{evm|bft}`
+- `GET /evm/wallet` (rpc 모드에서만 활성화)
+- `GET /evm/tx/{txHash}` (rpc 모드에서만 활성화)
+- `GET /evm/tx/{txHash}/wait?timeoutMs=30000&pollMs=1500` (rpc 모드에서만 활성화)
+- `POST /whitelist` — 주소 등록
+- `POST /whitelist/{id}/approve` — 승인 (HOLDING 전환)
+- `POST /whitelist/{id}/revoke` — 취소 (REVOKED 전환)
+- `GET /whitelist` — 목록 (`?status=REGISTERED|HOLDING|ACTIVE|REVOKED`)
+- `GET /whitelist/{id}` — 단건 조회
+- `POST /sim/withdrawals/{id}/next-outcome/{outcome}` — 시뮬레이션 결과 사전 지정
+- `POST /sim/withdrawals/{id}/broadcast` — 브로드캐스트 시뮬레이션
+- `POST /sim/withdrawals/{id}/confirm` — 온체인 포함 시뮬레이션 (→ W7_INCLUDED)
+- `POST /sim/withdrawals/{id}/finalize` — 최종 확정 시뮬레이션 (→ W10_COMPLETED)
+
+---
+
+## 13) 다음 확장 과제 (권장)
+
+- Policy 다중 룰(우선순위/다중 사유)
+- Adapter timeout/partial failure 시나리오 확장
+- 상태 전이 불변식 테스트(canonical은 항상 1개)
+- 비동기 작업(ConfirmationTracker)까지 correlation id(MDC) 전파
+- JSON 구조화 로그 적용(검색/집계 친화적 포맷)
+- 민감정보 마스킹 규칙 표준화(주소/키/원문 예외 메시지)
+- 화이트리스트 변경 이력 감사 로그(`WhitelistAuditLog`) 추가
+- 쿼럼 승인(4-eyes) — approve 호출 2회 이상이어야 HOLDING 전환
+- `activeAfter` 관리자 강제 단축/연장 기능
+
+---
+
+## 14) 실습별 핵심 코드
+
+### 실습 1 — Policy Engine + Audit
+
+핵심 코드 (`PolicyEngine#evaluate`, `WithdrawalService#createAndBroadcast`)
+
+```java
+PolicyDecision decision = policyEngine.evaluate(req);
+policyAuditLogRepository.save(PolicyAuditLog.of(saved.getId(), decision.allowed(), decision.reason()));
+
+if (!decision.allowed()) {
+    saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
+    return withdrawalRepository.save(saved);
+}
+```
+
+```java
+if (req.amount().compareTo(maxAmountEth) > 0) {
+    return PolicyDecision.reject("AMOUNT_LIMIT_EXCEEDED: max=" + maxAmountEth + ", requested=" + req.amount());
+}
+
+// DB 화이트리스트 조회 — ACTIVE 상태인 경우에만 허용 (HOLDING/REGISTERED/REVOKED 는 거부)
+boolean active = whitelistRepository.existsByAddressAndChainTypeAndStatus(
+        req.toAddress(), chainType, WhitelistStatus.ACTIVE);
+if (!active) {
+    return PolicyDecision.reject("TO_ADDRESS_NOT_WHITELISTED: " + req.toAddress());
+}
+
+return PolicyDecision.allow();
+```
+
+- 정책 판단은 `PolicyDecision(allow/reject + reason)`으로 반환하고, `WithdrawalService`가 결과를 `policy-audits`에 항상 기록합니다.
+- 정책 거절 시 상태를 `W0_POLICY_REJECTED`로 전이하고 이후 브로드캐스트 단계로 진행하지 않습니다.
+- 정책 룰은 현재 `금액 한도` + `수신 주소 화이트리스트`입니다.
+- 화이트리스트는 DB 기반(`whitelist_addresses` 테이블)으로 동작하며, `status=ACTIVE` 인 경우에만 허용합니다.
+
+---
+
+### 실습 2 — Withdrawal / TxAttempt 분리 + 멱등성
+
+핵심 코드 (`WithdrawalService#createOrGet`, `#createAndBroadcast`, `#validateIdempotentRequest`, `AttemptService#createAttempt`)
+
+```java
+public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
+    ChainType chainType = parseChainType(req.chainType());
+    ReentrantLock lock = idempotencyLocks.computeIfAbsent(idempotencyKey, key -> new ReentrantLock());
+    lock.lock();
+    try {
+        return transactionTemplate.execute(status ->
+                withdrawalRepository.findByIdempotencyKey(idempotencyKey)
+                        .map(existing -> validateIdempotentRequest(existing, chainType, req))
+                        .orElseGet(() -> createAndBroadcast(idempotencyKey, chainType, req))
+        );
+    } finally {
+        lock.unlock();
+    }
+}
+```
+
+```java
+TxAttempt attempt = attemptService.createAttempt(saved.getId(), req.fromAddress(), resolveInitialNonce(chainType, req.fromAddress()));
+broadcastAttempt(saved, attempt);
+
+if (confirmationTracker != null && confirmationTrackerAutoStart) {
+    confirmationTracker.startTracking(attempt);
+} else if (confirmationTracker != null) {
+    log.info("event=withdrawal_service.confirmation_tracking.skipped ... reason=auto_start_disabled");
+}
+```
+
+```java
+boolean matches = existing.getChainType() == chainType
+    && existing.getFromAddress().equals(req.fromAddress())
+    && existing.getToAddress().equals(req.toAddress())
+    && existing.getAsset().equals(req.asset())
+    && existing.getAmount() == reqWei;
+
+if (!matches) {
+    throw new IdempotencyConflictException("same Idempotency-Key cannot be used with a different request body");
+}
+```
+
+- **업무 단위(Withdrawal)** 와 **시도 단위(TxAttempt)** 를 분리해서 retry/replace가 일어나도 원본 Withdrawal은 유지합니다.
+- 같은 `Idempotency-Key` + 동일 바디면 기존 Withdrawal을 반환하고, 같은 키 + 다른 바디면 `409` 충돌을 유도합니다.
+- 같은 `Idempotency-Key` 동시 요청은 `ReentrantLock`으로 직렬화하고, 락 내부에서 `TransactionTemplate`로 조회/생성/브로드캐스트를 커밋까지 묶어 중복 브로드캐스트(`already known`)를 방지합니다.
+- 생성 시점에 첫 `TxAttempt`를 만들고 브로드캐스트하며, 가능하면 `ConfirmationTracker` 비동기 추적도 시작합니다.
+- `custody.confirmation-tracker.auto-start=false`면 자동 추적을 건너뛰고(`...confirmation_tracking.skipped` 로그), 수동 `sync`/실습 절차로 포함 전이를 설명할 수 있습니다.
+- 현재 구현에는 `ApprovalService`, `LedgerService`가 선택 주입(`@Autowired(required=false)`)으로 연결될 수 있는 훅이 포함되어 있습니다.
+
+---
+
+### 실습 3 — Retry / Replace / Included 수렴
+
+핵심 코드 (`RetryReplaceService#retry`, `#replace`, `#sync`)
+
+```java
+canonical.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
+canonical.setCanonical(false);
+
+long nonce = canonical.getNonce() + 1;
+if (adapter instanceof EvmRpcAdapter rpcAdapter) {
+    nonce = rpcAdapter.getPendingNonce(canonical.getFromAddress()).longValue();
+}
+
+TxAttempt retried = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), nonce);
+broadcast(w, retried);
+```
+
+```java
+canonical.transitionTo(TxAttemptStatus.REPLACED);
+canonical.markException(AttemptExceptionType.REPLACED, "fee bump replacement");
+canonical.setCanonical(false);
+
+TxAttempt replaced = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), canonical.getNonce());
+replaced.setFeeParams(
+        bumpedFee(canonical.getMaxPriorityFeePerGas(), DEFAULT_PRIORITY_FEE),
+        bumpedFee(canonical.getMaxFeePerGas(), DEFAULT_MAX_FEE)
+);
+broadcast(w, replaced);
+```
+
+```java
+var receiptOpt = rpcAdapter.getReceipt(canonical.getTxHash());
+if (receiptOpt.isPresent()) {
+    canonical.transitionTo(TxAttemptStatus.INCLUDED);
+    if ("0x1".equalsIgnoreCase(receiptOpt.get().getStatus())) {
+        canonical.transitionTo(TxAttemptStatus.SUCCESS);
+        w.transitionTo(WithdrawalStatus.W7_INCLUDED);
+    } else {
+        canonical.transitionTo(TxAttemptStatus.FAILED);
+    }
+}
+```
+
+- `retry`는 기존 canonical attempt를 timeout 처리하고 새 nonce(가능하면 RPC pending nonce)로 재전송합니다.
+- `replace`는 같은 nonce를 유지한 채 fee bump(약 +12.5%)로 교체 전송합니다.
+- `sync`는 실제 receipt를 폴링해서 `INCLUDED/SUCCESS/FAILED`로 수렴시킵니다.
+- 현재 구현은 `retry/replace` 총 시도 수를 `5`개로 제한합니다.
+
+---
+
+### 실습 4 — Chain Adapter + EVM RPC(Sepolia/Hoodi)
+
+핵심 코드 (`EvmRpcAdapter#broadcast`, `#ensureConnectedChainIdMatchesConfigured`)
+
+```java
+if (!isValidAddress(command.to())) {
+    throw new IllegalArgumentException("Invalid EVM to-address: " + command.to());
+}
+
+ensureConnectedChainIdMatchesConfigured();
+
+BigInteger nonce = command.nonce() >= 0
+        ? BigInteger.valueOf(command.nonce())
+        : getPendingNonce(signer.getAddress());
+
+RawTransaction rawTransaction = RawTransaction.createEtherTransaction(
+        configuredChainId,
+        nonce,
+        GAS_LIMIT,
+        command.to(),
+        BigInteger.valueOf(command.amount()),
+        maxPriorityFeePerGas,
+        maxFeePerGas
+);
+
+String signedTxHex = signer.sign(rawTransaction, configuredChainId);
+EthSendTransaction sent = web3j.ethSendRawTransaction(signedTxHex).send();
+```
+
+```java
+EthChainId chainIdResponse = web3j.ethChainId().send();
+long remoteChainId = chainIdResponse.getChainId().longValue();
+if (remoteChainId != configuredChainId) {
+    throw new IllegalStateException(
+        "Connected RPC chain id mismatch. expected=" + configuredChainId + ", actual=" + remoteChainId
+    );
+}
+```
+
+- 오케스트레이터는 `ChainAdapterRouter`를 통해 체인 타입별 어댑터를 선택하고 `broadcast(command)`만 호출합니다.
+- EVM RPC 어댑터는 web3j 기반으로 EIP-1559 타입 트랜잭션을 서명/전송하며, `chainId` 불일치를 즉시 차단합니다.
+- nonce/fee는 요청값이 없으면 어댑터 기본값(`pending nonce`, 기본 fee)으로 보정됩니다.
+
+---
+
+### 실습 5 — Correlation ID + 로그 표준화
+
+핵심 코드 (`CorrelationIdFilter#doFilterInternal`, `GlobalExceptionHandler`, `logback-spring.xml`, `WithdrawalController`/`WithdrawalService`)
+
+```java
+String correlationId = resolveCorrelationId(request.getHeader(CORRELATION_ID_HEADER));
+MDC.put(MDC_CORRELATION_ID_KEY, correlationId);
+MDC.put(MDC_CLIENT_ID_KEY, resolveMockClientId(correlationId));
+MDC.put(MDC_USER_ID_KEY, resolveMockUserId(correlationId, request));
+response.setHeader(CORRELATION_ID_HEADER, correlationId);
+
+try {
+    filterChain.doFilter(request, response);
+} finally {
+    MDC.remove(MDC_CORRELATION_ID_KEY);
+    MDC.remove(MDC_CLIENT_ID_KEY);
+    MDC.remove(MDC_USER_ID_KEY);
+}
+```
+
+```xml
+<appender name="JSON_PRETTY_FILE" class="ch.qos.logback.core.FileAppender">
+    <file>logs/custody-pretty.json.log</file>
+    <append>false</append>
+    <filter class="lab.custody.common.logging.RequireCorrelationIdFilter"/>
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+        <jsonGeneratorDecorator class="net.logstash.logback.decorate.PrettyPrintingJsonGeneratorDecorator"/>
+    </encoder>
+</appender>
+```
+
+```java
+ErrorResponse body = new ErrorResponse(
+        HttpStatus.BAD_REQUEST.value(),
+        message,
+        allowedChainTypes(),
+        currentCorrelationId()
+);
+```
+
+```java
+log.info("event=withdrawal.create.request chainType={} asset={} amount={} toAddress={} idempotencyKeyPresent={}",
+        req.chainType(), req.asset(), req.amount(), req.toAddress(), idempotencyKey != null && !idempotencyKey.isBlank());
+
+log.info("event=withdrawal_service.create_or_get.start idempotencyKey={} chainType={} asset={} amount={} toAddress={}",
+        idempotencyKey, chainType, req.asset(), req.amount(), req.toAddress());
+```
+
+- `CorrelationIdFilter`가 요청 헤더(`X-Correlation-Id`)를 수신하거나 서버에서 생성한 값을 `MDC`에 넣고, 응답 헤더에도 동일 값을 반환합니다.
+- 실습 편의를 위해 `clientId`, `userId`(mock 값)도 `MDC`에 함께 넣어 JSON 로그 필드로 출력합니다.
+- 구조화 JSON 로그를 사용하므로 `correlationId`, `clientId`, `userId`는 개별 필드로 검색/집계할 수 있습니다.
+- 예외 응답 body(`ErrorResponse`, `RuntimeErrorResponse`)에 `correlationId`를 포함해 클라이언트/서버 로그 상호 추적을 쉽게 만듭니다.
+- 컨트롤러/서비스 로그는 `event=... key=value` 형태로 통일해 검색/필터링을 단순화합니다.
+
+---
+
+### 실습 6 (심화) — 동시성 멱등성 + 비동기 Confirmation Tracker
+
+핵심 코드 (`WithdrawalService#createOrGet`, `ConfirmationTracker`)
+
+```java
+ReentrantLock lock = idempotencyLocks.computeIfAbsent(idempotencyKey, key -> new ReentrantLock());
+lock.lock();
+try {
+    return transactionTemplate.execute(status ->
+            withdrawalRepository.findByIdempotencyKey(idempotencyKey)
+                    .map(existing -> validateIdempotentRequest(existing, chainType, req))
+                    .orElseGet(() -> createAndBroadcast(idempotencyKey, chainType, req))
+    );
+} finally {
+    lock.unlock();
+}
+```
+
+```java
+public void startTracking(TxAttempt attempt) {
+    submitWithMdc(() -> trackAttemptInternal(attempt.getId()));
+}
+
+while (tries < 60) {
+    Optional<TransactionReceipt> r = rpcAdapter.getReceipt(txHash);
+    if (r.isPresent()) {
+        toUpdateAttempt.transitionTo(TxAttemptStatus.INCLUDED);
+        toUpdateWithdrawal.transitionTo(WithdrawalStatus.W7_INCLUDED);
+        return;
+    }
+    TimeUnit.SECONDS.sleep(2);
+}
+timeoutAttempt.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
+```
+
+- 단순 `@Transactional`만으로는 동시 요청에서 중복 브로드캐스트가 발생할 수 있어, 현재 구현은 `Idempotency-Key`별 JVM 락 + `TransactionTemplate`로 커밋 완료까지 직렬화합니다.
+- 현재 `ConfirmationTracker`는 `@Scheduled`가 아니라 `ExecutorService` 기반 비동기 추적 방식입니다.
+- EVM RPC 어댑터일 때만 receipt 폴링을 수행하고, 일정 시간 내 receipt 미발견 시 `FAILED_TIMEOUT`으로 표시합니다.
+
+
+## 보안/안전 가드
+
+---
+
+### Confirmation Tracker — Receipt Polling 및 상태 전이 (핵심 코드)
+
+현재 구현은 `ExecutorService` 기반 비동기 폴링이며, 요청 스레드의 `MDC(correlationId)`를 비동기 작업으로 전파합니다. 브로드캐스트 직후 `startTracking(attempt)`를 호출하면 attempt ID 기준으로 재조회 후 receipt를 추적합니다.
+
+```java
+public void startTracking(TxAttempt attempt) {
+    submitWithMdc(() -> trackAttemptInternal(attempt.getId()));
+}
+
+private void submitWithMdc(Runnable task) {
+    Map<String, String> contextMap = MDC.getCopyOfContextMap();
+    executor.submit(() -> {
+        if (contextMap != null) {
+            MDC.setContextMap(contextMap);
+        } else {
+            MDC.clear();
+        }
+        try {
+            task.run();
+        } finally {
+            MDC.clear();
+        }
+    });
+}
+
+private void trackAttemptInternal(UUID attemptId) {
+    ...
+    while (tries < 60) {
+        Optional<TransactionReceipt> r = rpcAdapter.getReceipt(txHash);
+        if (r.isPresent()) {
+            toUpdateAttempt.transitionTo(TxAttemptStatus.INCLUDED);
+            txAttemptRepository.save(toUpdateAttempt);
+
+            toUpdateWithdrawal.transitionTo(WithdrawalStatus.W7_INCLUDED);
+            withdrawalRepository.save(toUpdateWithdrawal);
+            return;
+        }
+        TimeUnit.SECONDS.sleep(2);
+    }
+    timeoutAttempt.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
+}
+```
+
+- 트래커는 엔티티를 다시 조회한 뒤 업데이트해서 stale entity 문제를 줄이도록 작성되어 있습니다.
+- HTTP 요청에서 시작된 추적이라면 `ConfirmationTracker` 로그에도 동일한 `cid`가 유지되어 컨트롤러/서비스 로그와 연결해서 볼 수 있습니다.
+- 현재 구현은 receipt status(`0x1/0x0`)까지 저장하지 않고, receipt 존재 여부 기준으로 `INCLUDED`와 `W7_INCLUDED`를 전이합니다.
+- 최종 성공/실패 판정까지 필요하면 `POST /withdrawals/{id}/sync` 경로(`RetryReplaceService#sync`)를 사용하세요.
+
+### Troubleshooting — RPC 호출 오류 응답 본문 확인 (PowerShell)
+
+실습 중 RPC 관련 API 호출이 실패하면 PowerShell의 `Invoke-RestMethod`가 본문 대신 예외만 보여주는 경우가 있습니다. 아래처럼 `try/catch`로 감싸서 **응답 본문(response body)** 을 다시 읽으면 실제 오류 메시지(RPC reject 사유, validation 에러 등)를 확인할 수 있습니다.
+
+```powershell
+try {
+  Invoke-RestMethod -Method POST `
+    -Uri "$BASE_URL/withdrawals/$($w.id)/replace" `
+    -Headers @{ "X-Correlation-Id" = "$CID_PREFIX-troubleshoot-replace-001" }
+} catch {
+  $resp = $_.Exception.Response
+  $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
+  $reader.ReadToEnd()
+}
+```
+
+- `replace`에서 `nonce too low` 같은 RPC 에러가 날 때 원인 확인에 유용합니다.
+- 다른 API(`POST /withdrawals`, `POST /withdrawals/{id}/retry`, `POST /withdrawals/{id}/sync`)에도 동일하게 사용할 수 있습니다.
+- 필요하면 `Write-Host $_.Exception.Message`도 함께 출력해 HTTP 레벨 오류 메시지를 같이 확인하세요.
+
+
+- `custody.evm.chain-id=1`(mainnet)은 부팅 시 차단됩니다.
+- `custody.chain.mode=rpc`일 경우 `CUSTODY_EVM_PRIVATE_KEY`, `CUSTODY_EVM_RPC_URL` 미설정 시 `RpcModeStartupGuard`에서 부팅을 차단합니다.
+- `EvmRpcAdapter`는 브로드캐스트 전에 RPC의 실제 `eth_chainId`와 설정값(`custody.evm.chain-id`) 일치 여부를 검증합니다.
+- 개인키는 절대 커밋하지 마세요.
+
+---
+
+### 실습 6 — 화이트리스트 주소 등록 + 48h 보류 워크플로우
+
+핵심 코드 (`WhitelistAddress`, `WhitelistService`, `ToAddressWhitelistPolicyRule`)
+
+**상태 전환 — `WhitelistAddress` 엔티티**
+
+```java
+// approve(): REGISTERED → HOLDING, activeAfter 계산
+public void approve(String approvedBy) {
+    if (this.status != WhitelistStatus.REGISTERED) {
+        throw new IllegalStateException("approve() 는 REGISTERED 상태에서만 가능합니다. 현재: " + this.status);
+    }
+    Instant now = Instant.now();
+    this.approvedBy  = approvedBy;
+    this.approvedAt  = now;
+    this.activeAfter = now.plusSeconds(holdDurationHours * 3600); // 기본 48h
+    this.status      = WhitelistStatus.HOLDING;
+    this.updatedAt   = now;
+}
+
+// activate(): HOLDING → ACTIVE (스케줄러 호출)
+public void activate() {
+    if (this.status != WhitelistStatus.HOLDING) {
+        throw new IllegalStateException("activate() 는 HOLDING 상태에서만 가능합니다.");
+    }
+    this.status    = WhitelistStatus.ACTIVE;
+    this.updatedAt = Instant.now();
+}
+```
+
+**스케줄러 — `WhitelistService`**
+
+```java
+// 60초(기본값)마다 실행: HOLDING 중 activeAfter 경과 항목 → ACTIVE 전환
+@Scheduled(fixedDelayString = "${custody.whitelist.scheduler-delay-ms:60000}")
+@Transactional
+public void promoteHoldingToActive() {
+    List<WhitelistAddress> ready =
+            whitelistRepository.findByStatusAndActiveAfterLessThanEqual(
+                    WhitelistStatus.HOLDING, Instant.now());
+
+    for (WhitelistAddress entry : ready) {
+        entry.activate();
+        whitelistRepository.save(entry);
+        log.info("event=whitelist.activated id={} address={}", entry.getId(), entry.getAddress());
+    }
+}
+```
+
+**정책 룰 — `ToAddressWhitelistPolicyRule`**
+
+```java
+// 정적 Set 대신 DB에서 status=ACTIVE 인지 조회
+@Override
+public PolicyDecision evaluate(CreateWithdrawalRequest req) {
+    ChainType chainType = parseChainType(req.chainType());
+    boolean active = whitelistRepository.existsByAddressAndChainTypeAndStatus(
+            req.toAddress(), chainType, WhitelistStatus.ACTIVE);
+
+    if (!active) {
+        return PolicyDecision.reject("TO_ADDRESS_NOT_WHITELISTED: " + req.toAddress());
+    }
+    return PolicyDecision.allow();
+}
+```
+
+**기존 정적 설정 하위 호환 — `WhitelistService.@PostConstruct`**
+
+```java
+// 서버 시작 시 policy.whitelist-to-addresses 를 읽어 DB가 비어있으면 ACTIVE 로 시드
+@PostConstruct
+@Transactional
+public void seedFromStaticConfig() {
+    if (whitelistRepository.count() > 0) return;  // 이미 데이터 있으면 스킵
+
+    for (String addr : addresses) {
+        for (ChainType chainType : ChainType.values()) {
+            WhitelistAddress entry = WhitelistAddress.register(addr, chainType, "system:seed", ...);
+            entry.approve("system:seed");
+            entry.activate();          // 보류 없이 즉시 ACTIVE
+            whitelistRepository.save(entry);
+        }
+    }
+}
+```
+
+- `ToAddressWhitelistPolicyRule`은 이제 DB에서 `status=ACTIVE` 여부만 확인하며, `HOLDING`/`REGISTERED`/`REVOKED` 모두 거부합니다.
+- 스케줄러(`@Scheduled`)가 60초마다 `activeAfter <= now` 조건을 만족하는 `HOLDING` 항목을 `ACTIVE` 로 전환합니다.
+- 테스트에서는 `custody.whitelist.default-hold-hours=0` + `scheduler-delay-ms=999999999` 으로 설정하고 `whitelistService.promoteHoldingToActive()`를 직접 호출해 48h 대기 없이 흐름을 검증합니다.
+
+---
+
+### 실습 7 — Withdrawal 상태머신 W1→W10 완성
+
+핵심 코드 (`WithdrawalService#createAndBroadcast`, `LedgerEntry`, `LedgerService`, `RetryReplaceService#simulateFinalization`)
+
+**W1→W5 전환 — `WithdrawalService#createAndBroadcast`**
+
+```java
+// 정책+승인 모두 통과 → W1
+saved.transitionTo(WithdrawalStatus.W1_POLICY_CHECKED);
+saved = withdrawalRepository.save(saved);
+
+// 승인 완료 → W3 + RESERVE 원장 기록
+saved.transitionTo(WithdrawalStatus.W3_APPROVED);
+if (ledgerService != null) {
+    ledgerService.reserve(saved);   // RESERVE LedgerEntry 생성
+}
+saved = withdrawalRepository.save(saved);
+
+// 서명 요청 → W4
+saved.transitionTo(WithdrawalStatus.W4_SIGNING);
+saved = withdrawalRepository.save(saved);
+
+// broadcastAttempt() 내부: W5 → W6
+withdrawal.transitionTo(WithdrawalStatus.W5_SIGNED);     // 서명 완료 (원자적)
+withdrawal.transitionTo(WithdrawalStatus.W6_BROADCASTED); // 노드 제출
+```
+
+> W1~W5는 단일 `TransactionTemplate` 안에서 발생하므로 DB에는 `W6_BROADCASTED`만 커밋됨.
+
+**원장 엔티티 — `LedgerEntry`**
+
+```java
+// RESERVE 팩토리: W3_APPROVED 시점에 자금 예약 기록
+public static LedgerEntry reserve(UUID withdrawalId, String asset, long amount,
+                                  String fromAddress, String toAddress) {
+    return LedgerEntry.builder()
+            .withdrawalId(withdrawalId)
+            .type(LedgerEntryType.RESERVE)
+            .asset(asset).amount(amount)
+            .fromAddress(fromAddress).toAddress(toAddress)
+            .createdAt(Instant.now())
+            .build();
+}
+
+// SETTLE 팩토리: W8_SAFE_FINALIZED 시점에 정산 기록
+public static LedgerEntry settle(UUID withdrawalId, String asset, long amount,
+                                 String fromAddress, String toAddress) {
+    return LedgerEntry.builder()
+            ...type(LedgerEntryType.SETTLE)...
+            .build();
+}
+```
+
+**W8→W10 전환 — `LedgerService#settle` + `RetryReplaceService#simulateFinalization`**
+
+```java
+// RetryReplaceService: W7 → W8 전환 후 LedgerService.settle() 위임
+@Transactional
+public Withdrawal simulateFinalization(UUID withdrawalId) {
+    Withdrawal w = loadWithdrawal(withdrawalId);
+    // W7_INCLUDED 아닌 경우 거부
+    w.transitionTo(WithdrawalStatus.W8_SAFE_FINALIZED);
+    withdrawalRepository.save(w);
+    return ledgerService.settle(w);  // W9 → W10 + SETTLE 원장 기록
+}
+
+// LedgerService: SETTLE 기록 후 W9 → W10 전환
+@Transactional
+public Withdrawal settle(Withdrawal w) {
+    ledgerEntryRepository.save(LedgerEntry.settle(...));
+    w.transitionTo(WithdrawalStatus.W9_LEDGER_POSTED);
+    w.transitionTo(WithdrawalStatus.W10_COMPLETED);
+    return withdrawalRepository.save(w);
+}
+```
+
+- `LedgerEntry`는 불변(append-only) 기록으로, 출금 생애주기 내 금융 이벤트를 `RESERVE` → `SETTLE` 순서로 저장합니다.
+- `RESERVE`는 브로드캐스트 트랜잭션과 같이 커밋되므로 브로드캐스트 실패 시 롤백됩니다.
+- `SETTLE`은 온체인 최종 확정(`W8`) 이후에만 기록되므로, 실패/timeout 케이스에서는 발생하지 않습니다.
+- 테스트에서는 `POST /sim/confirm` + `POST /sim/finalize` 두 단계로 W7→W10 흐름 전체를 검증합니다.
+---
+
+## 14) PostgreSQL + Flyway 운영형 실행
+
+기본 `./gradlew build` 는 컴파일/테스트만 수행합니다. PostgreSQL 테이블 자동 생성은 `postgres` 프로필로 서버를 실행할 때 Flyway가 수행합니다.
+
+### 14-1. PostgreSQL 실행
+
+```powershell
+cd F:\Workplace\custody
+docker compose up -d
+```
+
+기본 접속 정보
+
+- DB: `custody`
+- username: `custody`
+- password: `custody`
+- port: `5432`
+
+설정 파일: [docker-compose.yml](/f:/Workplace/custody/docker-compose.yml)
+
+### 14-2. `postgres` 프로필로 서버 실행
+
+```powershell
+cd F:\Workplace\custody\custody
+$env:CUSTODY_DB_URL = "jdbc:postgresql://localhost:5432/custody"
+$env:CUSTODY_DB_USERNAME = "custody"
+$env:CUSTODY_DB_PASSWORD = "custody"
+.\gradlew bootRun --args='--spring.profiles.active=postgres'
+```
+
+프로필 설정 파일: [application-postgres.yaml](/f:/Workplace/custody/custody/src/main/resources/application-postgres.yaml)
+
+### 14-3. Flyway 마이그레이션 확인
+
+서버가 정상 기동되면 Flyway가 아래 마이그레이션을 실행합니다.
+
+- [V1__operational_schema_postgresql.sql](/f:/Workplace/custody/custody/src/main/resources/db/migration/postgresql/V1__operational_schema_postgresql.sql)
+
+테이블 생성 확인
+
+```powershell
+docker exec -it custody-postgres psql -U custody -d custody -c "\dt"
+```
+
+예상 테이블 예시
+
+- `withdrawals`
+- `tx_attempts`
+- `nonce_reservations`
+- `ledger_entries`
+- `policy_decisions`
+- `approval_tasks`
+- `approval_decisions`
+- `whitelist_addresses`
+- `policy_change_requests`
+- `outbox_events`
+- `rpc_observation_snapshots`
+
+Flyway 실행 이력 확인
+
+```powershell
+docker exec -it custody-postgres psql -U custody -d custody -c "select installed_rank, version, description, success from flyway_schema_history order by installed_rank;"
+```
+
+예상 결과
+
+- `version = 1`
+- `description = operational schema postgresql`
+- `success = true`
+
+### 14-4. 참고
+
+- 기본 H2/test 경로에서는 Flyway를 끄고 있습니다.
+- 운영형 DB 검증은 Docker가 설치된 환경에서 실행해야 합니다.
