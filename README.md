@@ -1,6 +1,6 @@
 # custody-architecture
 
-> Korean version: [README.ko.md](README.ko.md)
+> Korean version: [README.ko.md](README.ko.md) | Repository Assessment: [ASSESSMENT.ko.md](ASSESSMENT.ko.md)
 
 ## 0) Project Goal
 
