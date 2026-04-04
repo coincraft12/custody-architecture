@@ -15,17 +15,36 @@
 
 ---
 
+## 0. 🔴 JPA 엔티티 신규 생성 (사전 과제) — CRITICAL
+
+> 마이그레이션 테이블은 존재하나 JPA 엔티티 클래스가 없어 실제 코드에서 접근 불가능한 테이블이 5개입니다.
+> 섹션 1·6·8·10 작업 시작 전 반드시 완료해야 합니다.
+
+### 0-1. 누락된 JPA 엔티티 클래스 작성
+- [x] 0-1-1. `NonceReservation` 엔티티 작성 — `nonce_reservations` 테이블 매핑 (섹션 1-1-1~1-1-3 대체, 선행 필수) ✅
+- [x] 0-1-2. `OutboxEvent` 엔티티 작성 — `outbox_events` 테이블 매핑 (섹션 6-3 선행 필수) ✅
+- [x] 0-1-3. `ApprovalTask` 엔티티 작성 — `approval_tasks` 테이블 매핑 (섹션 10 선행 필수) ✅
+- [x] 0-1-4. `ApprovalDecision` 엔티티 작성 — `approval_decisions` 테이블 매핑 (섹션 10 선행 필수) ✅
+- [x] 0-1-5. `WhitelistAuditLog` 엔티티 작성 — V3 마이그레이션 추가 후 동시 완료 ✅
+
+### 0-2. 마이그레이션 및 Repository 검증
+- [x] 0-2-1. `whitelist_audit_log` 테이블 Flyway 마이그레이션 파일 신규 추가 (`V3__add_whitelist_audit_log_and_approval_count.sql`) ✅
+- [x] 0-2-2. 모든 신규 엔티티에 `@Table(name=...)` 명시적 지정 및 컬럼 매핑 확인 ✅
+- [x] 0-2-3. 신규 엔티티 Repository 인터페이스 작성 5개: `NonceReservationRepository`, `OutboxEventRepository`, `ApprovalTaskRepository`, `ApprovalDecisionRepository`, `WhitelistAuditLogRepository` ✅
+
+---
+
 ## 1. 🔴 넌스 관리 (Nonce Management) — CRITICAL
 
 현재 `NonceAllocator`는 인메모리 카운터에 불과하며, DB의 `nonce_reservations` 테이블이 정의되어 있지만 전혀 사용되지 않습니다.
 서버 재시작 시 넌스 상태가 소멸되어 트랜잭션 충돌이 발생합니다.
 
 ### 1-1. `nonce_reservations` 테이블 활용 기반 구축
-- [ ] 1-1-1. `NonceReservation` JPA 엔티티 클래스 작성 (`id`, `chainType`, `fromAddress`, `nonce`, `status`, `withdrawalId`, `reservedAt`, `expiredAt`, `releasedAt`)
-- [ ] 1-1-2. `NonceReservationRepository` Spring Data 인터페이스 작성
-- [ ] 1-1-3. `NonceReservation.status` 열거형 정의 (`RESERVED`, `COMMITTED`, `RELEASED`, `EXPIRED`)
-- [ ] 1-1-4. `nonce_reservations` 테이블에 `(chain_type, from_address, nonce)` 복합 유니크 제약 확인 (V1 마이그레이션 이미 정의됨)
-- [ ] 1-1-5. `nonce_reservations` 테이블에 `(from_address, status)` 복합 인덱스 추가 (V2 마이그레이션에 추가)
+- [x] 1-1-1. `NonceReservation` JPA 엔티티 클래스 작성 — 섹션 0-1-1 완료로 대체 ✅
+- [x] 1-1-2. `NonceReservationRepository` Spring Data 인터페이스 작성 — 섹션 0-2-3 완료로 대체 ✅
+- [x] 1-1-3. `NonceReservation.status` 열거형 정의 (`RESERVED`, `COMMITTED`, `RELEASED`, `EXPIRED`) — `NonceReservationStatus.java` 완료 ✅
+- [x] 1-1-4. `nonce_reservations` 테이블에 `(chain_type, from_address, nonce)` 복합 유니크 제약 확인 (V1 마이그레이션 이미 정의됨) ✅
+- [x] 1-1-5. `nonce_reservations` 테이블에 `(from_address, status)` 복합 인덱스 추가 (V2 마이그레이션에 이미 추가됨) ✅
 
 ### 1-2. DB 기반 넌스 예약·커밋·해제 로직 구현
 - [ ] 1-2-1. `NonceAllocator.reserve(chainType, fromAddress, withdrawalId)` → EvmRpcAdapter로 현재 pending nonce 조회 후 DB에 `RESERVED` 레코드 삽입
@@ -46,23 +65,24 @@
 ### 1-4. 넌스 충돌 감지 및 복구
 - [ ] 1-4-1. RPC 에러 응답에서 "nonce too low" 패턴 파싱 후 `AttemptExceptionType.RPC_INCONSISTENT` 기록
 - [ ] 1-4-2. "nonce too low" 감지 시 해당 예약 `RELEASED` 처리 후 재예약 트리거 로직 추가
-- [ ] 1-4-3. `EvmRpcAdapter`에 `getPendingNonce(address)` 퍼블릭 메서드 노출 (이미 있으면 접근 수정자 확인)
+- [x] 1-4-3. `EvmRpcAdapter`에 `getPendingNonce(address)` 퍼블릭 메서드 노출 (이미 있으면 접근 수정자 확인) ✅
 - [ ] 1-4-4. 멱등성 키 단위 넌스 추적 단위 테스트 작성
+- [ ] 1-4-5. **다중 인스턴스 환경** 넌스 충돌 방지 전략 결정 및 구현: DB `SELECT FOR UPDATE SKIP LOCKED` 또는 Redis `SETNX` 분산 락 — 단일 인스턴스용 `ON CONFLICT DO NOTHING`만으로는 멀티 파드 환경에서 불충분
 
 ---
 
 ## 2. 🔴 보안 (Security) — CRITICAL
 
 ### 2-1. 개인키 관리
-- [ ] 2-1-1. `application.yaml` 및 소스코드에서 `CUSTODY_EVM_PRIVATE_KEY` 하드코딩 제거 확인 (현재 환경변수로 처리 중이나 `.env` 파일 커밋 금지 명시)
+- [x] 2-1-1. `application.yaml` 및 소스코드에서 `CUSTODY_EVM_PRIVATE_KEY` 하드코딩 제거 확인 (환경변수로 처리 중, `.env` 파일 커밋 금지 `.gitignore`에 이미 명시됨) ✅
 - [ ] 2-1-2. `.gitignore`에 `.env`, `*.pem`, `*.key` 추가 확인
 - [ ] 2-1-3. AWS KMS / HashiCorp Vault 연동을 위한 `Signer` 인터페이스 확장 계획 수립 (실제 구현은 Phase 3 이후)
 - [ ] 2-1-4. 개인키 인메모리 보유 시간 최소화: `EvmSigner`에서 서명 직후 변수 zeroing 처리 추가
-- [ ] 2-1-5. `RpcModeStartupGuard`에 mainnet chain-id=1 이외에 추가 프로덕션 체인 차단 로직 점검
+- [x] 2-1-5. `RpcModeStartupGuard`에 mainnet chain-id=1 이외에 추가 프로덕션 체인 차단 로직 점검 (이미 구현됨) ✅
 
 ### 2-2. 입력 검증 (Input Validation)
 - [ ] 2-2-1. `CreateWithdrawalRequest`에 Bean Validation 어노테이션 추가: `@NotBlank`, `@NotNull`, `@Positive(amount)`, `@Pattern(fromAddress/toAddress 형식)`
-- [ ] 2-2-2. EVM 주소 형식 검증 유틸리티 메서드 (`isValidEvmAddress()`) 추가 및 `PolicyEngine` 진입 전 사전 검증
+- [x] 2-2-2. EVM 주소 형식 검증 유틸리티 메서드 (`isValidEvmAddress()`) 추가 및 `PolicyEngine` 진입 전 사전 검증 (이미 구현됨) ✅
 - [ ] 2-2-3. `RegisterAddressRequest`에도 동일한 Bean Validation 추가
 - [ ] 2-2-4. `@ControllerAdvice`에서 `MethodArgumentNotValidException` 처리 추가 (현재 `GlobalExceptionHandler`에 없는 경우)
 - [ ] 2-2-5. 입력 길이 제한 추가: `note`, `registeredBy`, `approvedBy`, `revokedBy` 필드 최대 길이 255 제한
@@ -87,6 +107,7 @@
 - [ ] 2-5-2. `EvmRpcConfig`에서 개인키 로깅 제거 확인
 - [ ] 2-5-3. `GlobalExceptionHandler`에서 스택 트레이스에 포함될 수 있는 주소·키 마스킹 처리
 - [ ] 2-5-4. Logback 패턴에 민감 필드 필터 규칙 추가 (`logback-spring.xml` 수정)
+- [ ] 2-5-5. **DEBUG 레벨 로그** 마스킹 — RPC 응답 원문, 서명된 트랜잭션 바이트, `eth_sendRawTransaction` 파라미터가 DEBUG 로그에 노출되지 않도록 `toString()` 오버라이드 또는 Logback 필터 추가
 
 ---
 
@@ -143,6 +164,7 @@
 - [ ] 4-2-2. `application.yaml`에 Retry 설정: 최대 3회, 지수 백오프(1s, 2s, 4s)
 - [ ] 4-2-3. 브로드캐스트 API(`broadcast()`)는 retry 제외 — 멱등성 파괴 위험 명시 주석 추가
 - [ ] 4-2-4. Retry 소진 시 `AttemptExceptionType.FAILED_SYSTEM` 기록
+- [ ] 4-2-5. **RPC 오류 분류 체계** 수립: 일시적 오류(TRANSIENT: timeout, rate-limit 429), 영구 오류(PERMANENT: invalid tx, insufficient funds), 네트워크 오류(NETWORK: connection refused) — `AttemptExceptionType` 확장 및 분류별 처리 로직 분기
 
 ### 4-3. 다중 RPC 프로바이더 폴백
 - [ ] 4-3-1. `application.yaml`에 `custody.evm.fallback-rpc-urls` 리스트 설정 추가
@@ -159,7 +181,9 @@
 
 ---
 
-## 5. 🟠 확인 추적 (Confirmation Tracking) — HIGH
+## 5. 🔴 확인 추적 (Confirmation Tracking) — CRITICAL
+
+> 서버 재시작 시 추적 중인 TX가 전부 소실됩니다. 운영 배포 차단 수준으로 격상합니다.
 
 ### 5-1. 설정 가변화
 - [ ] 5-1-1. `ConfirmationTracker`의 `MAX_TRIES`(60), `POLL_INTERVAL_MS`(2000) 하드코딩 제거
@@ -192,7 +216,7 @@
 ### 6-1. 글로벌 예외 처리 보강
 - [ ] 6-1-1. `GlobalExceptionHandler`에 `DataAccessException` 처리 추가 (DB 오류 → 503)
 - [ ] 6-1-2. `GlobalExceptionHandler`에 `TransactionSystemException` 처리 추가
-- [ ] 6-1-3. `GlobalExceptionHandler`에 `HttpMessageNotReadableException` 처리 추가 (잘못된 JSON → 400)
+- [x] 6-1-3. `GlobalExceptionHandler`에 `HttpMessageNotReadableException` 처리 추가 (잘못된 JSON → 400) ✅
 - [ ] 6-1-4. `GlobalExceptionHandler`에 `MethodArgumentNotValidException` 처리 추가 (Bean Validation → 400, 필드별 에러 목록 포함)
 - [ ] 6-1-5. `GlobalExceptionHandler`에 `NoHandlerFoundException` 처리 추가 (404)
 - [ ] 6-1-6. 에러 응답 표준화: `{ errorCode, message, correlationId, timestamp }` 구조 확정 후 모든 예외 핸들러에 일관 적용
@@ -203,7 +227,7 @@
 - [ ] 6-2-3. `LedgerService.reserve()`가 실패하면 W3 전이 롤백되는지 트랜잭션 경계 확인
 - [ ] 6-2-4. `LedgerService.settle()` + W9→W10 전이가 동일 트랜잭션 안에 있는지 확인
 
-### 6-3. Outbox 패턴 (기본 구현)
+### 6-3. Outbox 패턴 (기본 구현) — ⚠️ CRITICAL 격상 권고
 - [ ] 6-3-1. `OutboxEvent` JPA 엔티티 클래스 작성 (`id`, `aggregateType`, `aggregateId`, `eventType`, `payload`(JSONB), `published`, `createdAt`)
 - [ ] 6-3-2. `OutboxEventRepository` 작성
 - [ ] 6-3-3. `WithdrawalService`의 주요 상태 전이 시 Outbox 이벤트 기록 (같은 트랜잭션 내)
@@ -246,7 +270,7 @@
 
 ### 8-1. 구조화 로그 (Structured Logging) 완성
 - [ ] 8-1-1. 모든 컨트롤러/서비스의 로그가 `event=... key=value` 형식을 따르는지 전수 확인
-- [ ] 8-1-2. `ConfirmationTracker` 비동기 스레드에서 MDC `correlationId` 전파 확인 (현재 부분 구현됨)
+- [x] 8-1-2. `ConfirmationTracker` 비동기 스레드에서 MDC `correlationId` 전파 확인 (부분 구현됨 — 전파 로직 존재) ✅
 - [ ] 8-1-3. `@Scheduled` 스케줄러 메서드에서 MDC `correlationId` 자동 생성 및 로깅 추가
 - [ ] 8-1-4. 스케줄러 실행마다 `scheduler=WhitelistScheduler event=promoteHoldingToActive promoted=N` 형식 로그 추가
 - [ ] 8-1-5. `logback-spring.xml`에서 `production` 프로파일일 때 JSON 형식으로만 출력하도록 설정
@@ -413,11 +437,12 @@
 
 | 순서 | 작업 영역 | 아이템 수 | 예상 기간 |
 |------|-----------|-----------|-----------|
-| 1 | 🔴 넌스 관리 | 17개 | 1주 |
-| 2 | 🔴 보안 | 19개 | 1주 |
+| 0 | 🔴 JPA 엔티티 사전 과제 | 8개 | 0.5주 |
+| 1 | 🔴 넌스 관리 | 19개 | **2주** |
+| 2 | 🔴 보안 | 21개 | 1주 |
 | 3 | 🔴 모니터링/메트릭 | 17개 | 1주 |
-| 4 | 🟠 RPC 복원력 | 15개 | 1주 |
-| 5 | 🟠 확인 추적 | 15개 | 1주 |
+| 4 | 🟠 RPC 복원력 | 16개 | 1주 |
+| 5 | 🔴 확인 추적 | 15개 | 1주 |
 | 6 | 🟠 오류 처리 | 15개 | 1주 |
 | 7 | 🟠 데이터베이스 | 17개 | 1주 |
 | 8 | 🟠 로깅/추적성 | 17개 | 1주 |
@@ -428,9 +453,18 @@
 | 13 | 🟡 API 문서화 | 9개 | 0.5주 |
 | 14 | 🟡 배포 자동화 | 9개 | 0.5주 |
 | 15 | 🟢 장기 개선 | 11개 | 미정 |
-| **합계** | | **~208개** | **약 12~16주** |
+| **합계** | | **~221개** | **약 16~20주** |
 
-> **Phase 1 (즉시, 1~4주):** 섹션 1~3 (넌스·보안·모니터링)
-> **Phase 2 (단기, 5~8주):** 섹션 4~9 (RPC 복원력·추적·오류·DB·로깅·테스트)
-> **Phase 3 (중기, 9~12주):** 섹션 10~14 (승인·가스·멀티체인·문서·배포)
+> **Phase 0 (즉시, 1주):** 섹션 0 (JPA 엔티티 사전 과제 — 다른 섹션 차단 해제)
+> **Phase 1 (1~5주):** 섹션 1·2·3·5 (넌스·보안·모니터링·확인추적 — 전부 CRITICAL)
+> **Phase 2 (6~10주):** 섹션 4·6·7·8·9 (RPC 복원력·오류·DB·로깅·테스트)
+> **Phase 3 (11~15주):** 섹션 10~14 (승인·가스·멀티체인·문서·배포)
 > **Phase 4 (장기):** 섹션 15 (MEV·HSM·샤딩·보안 감사)
+
+> **이미 완료된 항목 (레포 교차검증 결과, 2026-04-05):**
+> - 1-1-4, 1-1-5 (nonce_reservations 마이그레이션 인덱스·제약)
+> - 1-4-3 (getPendingNonce 퍼블릭 메서드)
+> - 2-1-1, 2-1-5 (환경변수 처리·RpcModeStartupGuard)
+> - 2-2-2 (isValidEvmAddress 유틸리티)
+> - 6-1-3 (HttpMessageNotReadableException 처리)
+> - 8-1-2 (MDC correlationId 부분 구현)
