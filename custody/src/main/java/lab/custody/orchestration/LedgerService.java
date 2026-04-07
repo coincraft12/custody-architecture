@@ -2,6 +2,7 @@ package lab.custody.orchestration;
 
 import lab.custody.domain.ledger.LedgerEntry;
 import lab.custody.domain.ledger.LedgerEntryRepository;
+import lab.custody.domain.ledger.LedgerEntryType;
 import lab.custody.domain.txattempt.TxAttempt;
 import lab.custody.domain.txattempt.TxAttemptRepository;
 import lab.custody.domain.withdrawal.Withdrawal;
@@ -50,6 +51,13 @@ public class LedgerService {
      */
     @Transactional
     public Withdrawal settle(Withdrawal w) {
+        if (!ledgerEntryRepository.existsByWithdrawalIdAndType(w.getId(), LedgerEntryType.RESERVE)) {
+            throw new InvalidRequestException("cannot settle before reserve is recorded");
+        }
+        if (ledgerEntryRepository.existsByWithdrawalIdAndType(w.getId(), LedgerEntryType.SETTLE)) {
+            throw new InvalidRequestException("settle already recorded for withdrawal: " + w.getId());
+        }
+
         LedgerEntry entry = LedgerEntry.settle(
                 w.getId(), w.getAsset(), w.getAmount(), w.getFromAddress(), w.getToAddress());
         ledgerEntryRepository.save(entry);

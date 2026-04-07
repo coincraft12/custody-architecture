@@ -294,22 +294,22 @@
 ## 9. 🟠 테스트 커버리지 (Test Coverage) — HIGH
 
 ### 9-1. 단위 테스트 추가
-- [ ] 9-1-1. `AmountLimitPolicyRuleTest`: 경계값(max-amount 정확히 일치, 초과, 미만) 케이스 테스트
+- [x] 9-1-1. `AmountLimitPolicyRuleTest`: 경계값(max-amount 정확히 일치, 초과, 미만) 케이스 테스트 ✅ (`PolicyRuleUnitTest`로 커버)
 - [ ] 9-1-2. `ToAddressWhitelistPolicyRuleTest`: ACTIVE/HOLDING/REGISTERED/REVOKED/비존재 주소별 케이스
-- [ ] 9-1-3. `PolicyEngineTest`: 두 규칙 모두 실패 시 첫 번째 규칙만 기록되는지 확인 (fail-fast 여부)
-- [ ] 9-1-4. `NonceAllocatorTest`: 동시 예약 시 중복 넌스 발급 없음 검증 (스레드 안전성)
-- [ ] 9-1-5. `LedgerServiceTest`: RESERVE 후 SETTLE 순서 보장, 이중 SETTLE 방지 테스트
-- [ ] 9-1-6. `WhitelistServiceTest`: 각 상태 전이 성공/실패 케이스 (REVOKED 상태에서 approve 시도 등)
-- [ ] 9-1-7. `ConfirmationTrackerTest`: 타임아웃 발생 시 `FAILED_TIMEOUT` 전이 확인
-- [ ] 9-1-8. `RetryReplaceServiceTest`: retry 후 attempt 수 2개, canonical 교체 확인
-- [ ] 9-1-9. `RetryReplaceServiceTest`: replace 후 동일 nonce, 더 높은 fee, canonical 교체 확인
+- [x] 9-1-3. `PolicyEngineTest`: 두 규칙 모두 실패 시 첫 번째 규칙만 기록되는지 확인 (fail-fast 여부) ✅ (`PolicyRuleUnitTest`로 커버)
+- [x] 9-1-4. `NonceAllocatorTest`: 동시 예약 시 중복 넌스 발급 없음 검증 (스레드 안전성) ✅
+- [x] 9-1-5. `LedgerServiceTest`: RESERVE 후 SETTLE 순서 보장, 이중 SETTLE 방지 테스트 ✅
+- [x] 9-1-6. `WhitelistServiceTest`: 각 상태 전이 성공/실패 케이스 (REVOKED 상태에서 approve 시도 등) ✅
+- [x] 9-1-7. `ConfirmationTrackerTest`: 타임아웃 발생 시 `FAILED_TIMEOUT` 전이 확인 ✅
+- [x] 9-1-8. `RetryReplaceServiceTest`: retry 후 attempt 수 2개, canonical 교체 확인 ✅
+- [x] 9-1-9. `RetryReplaceServiceTest`: replace 후 동일 nonce, 더 높은 fee, canonical 교체 확인 ✅
 
 ### 9-2. 통합 테스트 보강
-- [ ] 9-2-1. `WithdrawalServiceIdempotencyTest`에 경쟁 조건(Race Condition) 테스트 추가: 동일 키로 병렬 10개 요청 시 1개만 생성
+- [x] 9-2-1. `WithdrawalServiceIdempotencyTest`에 경쟁 조건(Race Condition) 테스트 추가: 동일 키로 병렬 10개 요청 시 1개만 생성 ✅
 - [ ] 9-2-2. 상태머신 전이 불변성 테스트: `W10_COMPLETED` 이후 `POST /retry` 시 적절한 에러 반환 확인
 - [ ] 9-2-3. 폴리시 감사 로그 무결성 테스트: 거절 시 `policy_audit_logs`에 레코드 1개만 존재하는지 확인
-- [ ] 9-2-4. 화이트리스트 hold 만료 스케줄러 통합 테스트: `activeAfter`를 과거 시간으로 설정 후 스케줄러 수동 호출 → ACTIVE 전이 확인
-- [ ] 9-2-5. 멱등성 충돌 통합 테스트: 동일 키 + 다른 body → 409 응답 확인
+- [x] 9-2-4. 화이트리스트 hold 만료 스케줄러 통합 테스트: `activeAfter`를 과거 시간으로 설정 후 스케줄러 수동 호출 → ACTIVE 전이 확인 ✅ (`WhitelistWorkflowIntegrationTest`로 커버)
+- [x] 9-2-5. 멱등성 충돌 통합 테스트: 동일 키 + 다른 body → 409 응답 확인 ✅ (`WithdrawalControllerIntegrationTest`로 커버)
 - [ ] 9-2-6. PostgreSQL 프로파일 통합 테스트: Testcontainers 기반 PostgreSQL로 마이그레이션 + CRUD 전체 흐름 테스트
 
 ### 9-3. 성능 및 부하 테스트
@@ -468,3 +468,14 @@
 > - 2-2-2 (isValidEvmAddress 유틸리티)
 > - 6-1-3 (HttpMessageNotReadableException 처리)
 > - 8-1-2 (MDC correlationId 부분 구현)
+>
+> **추가 완료 항목 (테스트 보강 반영, 2026-04-08):**
+> - 9-1-1, 9-1-3 (`PolicyRuleUnitTest`로 AmountLimit 경계값 및 PolicyEngine fail-fast 검증)
+> - 9-1-4 (`NonceAllocatorTest` 동시성 검증)
+> - 9-1-5 (`LedgerServiceTest`로 RESERVE 선행 및 중복 SETTLE 방지 검증)
+> - 9-1-6 (`WhitelistServiceTest`로 상태 전이 실패/정규화/default 처리 검증)
+> - 9-1-7 (`ConfirmationTrackerTest` timeout → `FAILED_TIMEOUT` 전이 검증)
+> - 9-1-8, 9-1-9 (`RetryReplaceServiceTest`로 retry/replace canonical 전환 및 nonce/fee 검증)
+> - 9-2-1 (`WithdrawalServiceIdempotencyTest` 병렬 race condition 검증)
+> - 9-2-4 (`WhitelistWorkflowIntegrationTest`로 hold 만료 스케줄러 수동 호출 검증)
+> - 9-2-5 (`WithdrawalControllerIntegrationTest`로 동일 키 + 다른 body → 409 검증)
