@@ -22,7 +22,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 검증 시나리오:
  *  1. W3_APPROVED 시점에 RESERVE 원장 기록 생성 → 출금 브로드캐스트 후 ledger에 RESERVE 엔트리 조회 가능
  *  2. W10_COMPLETED 시점에 SETTLE 원장 기록 생성 → finalize 후 SETTLE 엔트리 추가
- *  3. 존재하지 않는 출금 ID 조회 → 400 Bad Request
+ *  3. 존재하지 않는 출금 ID 조회 → 200 OK (빈 목록) — 엔드포인트가 출금 존재 여부를 검증하지 않음
  */
 @SpringBootTest(properties = "custody.chain.mode=mock")
 @AutoConfigureMockMvc

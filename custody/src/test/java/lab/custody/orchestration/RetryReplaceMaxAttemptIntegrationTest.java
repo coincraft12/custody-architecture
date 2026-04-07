@@ -100,14 +100,14 @@ class RetryReplaceMaxAttemptIntegrationTest {
                     .andExpect(jsonPath("$.attemptNo").value(i));
         }
 
-        // 3. 5번째 replace → retry limit 적용 여부 확인
-        // replace 자체는 ensureWithinAttemptLimit 가드가 없지만, 같은 시나리오 문서화
-        // (replace 는 현재 5회 제한 없음; retry 만 제한됨 → 이 테스트는 retry 경계를 확인)
+        // 3. attempt 이력 확인: 총 5개 (초기 1 + replace 4)
+        // retry()와 replace() 모두 새 attempt를 생성하고 동일한 attempt 카운터를 공유.
+        // ensureWithinAttemptLimit()은 retry()에서만 호출되므로, replace 후 retry 시 경계 조건이 발동.
         mockMvc.perform(get("/withdrawals/{id}/attempts", withdrawalId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(5));
 
-        // retry 시도 → 5개 있으므로 400
+        // retry 시도 → 총 attempt 5개 이상이므로 400 Bad Request
         mockMvc.perform(post("/withdrawals/{id}/retry", withdrawalId))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("max retry/replace attempts exceeded (5)"));
