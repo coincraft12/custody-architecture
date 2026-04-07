@@ -4,6 +4,7 @@ import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.adapter.EvmMockAdapter;
 import lab.custody.adapter.EvmRpcAdapter;
+import lab.custody.domain.nonce.NonceReservation;
 import lab.custody.domain.txattempt.AttemptExceptionType;
 import lab.custody.domain.txattempt.TxAttempt;
 import lab.custody.domain.txattempt.TxAttemptRepository;
@@ -35,12 +36,11 @@ public class RetryReplaceService {
     private final AttemptService attemptService;
     private final ChainAdapterRouter router;
     private final FakeChain fakeChain;
+    private final NonceAllocator nonceAllocator;
 
     @Autowired(required = false)
     private LedgerService ledgerService;
 
-    // Retry creates a new canonical attempt after marking the previous canonical attempt as timed out.
-    // For EVM, the nonce is re-read from the pending state so the retry uses the latest executable nonce.
     @Transactional
     public TxAttempt retry(UUID withdrawalId) {
         log.info("event=retry_replace.retry.start withdrawalId={}", withdrawalId);
@@ -50,28 +50,32 @@ public class RetryReplaceService {
         canonical.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
         canonical.setCanonical(false);
 
-        long nonce = canonical.getNonce() + 1;
-        ChainAdapter adapter = router.resolve(w.getChainType());
-        if (adapter instanceof EvmRpcAdapter rpcAdapter) {
-            nonce = rpcAdapter.getPendingNonce(canonical.getFromAddress()).longValue();
+        NonceReservation reservation = nonceAllocator.reserve(w.getChainType(), canonical.getFromAddress(), withdrawalId);
+        TxAttempt retried;
+        try {
+            retried = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), reservation.getNonce());
+            broadcast(w, retried);
+            nonceAllocator.commit(reservation.getId(), retried.getId());
+        } catch (RuntimeException e) {
+            nonceAllocator.release(reservation.getId());
+            throw e;
         }
 
-        TxAttempt retried = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), nonce);
-        broadcast(w, retried);
+        nonceAllocator.releaseByAttemptIdIfPresent(canonical.getId());
+
         TxAttempt saved = txAttemptRepository.save(retried);
         log.info(
-                "event=retry_replace.retry.done withdrawalId={} attemptId={} nonce={} status={} canonical={}",
+                "event=retry_replace.retry.done withdrawalId={} attemptId={} nonce={} status={} canonical={} reservationId={}",
                 withdrawalId,
                 saved.getId(),
                 saved.getNonce(),
                 saved.getStatus(),
-                saved.isCanonical()
+                saved.isCanonical(),
+                reservation.getId()
         );
         return saved;
     }
 
-    // Replace keeps the same nonce and bumps fees so a stuck pending tx can be superseded (RBF-style flow).
-    // The previous canonical attempt is preserved in history but no longer considered canonical.
     @Transactional
     public TxAttempt replace(UUID withdrawalId) {
         log.info("event=retry_replace.replace.start withdrawalId={}", withdrawalId);
@@ -101,6 +105,8 @@ public class RetryReplaceService {
                 bumpedFee(canonical.getMaxFeePerGas(), DEFAULT_MAX_FEE)
         );
         broadcast(w, replaced);
+        nonceAllocator.rebindAttemptIfPresent(canonical.getId(), replaced.getId());
+
         TxAttempt saved = txAttemptRepository.save(replaced);
         log.info(
                 "event=retry_replace.replace.done withdrawalId={} attemptId={} nonce={} status={} canonical={} maxPriorityFeePerGas={} maxFeePerGas={}",
@@ -115,8 +121,6 @@ public class RetryReplaceService {
         return saved;
     }
 
-    // Synchronous receipt check path used by labs/manual operations.
-    // This updates the canonical attempt/withdrawal based on real RPC receipt data when available.
     @Transactional
     public TxAttempt sync(UUID withdrawalId, long timeoutMs, long pollMs) {
         log.info("event=retry_replace.sync.start withdrawalId={} timeoutMs={} pollMs={}", withdrawalId, timeoutMs, pollMs);
@@ -169,7 +173,6 @@ public class RetryReplaceService {
         return saved;
     }
 
-    // Lab helper: drive attempt state transitions without a real chain by consuming scripted fake outcomes.
     @Transactional
     public TxAttempt simulateBroadcast(UUID withdrawalId) {
         log.info("event=retry_replace.simulate_broadcast.start withdrawalId={}", withdrawalId);
@@ -208,7 +211,6 @@ public class RetryReplaceService {
         return saved;
     }
 
-    // Lab helper: simulate the "broadcasted -> included" transition while enforcing state order rules.
     @Transactional
     public TxAttempt simulateConfirmation(UUID withdrawalId) {
         log.info("event=retry_replace.simulate_confirmation.start withdrawalId={}", withdrawalId);
@@ -231,11 +233,6 @@ public class RetryReplaceService {
         return saved;
     }
 
-
-    /**
-     * 시뮬레이션: W7_INCLUDED → W8_SAFE_FINALIZED → W9_LEDGER_POSTED → W10_COMPLETED.
-     * LedgerService.settle()이 W9/W10 전환 및 SETTLE 원장 기록을 담당.
-     */
     @Transactional
     public Withdrawal simulateFinalization(UUID withdrawalId) {
         log.info("event=retry_replace.simulate_finalization.start withdrawalId={}", withdrawalId);
@@ -257,7 +254,6 @@ public class RetryReplaceService {
             return settled;
         }
 
-        // ledgerService 없는 경우: W9 → W10 직접 전환
         w.transitionTo(WithdrawalStatus.W9_LEDGER_POSTED);
         w.transitionTo(WithdrawalStatus.W10_COMPLETED);
         Withdrawal saved = withdrawalRepository.save(w);
@@ -266,7 +262,6 @@ public class RetryReplaceService {
         return saved;
     }
 
-    // Guard against replace on a nonce that has already moved past pending (would fail with nonce-too-low).
     private boolean isNonceAlreadyIncluded(Withdrawal withdrawal, TxAttempt canonical) {
         ChainAdapter adapter = router.resolve(withdrawal.getChainType());
         if (adapter instanceof EvmRpcAdapter rpcAdapter) {
@@ -276,7 +271,6 @@ public class RetryReplaceService {
         return false;
     }
 
-    // Bound the number of retries/replaces so failures become visible operationally instead of looping forever.
     private void ensureWithinAttemptLimit(UUID withdrawalId) {
         int attemptCount = txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId).size();
         if (attemptCount >= 5) {
@@ -285,15 +279,11 @@ public class RetryReplaceService {
         }
     }
 
-    // Increase fees enough to satisfy typical replacement rules while guaranteeing at least +1 wei.
     private long bumpedFee(Long previous, long fallback) {
         long base = previous != null ? previous : fallback;
-        // Geth replacement rule(약 +10%)를 만족하도록 12.5% 상향 + 최소 1 wei 증가 보장
-        long increased = Math.max(base + 1, Math.addExact(base, Math.floorDiv(base, 8)));
-        return increased;
+        return Math.max(base + 1, Math.addExact(base, Math.floorDiv(base, 8)));
     }
 
-    // Shared broadcast path for retry/replace flows: submit via adapter and reflect broadcast state locally.
     private void broadcast(Withdrawal withdrawal, TxAttempt attempt) {
         ChainAdapter.BroadcastResult result = router.resolve(withdrawal.getChainType()).broadcast(
                 new ChainAdapter.BroadcastCommand(
@@ -321,13 +311,11 @@ public class RetryReplaceService {
         );
     }
 
-    // Load helpers keep controller/service methods focused on workflow logic and consistent error messages.
     private Withdrawal loadWithdrawal(UUID withdrawalId) {
         return withdrawalRepository.findById(withdrawalId)
                 .orElseThrow(() -> new IllegalArgumentException("withdrawal not found: " + withdrawalId));
     }
 
-    // Canonical attempt means "the current representative tx" for this withdrawal among historical attempts.
     private TxAttempt loadCanonical(UUID withdrawalId) {
         List<TxAttempt> attempts = txAttemptRepository.findByWithdrawalIdOrderByAttemptNoAsc(withdrawalId);
         return attempts.stream()
@@ -335,5 +323,4 @@ public class RetryReplaceService {
                 .max(Comparator.comparingInt(TxAttempt::getAttemptNo))
                 .orElseThrow(() -> new IllegalStateException("no canonical attempt"));
     }
-
 }

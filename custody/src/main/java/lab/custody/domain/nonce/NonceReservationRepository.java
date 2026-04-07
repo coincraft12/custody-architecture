@@ -13,6 +13,8 @@ import java.util.UUID;
 
 public interface NonceReservationRepository extends JpaRepository<NonceReservation, UUID> {
 
+    Optional<NonceReservation> findByAttemptId(UUID attemptId);
+
     Optional<NonceReservation> findByChainTypeAndFromAddressAndNonce(
             ChainType chainType, String fromAddress, long nonce);
 

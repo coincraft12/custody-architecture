@@ -47,13 +47,13 @@
 - [x] 1-1-5. `nonce_reservations` 테이블에 `(from_address, status)` 복합 인덱스 추가 (V2 마이그레이션에 이미 추가됨) ✅
 
 ### 1-2. DB 기반 넌스 예약·커밋·해제 로직 구현
-- [ ] 1-2-1. `NonceAllocator.reserve(chainType, fromAddress, withdrawalId)` → EvmRpcAdapter로 현재 pending nonce 조회 후 DB에 `RESERVED` 레코드 삽입
-- [ ] 1-2-2. `NonceAllocator.commit(reservationId)` → `RESERVED` → `COMMITTED` 전이
-- [ ] 1-2-3. `NonceAllocator.release(reservationId)` → `COMMITTED`/`RESERVED` → `RELEASED` 전이 (retry/replace 완료 후 호출)
+- [x] 1-2-1. `NonceAllocator.reserve(chainType, fromAddress, withdrawalId)` → EvmRpcAdapter로 현재 pending nonce 조회 후 DB에 `RESERVED` 레코드 삽입 ✅
+- [x] 1-2-2. `NonceAllocator.commit(reservationId)` → `RESERVED` → `COMMITTED` 전이 ✅
+- [x] 1-2-3. `NonceAllocator.release(reservationId)` → `COMMITTED`/`RESERVED` → `RELEASED` 전이 (retry/replace 완료 후 호출) ✅
 - [ ] 1-2-4. 동시 예약 충돌 방지: DB `INSERT … ON CONFLICT DO NOTHING` 또는 `SELECT FOR UPDATE` 적용
-- [ ] 1-2-5. `WithdrawalService.createAndBroadcast()`에서 기존 `NonceAllocator.next()` 호출을 새 `reserve()` → `commit()` 흐름으로 교체
-- [ ] 1-2-6. `RetryReplaceService.retry()`에서 새 넌스 예약 시 동일 로직 적용 (RPC에서 최신 pending nonce 재조회)
-- [ ] 1-2-7. `RetryReplaceService.replace()`에서 기존 예약 재사용 로직 구현 (동일 nonce 재사용, 새 예약 불필요)
+- [x] 1-2-5. `WithdrawalService.createAndBroadcast()`에서 기존 `NonceAllocator.next()` 호출을 새 `reserve()` → `commit()` 흐름으로 교체 ✅
+- [x] 1-2-6. `RetryReplaceService.retry()`에서 새 넌스 예약 시 동일 로직 적용 (RPC에서 최신 pending nonce 재조회) ✅
+- [x] 1-2-7. `RetryReplaceService.replace()`에서 기존 예약 재사용 로직 구현 (동일 nonce 재사용, 새 예약 불필요) ✅
 
 ### 1-3. 넌스 예약 만료·정리 스케줄러
 - [ ] 1-3-1. `NonceCleaner` 스케줄러 클래스 작성 (`@Scheduled`)
@@ -479,3 +479,10 @@
 > - 9-2-1 (`WithdrawalServiceIdempotencyTest` 병렬 race condition 검증)
 > - 9-2-4 (`WhitelistWorkflowIntegrationTest`로 hold 만료 스케줄러 수동 호출 검증)
 > - 9-2-5 (`WithdrawalControllerIntegrationTest`로 동일 키 + 다른 body → 409 검증)
+>
+> **추가 완료 항목 (nonce reservation 구현 반영, 2026-04-08):**
+> - 1-2-1, 1-2-2, 1-2-3 (`NonceAllocator` DB 기반 reserve/commit/release 구현)
+> - 1-2-5 (`WithdrawalService.createAndBroadcast()`를 `reserve → commit` 흐름으로 교체)
+> - 1-2-6 (`RetryReplaceService.retry()`에서 새 nonce 예약 후 이전 예약 release 처리)
+> - 1-2-7 (`RetryReplaceService.replace()`에서 기존 committed reservation 재사용/rebind 처리)
+> - 1-2-4는 현재 DB UNIQUE 제약 + `DataIntegrityViolationException` 재시도로 부분 대응 중이며, `ON CONFLICT DO NOTHING` / `SELECT FOR UPDATE` 수준의 명시적 구현은 미완료

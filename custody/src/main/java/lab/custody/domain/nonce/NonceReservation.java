@@ -108,6 +108,15 @@ public class NonceReservation {
     }
 
     /** 정상 완료 또는 재시도 후 해제: COMMITTED|RESERVED → RELEASED */
+    public void rebindAttempt(UUID attemptId) {
+        if (this.status != NonceReservationStatus.COMMITTED) {
+            throw new IllegalStateException(
+                "rebindAttempt() ??COMMITTED ?곹깭?먯꽌留?媛?ν빀?덈떎. ?꾩옱: " + this.status);
+        }
+        this.attemptId = attemptId;
+        this.updatedAt = Instant.now();
+    }
+
     public void release() {
         if (this.status == NonceReservationStatus.RELEASED
                 || this.status == NonceReservationStatus.EXPIRED) {

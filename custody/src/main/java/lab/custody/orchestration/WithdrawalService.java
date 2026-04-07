@@ -2,8 +2,8 @@ package lab.custody.orchestration;
 
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
-import lab.custody.adapter.EvmRpcAdapter;
 import lab.custody.domain.ledger.LedgerEntry;
+import lab.custody.domain.nonce.NonceReservation;
 import lab.custody.domain.policy.PolicyAuditLog;
 import lab.custody.domain.policy.PolicyAuditLogRepository;
 import lab.custody.domain.txattempt.TxAttempt;
@@ -40,23 +40,22 @@ public class WithdrawalService {
     private final PolicyEngine policyEngine;
     private final PolicyAuditLogRepository policyAuditLogRepository;
     private final ChainAdapterRouter router;
+    private final NonceAllocator nonceAllocator;
     private final TransactionTemplate transactionTemplate;
     private final ConcurrentHashMap<String, ReentrantLock> idempotencyLocks = new ConcurrentHashMap<>();
-    
+
     @Autowired(required = false)
     private ApprovalService approvalService;
-    
+
     @Autowired(required = false)
     private LedgerService ledgerService;
-    
+
     @Autowired(required = false)
     private ConfirmationTracker confirmationTracker;
 
     @Value("${custody.confirmation-tracker.auto-start:true}")
     private boolean confirmationTrackerAutoStart;
 
-    // Entry point for withdrawal creation with idempotency protection.
-    // Same Idempotency-Key + same body returns the existing Withdrawal instead of rebroadcasting.
     public Withdrawal createOrGet(String idempotencyKey, CreateWithdrawalRequest req) {
         ChainType chainType = parseChainType(req.chainType());
         log.info(
@@ -89,8 +88,7 @@ public class WithdrawalService {
             lock.unlock();
         }
     }
-    // Main orchestration flow for a new withdrawal:
-    // persist Withdrawal -> evaluate policy/audit -> create TxAttempt -> broadcast -> start tracking.
+
     private Withdrawal createAndBroadcast(String idempotencyKey, ChainType chainType, CreateWithdrawalRequest req) {
         long amountWei = ethToWei(req.amount());
 
@@ -100,7 +98,7 @@ public class WithdrawalService {
                 req.fromAddress(),
                 req.toAddress(),
                 req.asset(),
-            amountWei
+                amountWei
         ));
         log.info("event=withdrawal_service.create.persisted withdrawalId={} status={}", saved.getId(), saved.getStatus());
         if (ledgerService != null) {
@@ -125,8 +123,6 @@ public class WithdrawalService {
             return withdrawalRepository.save(saved);
         }
 
-        // Approval stage (currently auto-approved). If ApprovalService is not present, default to approved.
-        // W2_APPROVAL_PENDING은 비동기 외부 승인 시스템 연동 시 사용 (현재는 동기 자동 승인).
         boolean approved = approvalService == null || approvalService.requestApproval(saved);
         if (!approved) {
             saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
@@ -137,12 +133,10 @@ public class WithdrawalService {
             return withdrawalRepository.save(saved);
         }
 
-        // W1: 정책 + 승인 모두 통과
         saved.transitionTo(WithdrawalStatus.W1_POLICY_CHECKED);
         saved = withdrawalRepository.save(saved);
         log.info("event=withdrawal_service.state.W1 withdrawalId={}", saved.getId());
 
-        // W3: 승인 완료 → RESERVE 원장 기록
         saved.transitionTo(WithdrawalStatus.W3_APPROVED);
         if (ledgerService != null) {
             ledgerService.reserve(saved);
@@ -150,33 +144,38 @@ public class WithdrawalService {
         saved = withdrawalRepository.save(saved);
         log.info("event=withdrawal_service.state.W3 withdrawalId={}", saved.getId());
 
-        // W4: 서명 요청
         saved.transitionTo(WithdrawalStatus.W4_SIGNING);
         saved = withdrawalRepository.save(saved);
         log.info("event=withdrawal_service.state.W4 withdrawalId={}", saved.getId());
 
         log.info("event=withdrawal_service.approval.approved withdrawalId={}", saved.getId());
 
-        TxAttempt attempt = attemptService.createAttempt(saved.getId(), req.fromAddress(), resolveInitialNonce(chainType, req.fromAddress()));
-        log.info(
-                "event=withdrawal_service.attempt.created withdrawalId={} attemptId={} attemptNo={} nonce={}",
-                saved.getId(),
-                attempt.getId(),
-                attempt.getAttemptNo(),
-                attempt.getNonce()
-        );
-        broadcastAttempt(saved, attempt); // W5_SIGNED → W6_BROADCASTED 내부 처리
+        NonceReservation reservation = nonceAllocator.reserve(chainType, req.fromAddress(), saved.getId());
+        TxAttempt attempt;
+        try {
+            attempt = attemptService.createAttempt(saved.getId(), req.fromAddress(), reservation.getNonce());
+            log.info(
+                    "event=withdrawal_service.attempt.created withdrawalId={} attemptId={} attemptNo={} nonce={} reservationId={}",
+                    saved.getId(),
+                    attempt.getId(),
+                    attempt.getAttemptNo(),
+                    attempt.getNonce(),
+                    reservation.getId()
+            );
+            broadcastAttempt(saved, attempt);
+            nonceAllocator.commit(reservation.getId(), attempt.getId());
+        } catch (RuntimeException e) {
+            nonceAllocator.release(reservation.getId());
+            throw e;
+        }
 
-        // persist latest state via ledger if available
         if (ledgerService != null) {
             ledgerService.saveAttempt(attempt);
             saved = ledgerService.saveWithdrawal(saved);
         } else {
-            // fallback: ensure withdrawal persisted
             withdrawalRepository.save(saved);
         }
 
-        // start async confirmation tracking if available
         if (confirmationTracker != null && confirmationTrackerAutoStart) {
             log.info("event=withdrawal_service.confirmation_tracking.start withdrawalId={} attemptId={}", saved.getId(), attempt.getId());
             confirmationTracker.startTracking(attempt);
@@ -190,16 +189,7 @@ public class WithdrawalService {
 
         return saved;
     }
-    // Resolve the nonce right before the first broadcast so EVM attempts use the latest pending nonce.
-    private long resolveInitialNonce(ChainType chainType, String fromAddress) {
-        ChainAdapter adapter = router.resolve(chainType);
-        if (adapter instanceof EvmRpcAdapter rpcAdapter) {
-            return rpcAdapter.getPendingNonce(fromAddress).longValue();
-        }
-        return 0L;
-    }
-    // Broadcast through the chain adapter abstraction and reflect the result in domain state.
-    // Note: BROADCASTED means submitted to a node, not yet included on-chain.
+
     private void broadcastAttempt(Withdrawal withdrawal, TxAttempt attempt) {
         ChainAdapter.BroadcastResult result = router.resolve(withdrawal.getChainType()).broadcast(
                 new ChainAdapter.BroadcastCommand(
@@ -207,7 +197,7 @@ public class WithdrawalService {
                         withdrawal.getFromAddress(),
                         withdrawal.getToAddress(),
                         withdrawal.getAsset(),
-                withdrawal.getAmount(),
+                        withdrawal.getAmount(),
                         attempt.getNonce(),
                         attempt.getMaxPriorityFeePerGas(),
                         attempt.getMaxFeePerGas()
@@ -216,9 +206,7 @@ public class WithdrawalService {
 
         attempt.setTxHash(result.txHash());
         attempt.transitionTo(TxAttemptStatus.BROADCASTED);
-        // W5: 서명 완료 (mock/EVM 어댑터는 서명+브로드캐스트 원자적 처리 → 논리적 중간 전환)
         withdrawal.transitionTo(WithdrawalStatus.W5_SIGNED);
-        // W6: 노드 제출 완료
         withdrawal.transitionTo(WithdrawalStatus.W6_BROADCASTED);
         log.info(
                 "event=withdrawal_service.broadcast.success withdrawalId={} attemptId={} txHash={} withdrawalStatus={} attemptStatus={}",
@@ -228,18 +216,16 @@ public class WithdrawalService {
                 withdrawal.getStatus(),
                 attempt.getStatus()
         );
-        // saving of attempt/wdl is handled by LedgerService by caller
     }
-    // Enforce idempotency semantics strictly: same key can only replay the same logical request.
-    // Any body mismatch is treated as a conflict to prevent ambiguous or unsafe duplicate handling.
+
     private Withdrawal validateIdempotentRequest(Withdrawal existing, ChainType chainType, CreateWithdrawalRequest req) {
         long reqWei = ethToWei(req.amount());
 
         boolean matches = existing.getChainType() == chainType
-            && existing.getFromAddress().equals(req.fromAddress())
-            && existing.getToAddress().equals(req.toAddress())
-            && existing.getAsset().equals(req.asset())
-            && existing.getAmount() == reqWei;
+                && existing.getFromAddress().equals(req.fromAddress())
+                && existing.getToAddress().equals(req.toAddress())
+                && existing.getAsset().equals(req.asset())
+                && existing.getAmount() == reqWei;
 
         if (!matches) {
             log.warn(
@@ -267,7 +253,9 @@ public class WithdrawalService {
 
     @Transactional(readOnly = true)
     public List<LedgerEntry> getLedgerEntries(UUID withdrawalId) {
-        if (ledgerService == null) return List.of();
+        if (ledgerService == null) {
+            return List.of();
+        }
         return ledgerService.getLedgerEntries(withdrawalId);
     }
 
@@ -284,7 +272,9 @@ public class WithdrawalService {
     }
 
     private long ethToWei(BigDecimal eth) {
-        if (eth == null) throw new InvalidRequestException("amount is required");
+        if (eth == null) {
+            throw new InvalidRequestException("amount is required");
+        }
         try {
             BigDecimal multiplier = new BigDecimal("1000000000000000000");
             BigInteger wei = eth.multiply(multiplier).toBigIntegerExact();
@@ -294,5 +284,3 @@ public class WithdrawalService {
         }
     }
 }
-
-

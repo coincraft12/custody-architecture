@@ -2,6 +2,7 @@ package lab.custody.orchestration;
 
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
+import lab.custody.domain.nonce.NonceReservation;
 import lab.custody.domain.policy.PolicyAuditLogRepository;
 import lab.custody.domain.txattempt.TxAttemptRepository;
 import lab.custody.domain.withdrawal.ChainType;
@@ -41,6 +42,7 @@ class WithdrawalServiceIdempotencyTest {
     @Mock PolicyAuditLogRepository policyAuditLogRepository;
     @Mock TxAttemptRepository txAttemptRepository;
     @Mock ChainAdapterRouter router;
+    @Mock NonceAllocator nonceAllocator;
     @Mock ChainAdapter adapter;
     @Mock TransactionTemplate transactionTemplate;
 
@@ -56,11 +58,12 @@ class WithdrawalServiceIdempotencyTest {
                 policyEngine,
                 policyAuditLogRepository,
                 router,
+                nonceAllocator,
                 transactionTemplate
         );
 
         when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
-            TransactionCallback<?> callback = invocation.getArgument(0);
+            TransactionCallback<?> callback = invocation.getArgument(0, TransactionCallback.class);
             return callback.doInTransaction(null);
         });
     }
@@ -75,11 +78,15 @@ class WithdrawalServiceIdempotencyTest {
         when(withdrawalRepository.findByIdempotencyKey("idem-1")).thenReturn(Optional.empty(), Optional.of(w));
         when(withdrawalRepository.save(any())).thenReturn(w);
         when(policyEngine.evaluate(req)).thenReturn(PolicyDecision.allow());
+        NonceReservation reservation = NonceReservation.reserve(ChainType.EVM, "0xfrom", 0L, UUID.randomUUID(), null);
+        ReflectionTestUtils.setField(reservation, "id", UUID.randomUUID());
+        when(nonceAllocator.reserve(ChainType.EVM, "0xfrom", w.getId())).thenReturn(reservation);
         when(attemptService.createAttempt(any(), any(), anyLong())).thenReturn(
                 lab.custody.domain.txattempt.TxAttempt.created(UUID.randomUUID(), 1, "0xfrom", 0, true)
         );
         when(router.resolve(ChainType.EVM)).thenReturn(adapter);
         when(adapter.broadcast(any())).thenReturn(new ChainAdapter.BroadcastResult("0xtx", true));
+        when(nonceAllocator.commit(any(), any())).thenReturn(reservation);
 
         withdrawalService.createOrGet("idem-1", req);
         withdrawalService.createOrGet("idem-1", req);
@@ -104,11 +111,25 @@ class WithdrawalServiceIdempotencyTest {
             return storedWithdrawal.get();
         });
         when(policyEngine.evaluate(req)).thenReturn(PolicyDecision.allow());
+        when(nonceAllocator.reserve(eq(ChainType.EVM), eq("0xfrom"), any())).thenAnswer(invocation -> {
+            UUID withdrawalId = invocation.getArgument(2);
+            NonceReservation reservation = NonceReservation.reserve(ChainType.EVM, "0xfrom", 0L, withdrawalId, null);
+            ReflectionTestUtils.setField(reservation, "id", UUID.randomUUID());
+            return reservation;
+        });
         when(attemptService.createAttempt(any(), any(), anyLong())).thenReturn(
                 lab.custody.domain.txattempt.TxAttempt.created(UUID.randomUUID(), 1, "0xfrom", 0, true)
         );
         when(router.resolve(ChainType.EVM)).thenReturn(adapter);
         when(adapter.broadcast(any())).thenReturn(new ChainAdapter.BroadcastResult("0xtx-race", true));
+        when(nonceAllocator.commit(any(), any())).thenAnswer(invocation -> {
+            UUID reservationId = invocation.getArgument(0);
+            NonceReservation committed = NonceReservation.reserve(ChainType.EVM, "0xfrom", 0L, storedWithdrawal.get().getId(), null);
+            ReflectionTestUtils.setField(committed, "id", reservationId);
+            ReflectionTestUtils.setField(committed, "status", lab.custody.domain.nonce.NonceReservationStatus.COMMITTED);
+            ReflectionTestUtils.setField(committed, "attemptId", invocation.getArgument(1));
+            return committed;
+        });
 
         int parallelCalls = 10;
         CountDownLatch ready = new CountDownLatch(parallelCalls);

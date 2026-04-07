@@ -1,90 +1,131 @@
 package lab.custody.orchestration;
 
+import lab.custody.adapter.ChainAdapter;
+import lab.custody.adapter.ChainAdapterRouter;
+import lab.custody.adapter.EvmRpcAdapter;
+import lab.custody.domain.nonce.NonceReservation;
+import lab.custody.domain.nonce.NonceReservationRepository;
+import lab.custody.domain.nonce.NonceReservationStatus;
+import lab.custody.domain.withdrawal.ChainType;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.test.util.ReflectionTestUtils;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.math.BigInteger;
+import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
-/**
- * NonceAllocator 단위 테스트.
- *
- * 검증 항목:
- *  1. 동일 주소에 대해 순차적으로 증가하는 nonce 반환
- *  2. 서로 다른 주소는 독립된 nonce 카운터 사용
- *  3. 첫 호출은 nonce 0 반환
- */
+@ExtendWith(MockitoExtension.class)
 class NonceAllocatorTest {
 
-    @Test
-    void reserve_firstCall_returnsZero() {
-        NonceAllocator allocator = new NonceAllocator();
+    @Mock
+    private NonceReservationRepository nonceReservationRepository;
 
-        long nonce = allocator.reserve("0xfrom");
+    @Mock
+    private ChainAdapterRouter router;
 
-        assertThat(nonce).isEqualTo(0L);
+    @Mock
+    private EvmRpcAdapter rpcAdapter;
+
+    @Mock
+    private ChainAdapter nonEvmAdapter;
+
+    private NonceAllocator nonceAllocator;
+
+    @BeforeEach
+    void setUp() {
+        nonceAllocator = new NonceAllocator(nonceReservationRepository, router);
     }
 
     @Test
-    void reserve_consecutiveCalls_returnsIncrementingNonces() {
-        NonceAllocator allocator = new NonceAllocator();
+    void reserve_firstCall_usesRpcPendingNonce() {
+        UUID withdrawalId = UUID.randomUUID();
 
-        assertThat(allocator.reserve("0xaddr")).isEqualTo(0L);
-        assertThat(allocator.reserve("0xaddr")).isEqualTo(1L);
-        assertThat(allocator.reserve("0xaddr")).isEqualTo(2L);
+        when(router.resolve(ChainType.EVM)).thenReturn(rpcAdapter);
+        when(rpcAdapter.getPendingNonce("0xfrom")).thenReturn(BigInteger.ZERO);
+        when(nonceReservationRepository.findMaxActiveNonce(ChainType.EVM, "0xfrom")).thenReturn(Optional.empty());
+        when(nonceReservationRepository.save(any(NonceReservation.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        NonceReservation reservation = nonceAllocator.reserve(ChainType.EVM, "0xfrom", withdrawalId);
+
+        assertThat(reservation.getNonce()).isEqualTo(0L);
+        assertThat(reservation.getWithdrawalId()).isEqualTo(withdrawalId);
+        assertThat(reservation.getStatus()).isEqualTo(NonceReservationStatus.RESERVED);
     }
 
     @Test
-    void reserve_differentAddresses_haveIndependentCounters() {
-        NonceAllocator allocator = new NonceAllocator();
+    void reserve_whenActiveNonceExists_allocatesNextNonce() {
+        when(router.resolve(ChainType.EVM)).thenReturn(rpcAdapter);
+        when(rpcAdapter.getPendingNonce("0xaddr")).thenReturn(BigInteger.ZERO);
+        when(nonceReservationRepository.findMaxActiveNonce(ChainType.EVM, "0xaddr")).thenReturn(Optional.of(2L));
+        when(nonceReservationRepository.save(any(NonceReservation.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        assertThat(allocator.reserve("0xaddr1")).isEqualTo(0L);
-        assertThat(allocator.reserve("0xaddr2")).isEqualTo(0L);
-        assertThat(allocator.reserve("0xaddr1")).isEqualTo(1L);
-        assertThat(allocator.reserve("0xaddr2")).isEqualTo(1L);
+        NonceReservation reservation = nonceAllocator.reserve(ChainType.EVM, "0xaddr", UUID.randomUUID());
+
+        assertThat(reservation.getNonce()).isEqualTo(3L);
     }
 
     @Test
-    void reserve_manyAllocations_noncesAreContiguous() {
-        NonceAllocator allocator = new NonceAllocator();
+    void reserve_normalizesAddressBeforeQuerying() {
+        when(router.resolve(ChainType.EVM)).thenReturn(rpcAdapter);
+        when(rpcAdapter.getPendingNonce("0xfrom")).thenReturn(BigInteger.ONE);
+        when(nonceReservationRepository.findMaxActiveNonce(ChainType.EVM, "0xfrom")).thenReturn(Optional.empty());
+        when(nonceReservationRepository.save(any(NonceReservation.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        for (int i = 0; i < 100; i++) {
-            assertThat(allocator.reserve("0xbulk")).isEqualTo((long) i);
-        }
+        NonceReservation reservation = nonceAllocator.reserve(ChainType.EVM, "  0XFROM  ", UUID.randomUUID());
+
+        assertThat(reservation.getFromAddress()).isEqualTo("0xfrom");
+        assertThat(reservation.getNonce()).isEqualTo(1L);
     }
 
     @Test
-    void reserve_concurrentCalls_doNotIssueDuplicateNonces() throws Exception {
-        NonceAllocator allocator = new NonceAllocator();
-        ExecutorService executor = Executors.newFixedThreadPool(8);
-        try {
-            List<Callable<Long>> tasks = new ArrayList<>();
-            for (int i = 0; i < 100; i++) {
-                tasks.add(() -> allocator.reserve("0xrace"));
-            }
+    void reserve_onConflict_retriesWithNextNonce() {
+        when(router.resolve(ChainType.EVM)).thenReturn(rpcAdapter);
+        when(rpcAdapter.getPendingNonce("0xrace")).thenReturn(BigInteger.ZERO);
+        when(nonceReservationRepository.findMaxActiveNonce(ChainType.EVM, "0xrace")).thenReturn(Optional.empty());
+        when(nonceReservationRepository.save(any(NonceReservation.class)))
+                .thenThrow(new DataIntegrityViolationException("conflict"))
+                .thenAnswer(invocation -> invocation.getArgument(0));
 
-            List<Long> nonces = executor.invokeAll(tasks).stream()
-                    .map(future -> {
-                        try {
-                            return future.get();
-                        } catch (Exception e) {
-                            throw new AssertionError(e);
-                        }
-                    })
-                    .sorted()
-                    .toList();
+        NonceReservation reservation = nonceAllocator.reserve(ChainType.EVM, "0xrace", UUID.randomUUID());
 
-            assertThat(nonces).hasSize(100);
-            assertThat(nonces).doesNotHaveDuplicates();
-            assertThat(nonces).containsExactlyElementsOf(
-                    java.util.stream.LongStream.range(0, 100).boxed().toList()
-            );
-        } finally {
-            executor.shutdownNow();
-        }
+        assertThat(reservation.getNonce()).isEqualTo(1L);
+    }
+
+    @Test
+    void reserve_forNonEvmChain_startsFromZeroWithoutRpcNonce() {
+        when(router.resolve(ChainType.BFT)).thenReturn(nonEvmAdapter);
+        when(nonceReservationRepository.findMaxActiveNonce(ChainType.BFT, "bft-sender")).thenReturn(Optional.empty());
+        when(nonceReservationRepository.save(any(NonceReservation.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        NonceReservation reservation = nonceAllocator.reserve(ChainType.BFT, "bft-sender", UUID.randomUUID());
+
+        assertThat(reservation.getNonce()).isEqualTo(0L);
+    }
+
+    @Test
+    void commit_and_release_updateReservationState() {
+        UUID reservationId = UUID.randomUUID();
+        UUID attemptId = UUID.randomUUID();
+        NonceReservation reservation = NonceReservation.reserve(ChainType.EVM, "0xfrom", 9L, UUID.randomUUID(), null);
+        ReflectionTestUtils.setField(reservation, "id", reservationId);
+
+        when(nonceReservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(nonceReservationRepository.save(any(NonceReservation.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        NonceReservation committed = nonceAllocator.commit(reservationId, attemptId);
+        assertThat(committed.getStatus()).isEqualTo(NonceReservationStatus.COMMITTED);
+        assertThat(committed.getAttemptId()).isEqualTo(attemptId);
+
+        NonceReservation released = nonceAllocator.release(reservationId);
+        assertThat(released.getStatus()).isEqualTo(NonceReservationStatus.RELEASED);
     }
 }
