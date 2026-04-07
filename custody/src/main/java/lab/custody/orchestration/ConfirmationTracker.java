@@ -9,9 +9,9 @@ import lab.custody.domain.txattempt.TxAttemptStatus;
 import lab.custody.domain.withdrawal.Withdrawal;
 import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lab.custody.domain.withdrawal.WithdrawalStatus;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -21,15 +21,40 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class ConfirmationTracker {
 
     private final ChainAdapterRouter router;
     private final TxAttemptRepository txAttemptRepository;
     private final WithdrawalRepository withdrawalRepository;
+    private final ExecutorService executor;
+    private final int maxTries;
+    private final long pollIntervalSeconds;
 
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    @Autowired
+    public ConfirmationTracker(
+            ChainAdapterRouter router,
+            TxAttemptRepository txAttemptRepository,
+            WithdrawalRepository withdrawalRepository
+    ) {
+        this(router, txAttemptRepository, withdrawalRepository, Executors.newCachedThreadPool(), 60, 2);
+    }
+
+    ConfirmationTracker(
+            ChainAdapterRouter router,
+            TxAttemptRepository txAttemptRepository,
+            WithdrawalRepository withdrawalRepository,
+            ExecutorService executor,
+            int maxTries,
+            long pollIntervalSeconds
+    ) {
+        this.router = router;
+        this.txAttemptRepository = txAttemptRepository;
+        this.withdrawalRepository = withdrawalRepository;
+        this.executor = executor;
+        this.maxTries = maxTries;
+        this.pollIntervalSeconds = pollIntervalSeconds;
+    }
 
     // Start receipt tracking asynchronously so API callers do not block on chain confirmation time.
     public void startTracking(TxAttempt attempt) {
@@ -91,7 +116,7 @@ public class ConfirmationTracker {
             }
 
             int tries = 0;
-            while (tries < 60) { // ~2 minutes polling
+            while (tries < maxTries) { // default: ~2 minutes polling
                 try {
                     Optional<org.web3j.protocol.core.methods.response.TransactionReceipt> r = rpcAdapter.getReceipt(txHash);
                     if (r.isPresent()) {
@@ -118,7 +143,7 @@ public class ConfirmationTracker {
                     log.warn("Error while polling receipt for tx {}: {}", txHash, e.getMessage());
                 }
                 tries++;
-                TimeUnit.SECONDS.sleep(2);
+                TimeUnit.SECONDS.sleep(pollIntervalSeconds);
             }
             // reload attempt and mark timeout
             var timeoutAttemptOpt = txAttemptRepository.findById(attemptId);

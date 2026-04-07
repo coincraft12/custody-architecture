@@ -20,9 +20,17 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class WithdrawalServiceIdempotencyTest {
@@ -77,5 +85,60 @@ class WithdrawalServiceIdempotencyTest {
         withdrawalService.createOrGet("idem-1", req);
 
         verify(adapter, times(1)).broadcast(any());
+    }
+
+    @Test
+    void sameIdempotencyKey_parallelRequests_onlyBroadcastOnce() throws Exception {
+        CreateWithdrawalRequest req = new CreateWithdrawalRequest("evm", "0xfrom", "0xto", "ETH", new java.math.BigDecimal("1"));
+        long oneEthWei = 1000000000000000000L;
+        AtomicReference<Withdrawal> storedWithdrawal = new AtomicReference<>();
+
+        when(withdrawalRepository.findByIdempotencyKey("idem-race-1"))
+                .thenAnswer(invocation -> Optional.ofNullable(storedWithdrawal.get()));
+        when(withdrawalRepository.save(any())).thenAnswer(invocation -> {
+            Withdrawal saved = invocation.getArgument(0);
+            if (storedWithdrawal.compareAndSet(null, saved)) {
+                ReflectionTestUtils.setField(saved, "id", UUID.randomUUID());
+                Thread.sleep(50L);
+            }
+            return storedWithdrawal.get();
+        });
+        when(policyEngine.evaluate(req)).thenReturn(PolicyDecision.allow());
+        when(attemptService.createAttempt(any(), any(), anyLong())).thenReturn(
+                lab.custody.domain.txattempt.TxAttempt.created(UUID.randomUUID(), 1, "0xfrom", 0, true)
+        );
+        when(router.resolve(ChainType.EVM)).thenReturn(adapter);
+        when(adapter.broadcast(any())).thenReturn(new ChainAdapter.BroadcastResult("0xtx-race", true));
+
+        int parallelCalls = 10;
+        CountDownLatch ready = new CountDownLatch(parallelCalls);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(parallelCalls);
+
+        try {
+            List<Future<Withdrawal>> futures = java.util.stream.IntStream.range(0, parallelCalls)
+                    .mapToObj(i -> executor.submit(() -> {
+                        ready.countDown();
+                        assertThat(start.await(5, TimeUnit.SECONDS)).isTrue();
+                        return withdrawalService.createOrGet("idem-race-1", req);
+                    }))
+                    .toList();
+
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            List<Withdrawal> results = new java.util.ArrayList<>();
+            for (Future<Withdrawal> future : futures) {
+                results.add(future.get(5, TimeUnit.SECONDS));
+            }
+
+            assertThat(results).hasSize(parallelCalls);
+            assertThat(results).extracting(Withdrawal::getId).containsOnly(storedWithdrawal.get().getId());
+            assertThat(results).extracting(Withdrawal::getAmount).containsOnly(oneEthWei);
+            verify(adapter, times(1)).broadcast(any());
+            verify(attemptService, times(1)).createAttempt(any(), any(), anyLong());
+        } finally {
+            executor.shutdownNow();
+        }
     }
 }

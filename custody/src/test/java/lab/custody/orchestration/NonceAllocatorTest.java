@@ -2,6 +2,12 @@ package lab.custody.orchestration;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -48,6 +54,37 @@ class NonceAllocatorTest {
 
         for (int i = 0; i < 100; i++) {
             assertThat(allocator.reserve("0xbulk")).isEqualTo((long) i);
+        }
+    }
+
+    @Test
+    void reserve_concurrentCalls_doNotIssueDuplicateNonces() throws Exception {
+        NonceAllocator allocator = new NonceAllocator();
+        ExecutorService executor = Executors.newFixedThreadPool(8);
+        try {
+            List<Callable<Long>> tasks = new ArrayList<>();
+            for (int i = 0; i < 100; i++) {
+                tasks.add(() -> allocator.reserve("0xrace"));
+            }
+
+            List<Long> nonces = executor.invokeAll(tasks).stream()
+                    .map(future -> {
+                        try {
+                            return future.get();
+                        } catch (Exception e) {
+                            throw new AssertionError(e);
+                        }
+                    })
+                    .sorted()
+                    .toList();
+
+            assertThat(nonces).hasSize(100);
+            assertThat(nonces).doesNotHaveDuplicates();
+            assertThat(nonces).containsExactlyElementsOf(
+                    java.util.stream.LongStream.range(0, 100).boxed().toList()
+            );
+        } finally {
+            executor.shutdownNow();
         }
     }
 }
