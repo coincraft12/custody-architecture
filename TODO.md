@@ -433,6 +433,81 @@
 
 ---
 
+---
+
+## 16. 🟢 PDS 통합 (pds-core 특허 B-1 + B-2) — LOW (Phase 4+)
+
+> MVP 단계에서는 코드 구현 없이 **구조 예약만** 한다.
+> 실제 통합은 파일럿 고객 확보 이후 Phase 2~3에서 점진적으로 활성화한다.
+> 관련 설계: `f:\Workplace\custody\custody track\Custody_SaaS_Product_Design.md` 섹션 13
+> 관련 레포: `f:\Workplace\pds-core`
+
+### 16-1. MVP 단계 구조 예약 (코드 없이 스키마/인터페이스만)
+
+- [ ] 16-1-1. `V_pds__add_tenant_pds_records.sql` Flyway 마이그레이션 파일 추가 (빈 테이블 예약)
+  ```sql
+  CREATE TABLE tenant_pds_records (
+    id         UUID PRIMARY KEY,
+    tenant_id  UUID NOT NULL,
+    pds_type   TEXT NOT NULL,  -- SIGNER_KEY | EMERGENCY_ACCESS | OPERATOR_CREDENTIAL
+    pds_data   JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  ```
+- [ ] 16-1-2. `policy_audit_logs` 테이블에 `previous_hash TEXT`, `current_hash TEXT` 컬럼 예약 (null 허용, 미사용)
+- [ ] 16-1-3. `SignerConnector` 인터페이스에 PDS 훅 메서드 시그니처 예약 (default 구현 = no-op)
+  ```java
+  default Optional<String> getRecoveryKeyPdsId() { return Optional.empty(); }
+  ```
+- [ ] 16-1-4. `application.yaml`에 pds feature flag 섹션 추가 (전부 false로 초기화)
+  ```yaml
+  pds:
+    enabled: false
+    endpoint: http://pds-core:3100
+    features:
+      signer-key-pds: false
+      policy-audit-chain: false
+      emergency-access: false
+  ```
+- [ ] 16-1-5. `PdsProperties` `@ConfigurationProperties` 클래스 작성 (빈 껍데기, 이후 확장)
+
+### 16-2. Phase 2: Signer 복구 키 PDS화 (특허 B-2 적용)
+
+> 선행 조건: MVP 완료 + 파일럿 고객 1곳 이상 확보
+
+- [ ] 16-2-1. `pds-core` Docker 서비스를 `docker-compose.yml`에 추가 (`:3100`)
+- [ ] 16-2-2. `PdsCoreClient` HTTP 클라이언트 클래스 작성 (RestTemplate 또는 WebClient)
+  - `create(seed, deviceInput, userInput, mediaInput)` → `POST /pds/create`
+  - `recover(pds, deviceInput, userInput, mediaInput)` → `POST /pds/recover`
+  - `destroy(pds, reason)` → `POST /pds/destroy`
+  - `verify(pds)` → `POST /pds/verify`
+- [ ] 16-2-3. `PdsRecord` JPA 엔티티 작성 — `tenant_pds_records` 테이블 매핑
+- [ ] 16-2-4. `PdsRecordRepository` 작성
+- [ ] 16-2-5. `PdsAwareSignerConnector` 구현체 작성 — `SignerConnector` 구현 + pds-core 연동
+- [ ] 16-2-6. Signer 키 등록 API `POST /internal/pds/signer-key` 추가 (admin only)
+- [ ] 16-2-7. 비상 복구 API `POST /internal/pds/recover` 추가 (3-Factor 입력, admin only)
+- [ ] 16-2-8. 통합 테스트: createPds → processRecovery → 복호화된 seed 검증 (pds-core 서버 모킹)
+
+### 16-3. Phase 3: 정책 감사 해시 체인 (특허 B-1 적용)
+
+> 선행 조건: Phase 2 완료 + 감사 요구 고객 확보
+
+- [ ] 16-3-1. `PdsAuditChain` 서비스 작성 — 정책 변경 이벤트를 PDS metadata로 기록
+- [ ] 16-3-2. `PolicyEngine` 규칙 변경 시 `PdsAuditChain.record()` 호출 추가
+- [ ] 16-3-3. `policy_audit_logs.current_hash` 컬럼 채우는 마이그레이션 작성
+- [ ] 16-3-4. `GET /audit/policy/verify` 엔드포인트 추가 — 전체 해시 체인 무결성 검증
+- [ ] 16-3-5. 해시 체인 변조 탐지 시 알림 발생 (기존 알림 채널 재사용)
+
+### 16-4. Phase 4: 운영자 비상 접근 키 (B-1 + B-2 결합)
+
+- [ ] 16-4-1. 비상 접근 PDS 발급 워크플로우 설계 (ONE_TIME, expiresAt 설정 필수)
+- [ ] 16-4-2. 비상 접근 PDS 사용 후 자동 파기 확인 로직 추가
+- [ ] 16-4-3. tenant별 비상 접근 이력 감사 로그 추가
+- [ ] 16-4-4. pds-core 라이선스 사업 검토 — 타 custody 벤더 공급 가능성 평가
+
+---
+
 ## 우선순위 요약 (Summary)
 
 | 순서 | 작업 영역 | 아이템 수 | 예상 기간 |
@@ -453,13 +528,14 @@
 | 13 | 🟡 API 문서화 | 9개 | 0.5주 |
 | 14 | 🟡 배포 자동화 | 9개 | 0.5주 |
 | 15 | 🟢 장기 개선 | 11개 | 미정 |
-| **합계** | | **~221개** | **약 16~20주** |
+| 16 | 🟢 PDS 통합 (특허 B-1+B-2) | 22개 | Phase 4+ |
+| **합계** | | **~243개** | **약 16~20주 + Phase 4** |
 
 > **Phase 0 (즉시, 1주):** 섹션 0 (JPA 엔티티 사전 과제 — 다른 섹션 차단 해제)
 > **Phase 1 (1~5주):** 섹션 1·2·3·5 (넌스·보안·모니터링·확인추적 — 전부 CRITICAL)
 > **Phase 2 (6~10주):** 섹션 4·6·7·8·9 (RPC 복원력·오류·DB·로깅·테스트)
 > **Phase 3 (11~15주):** 섹션 10~14 (승인·가스·멀티체인·문서·배포)
-> **Phase 4 (장기):** 섹션 15 (MEV·HSM·샤딩·보안 감사)
+> **Phase 4 (장기):** 섹션 15 (MEV·HSM·샤딩·보안 감사) + 섹션 16 (PDS 통합 — 파일럿 이후 점진 적용)
 
 > **이미 완료된 항목 (레포 교차검증 결과, 2026-04-05):**
 > - 1-1-4, 1-1-5 (nonce_reservations 마이그레이션 인덱스·제약)
