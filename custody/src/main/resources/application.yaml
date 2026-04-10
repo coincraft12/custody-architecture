@@ -37,6 +37,8 @@ custody:
   whitelist:
     default-hold-hours: ${CUSTODY_WHITELIST_HOLD_HOURS:48}
     scheduler-delay-ms: ${CUSTODY_WHITELIST_SCHEDULER_DELAY_MS:60000}
+  nonce:
+    expiry-minutes: ${CUSTODY_NONCE_EXPIRY_MINUTES:10}
   evm:
     rpc-url: ${CUSTODY_EVM_RPC_URL:https://ethereum-sepolia-rpc.publicnode.com}
     chain-id: ${CUSTODY_EVM_CHAIN_ID:11155111}

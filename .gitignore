@@ -1,1 +1,16 @@
 custody track/
+
+# Binary / large files → _Archive
+*.pdf
+*.pptx
+*.ppt
+*.xlsx
+*.xls
+*.docx
+*.doc
+*.zip
+*.alz
+*.mp4
+*.mov
+*.psd
+

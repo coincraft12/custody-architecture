@@ -8,6 +8,13 @@
 - **언어**: Java / Spring Boot
 - **DB**: PostgreSQL + Flyway
 
+## 마지막 작업 내용
+- 넌스 만료 스케줄러 (1-3) 구현 완료 (2026-04-10)
+  - `NonceCleaner` 스케줄러 작성 (@Scheduled, 매 1분)
+  - RESERVED 만료 → EXPIRED 전이 + TxAttempt → FAILED_TIMEOUT
+  - `custody.nonce.expiry-minutes` 설정값 추가 (기본값 10분)
+  - 단위 테스트 5개 작성·통과
+
 ## 완료된 주요 작업
 - JPA 엔티티 사전 과제 전체 완료 (섹션 0)
 - DB 기반 nonce reservation 구현 완료 (섹션 1-2)
@@ -16,10 +23,9 @@
 - Custody_SaaS_Product_Design.md 섹션 13 추가 (pds-core 아키텍처)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🔴 넌스 만료 스케줄러 (1-3)
-2. 🔴 보안 — Spring Security, API Key 인증 (2-3)
-3. 🔴 모니터링 — Micrometer + Prometheus (3-1)
-4. 🔴 확인 추적 — 서버 재시작 후 미완료 TX 재추적 (5-3)
+1. 🔴 보안 — Spring Security, API Key 인증 (2-3)
+2. 🔴 모니터링 — Micrometer + Prometheus (3-1)
+3. 🔴 확인 추적 — 서버 재시작 후 미완료 TX 재추적 (5-3)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)
