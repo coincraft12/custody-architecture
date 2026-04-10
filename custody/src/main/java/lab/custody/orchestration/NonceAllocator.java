@@ -7,10 +7,12 @@ import lab.custody.domain.nonce.NonceReservation;
 import lab.custody.domain.nonce.NonceReservationRepository;
 import lab.custody.domain.withdrawal.ChainType;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
@@ -19,32 +21,38 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class NonceAllocator {
 
-    private static final int MAX_RESERVATION_ATTEMPTS = 100;
-
     private final NonceReservationRepository nonceReservationRepository;
     private final ChainAdapterRouter router;
 
+    @Value("${custody.nonce.expiry-minutes:10}")
+    private int expiryMinutes;
+
+    /**
+     * 넌스를 예약한다.
+     *
+     * <p>동시 예약 충돌 방지: {@code findActiveWithLock}으로 같은 주소의 활성 예약을
+     * SELECT FOR UPDATE로 잠근 뒤 최대 넌스를 계산하므로, 동일 주소에 대한 병렬 예약이
+     * 트랜잭션 직렬화되어 중복 넌스 발급이 발생하지 않는다.
+     */
     @Transactional
     public NonceReservation reserve(ChainType chainType, String fromAddress, UUID withdrawalId) {
         String normalizedFromAddress = normalizeAddress(fromAddress);
-        long candidate = initialCandidate(chainType, normalizedFromAddress);
 
-        for (int i = 0; i < MAX_RESERVATION_ATTEMPTS; i++) {
-            NonceReservation reservation = NonceReservation.reserve(
-                    chainType,
-                    normalizedFromAddress,
-                    candidate,
-                    withdrawalId,
-                    null
-            );
-            try {
-                return nonceReservationRepository.save(reservation);
-            } catch (DataIntegrityViolationException e) {
-                candidate++;
-            }
-        }
+        // SELECT FOR UPDATE — 동일 주소 활성 예약 레코드 잠금
+        List<NonceReservation> active = nonceReservationRepository
+                .findActiveWithLock(chainType, normalizedFromAddress);
 
-        throw new IllegalStateException("failed to reserve nonce after " + MAX_RESERVATION_ATTEMPTS + " attempts");
+        long candidate = candidateFromActive(active, chainType, normalizedFromAddress);
+        Instant expiresAt = Instant.now().plusSeconds((long) expiryMinutes * 60);
+
+        NonceReservation reservation = NonceReservation.reserve(
+                chainType,
+                normalizedFromAddress,
+                candidate,
+                withdrawalId,
+                expiresAt
+        );
+        return nonceReservationRepository.save(reservation);
     }
 
     @Transactional
@@ -82,10 +90,14 @@ public class NonceAllocator {
                 .orElseThrow(() -> new IllegalArgumentException("nonce reservation not found: " + reservationId));
     }
 
-    private long initialCandidate(ChainType chainType, String fromAddress) {
+    private long candidateFromActive(List<NonceReservation> active, ChainType chainType, String fromAddress) {
         long rpcPendingNonce = readPendingNonce(chainType, fromAddress);
-        long nextAfterActive = nonceReservationRepository.findMaxActiveNonce(chainType, fromAddress)
-                .map(maxActive -> maxActive + 1)
+        long nextAfterActive = active.stream()
+                .mapToLong(NonceReservation::getNonce)
+                .max()
+                .stream()
+                .mapToObj(max -> max + 1)
+                .findFirst()
                 .orElse(rpcPendingNonce);
         return Math.max(rpcPendingNonce, nextAfterActive);
     }

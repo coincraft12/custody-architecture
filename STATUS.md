@@ -9,6 +9,10 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- 동시 예약 충돌 방지 (1-2-4) 구현 완료 (2026-04-10)
+  - `NonceReservationRepository.findActiveWithLock` (SELECT FOR UPDATE) 추가
+  - `NonceAllocator.reserve()`: retry 루프 제거 → SELECT FOR UPDATE 기반 단순화
+  - `NonceAllocatorTest` 재작성: 5개 테스트 통과
 - 넌스 만료 스케줄러 (1-3) 구현 완료 (2026-04-10)
   - `NonceCleaner` 스케줄러 작성 (@Scheduled, 매 1분)
   - RESERVED 만료 → EXPIRED 전이 + TxAttempt → FAILED_TIMEOUT

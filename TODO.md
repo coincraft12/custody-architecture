@@ -50,7 +50,7 @@
 - [x] 1-2-1. `NonceAllocator.reserve(chainType, fromAddress, withdrawalId)` → EvmRpcAdapter로 현재 pending nonce 조회 후 DB에 `RESERVED` 레코드 삽입 ✅
 - [x] 1-2-2. `NonceAllocator.commit(reservationId)` → `RESERVED` → `COMMITTED` 전이 ✅
 - [x] 1-2-3. `NonceAllocator.release(reservationId)` → `COMMITTED`/`RESERVED` → `RELEASED` 전이 (retry/replace 완료 후 호출) ✅
-- [ ] 1-2-4. 동시 예약 충돌 방지: DB `INSERT … ON CONFLICT DO NOTHING` 또는 `SELECT FOR UPDATE` 적용
+- [x] 1-2-4. 동시 예약 충돌 방지: DB `INSERT … ON CONFLICT DO NOTHING` 또는 `SELECT FOR UPDATE` 적용 — `findActiveWithLock` (PESSIMISTIC_WRITE) 구현 완료 ✅
 - [x] 1-2-5. `WithdrawalService.createAndBroadcast()`에서 기존 `NonceAllocator.next()` 호출을 새 `reserve()` → `commit()` 흐름으로 교체 ✅
 - [x] 1-2-6. `RetryReplaceService.retry()`에서 새 넌스 예약 시 동일 로직 적용 (RPC에서 최신 pending nonce 재조회) ✅
 - [x] 1-2-7. `RetryReplaceService.replace()`에서 기존 예약 재사용 로직 구현 (동일 nonce 재사용, 새 예약 불필요) ✅
