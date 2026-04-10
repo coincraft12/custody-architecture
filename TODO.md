@@ -56,11 +56,11 @@
 - [x] 1-2-7. `RetryReplaceService.replace()`에서 기존 예약 재사용 로직 구현 (동일 nonce 재사용, 새 예약 불필요) ✅
 
 ### 1-3. 넌스 예약 만료·정리 스케줄러
-- [ ] 1-3-1. `NonceCleaner` 스케줄러 클래스 작성 (`@Scheduled`)
-- [ ] 1-3-2. `RESERVED` 상태에서 N분 초과 시 `EXPIRED`로 전이하는 쿼리 작성
-- [ ] 1-3-3. `EXPIRED` 예약에 연결된 `TxAttempt`를 `FAILED_TIMEOUT`으로 전이하는 로직 추가
-- [ ] 1-3-4. 만료 주기(`custody.nonce.expiry-minutes`) 설정값을 `application.yaml`에 추가
-- [ ] 1-3-5. `NonceCleaner` 단위 테스트 작성
+- [x] 1-3-1. `NonceCleaner` 스케줄러 클래스 작성 (`@Scheduled`) ✅
+- [x] 1-3-2. `RESERVED` 상태에서 N분 초과 시 `EXPIRED`로 전이하는 쿼리 작성 ✅
+- [x] 1-3-3. `EXPIRED` 예약에 연결된 `TxAttempt`를 `FAILED_TIMEOUT`으로 전이하는 로직 추가 ✅
+- [x] 1-3-4. 만료 주기(`custody.nonce.expiry-minutes`) 설정값을 `application.yaml`에 추가 ✅
+- [x] 1-3-5. `NonceCleaner` 단위 테스트 작성 ✅
 
 ### 1-4. 넌스 충돌 감지 및 복구
 - [ ] 1-4-1. RPC 에러 응답에서 "nonce too low" 패턴 파싱 후 `AttemptExceptionType.RPC_INCONSISTENT` 기록
