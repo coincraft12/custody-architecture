@@ -19,6 +19,16 @@ spring:
       ddl-auto: validate
     show-sql: false
 
+custody:
+  security:
+    api-keys:
+      - key: ${CUSTODY_API_KEY_OPERATOR}
+        roles: [OPERATOR]
+      - key: ${CUSTODY_API_KEY_APPROVER}
+        roles: [APPROVER, OPERATOR]
+      - key: ${CUSTODY_API_KEY_ADMIN}
+        roles: [ADMIN, APPROVER, OPERATOR]
+
 management:
   endpoints:
     web:

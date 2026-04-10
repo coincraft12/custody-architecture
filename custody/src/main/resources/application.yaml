@@ -30,6 +30,14 @@ logging:
     com.zaxxer.hikari.pool.HikariPool: ERROR
 
 custody:
+  security:
+    api-keys:
+      - key: dev-operator-key
+        roles: [OPERATOR]
+      - key: dev-approver-key
+        roles: [APPROVER, OPERATOR]
+      - key: dev-admin-key
+        roles: [ADMIN, APPROVER, OPERATOR]
   chain:
     mode: ${CUSTODY_CHAIN_MODE:mock}
   confirmation-tracker:

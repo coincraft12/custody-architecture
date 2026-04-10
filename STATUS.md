@@ -9,6 +9,13 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- API Key 인증·인가 (2-3) 구현 완료 (2026-04-10)
+  - `SecurityConfig` + `ApiKeyAuthFilter` + `ApiKeyProperties` 작성
+  - Role: OPERATOR / APPROVER / ADMIN
+  - `/sim/**` → `@Profile("!production")` 비활성화
+  - `application-production.yaml` API 키 환경변수 연동
+  - 스테이징 배포 자동화 (Dockerfile + GitHub Actions + Hetzner VPS)
+  - 전체 테스트 통과 (99개)
 - 동시 예약 충돌 방지 (1-2-4) 구현 완료 (2026-04-10)
   - `NonceReservationRepository.findActiveWithLock` (SELECT FOR UPDATE) 추가
   - `NonceAllocator.reserve()`: retry 루프 제거 → SELECT FOR UPDATE 기반 단순화
@@ -27,9 +34,9 @@
 - Custody_SaaS_Product_Design.md 섹션 13 추가 (pds-core 아키텍처)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🔴 보안 — Spring Security, API Key 인증 (2-3)
-2. 🔴 모니터링 — Micrometer + Prometheus (3-1)
-3. 🔴 확인 추적 — 서버 재시작 후 미완료 TX 재추적 (5-3)
+1. 🔴 모니터링 — Micrometer + Prometheus (3-1)
+2. 🔴 확인 추적 — 서버 재시작 후 미완료 TX 재추적 (5-3)
+3. 🟠 입력 검증 — Bean Validation (2-2)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)

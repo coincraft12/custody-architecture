@@ -2,10 +2,12 @@ package lab.custody.orchestration;
 
 import lab.custody.sim.fakechain.FakeChain;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Profile;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
 
+@Profile("!production")
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/sim")

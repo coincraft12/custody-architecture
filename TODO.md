@@ -89,12 +89,12 @@
 - [ ] 2-2-6. `amount` 필드 최소값 0 초과 검증 추가 (0 ETH 출금 방지)
 
 ### 2-3. API 인증·인가
-- [ ] 2-3-1. Spring Security 의존성 추가 (`spring-boot-starter-security`)
-- [ ] 2-3-2. API Key 기반 인증 필터 구현 (`X-API-Key` 헤더 검증)
-- [ ] 2-3-3. 역할(Role) 정의: `OPERATOR` (출금 생성), `APPROVER` (화이트리스트 승인), `ADMIN` (정책 변경)
-- [ ] 2-3-4. `/whitelist/{id}/approve`, `/whitelist/{id}/revoke` 엔드포인트에 `APPROVER` 역할 제한 적용
-- [ ] 2-3-5. `/sim/*` 엔드포인트를 운영 환경(`production` 프로파일)에서 비활성화하는 조건 추가
-- [ ] 2-3-6. H2 콘솔(`/h2/**`)을 `production` 프로파일에서 비활성화 확인
+- [x] 2-3-1. Spring Security 의존성 추가 (`spring-boot-starter-security`)
+- [x] 2-3-2. API Key 기반 인증 필터 구현 (`X-API-Key` 헤더 검증)
+- [x] 2-3-3. 역할(Role) 정의: `OPERATOR` (출금 생성), `APPROVER` (화이트리스트 승인), `ADMIN` (정책 변경)
+- [x] 2-3-4. `/whitelist/{id}/approve`, `/whitelist/{id}/revoke` 엔드포인트에 `APPROVER` 역할 제한 적용
+- [x] 2-3-5. `/sim/*` 엔드포인트를 운영 환경(`production` 프로파일)에서 비활성화하는 조건 추가
+- [x] 2-3-6. H2 콘솔(`/h2/**`)을 `production` 프로파일에서 비활성화 확인
 
 ### 2-4. Rate Limiting / DDoS 방어
 - [ ] 2-4-1. `bucket4j` 의존성 추가 (`com.github.bucket4j:bucket4j-core`)
