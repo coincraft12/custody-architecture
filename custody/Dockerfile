@@ -20,7 +20,7 @@ WORKDIR /app
 
 COPY --from=builder /workspace/build/libs/*.jar app.jar
 
-RUN chown custody:custody app.jar
+RUN mkdir -p /app/logs && chown -R custody:custody /app
 USER custody
 
 EXPOSE 8080
