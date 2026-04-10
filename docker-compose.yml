@@ -1,21 +1,53 @@
 services:
+
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: custody-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: custody
-      POSTGRES_USER: custody
-      POSTGRES_PASSWORD: custody
+      POSTGRES_DB: ${DB_NAME:-custody}
+      POSTGRES_USER: ${DB_USERNAME:-custody}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-custody}
     ports:
       - "5432:5432"
     volumes:
-      - custody-postgres-data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U custody -d custody"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-custody} -d ${DB_NAME:-custody}"]
+      interval: 10s
       timeout: 5s
-      retries: 20
+      retries: 5
       start_period: 5s
 
+  custody:
+    image: ghcr.io/${GITHUB_REPOSITORY:-coincraft12/custody-architecture}:${IMAGE_TAG:-latest}
+    container_name: custody-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-custody}
+      DB_USERNAME: ${DB_USERNAME:-custody}
+      DB_PASSWORD: ${DB_PASSWORD:-custody}
+      CUSTODY_CHAIN_MODE: ${CUSTODY_CHAIN_MODE:-evm}
+      CUSTODY_EVM_RPC_URL: ${CUSTODY_EVM_RPC_URL}
+      CUSTODY_EVM_CHAIN_ID: ${CUSTODY_EVM_CHAIN_ID:-11155111}
+      CUSTODY_EVM_PRIVATE_KEY: ${CUSTODY_EVM_PRIVATE_KEY}
+      CUSTODY_CONFIRMATION_TRACKER_AUTO_START: ${CUSTODY_CONFIRMATION_TRACKER_AUTO_START:-true}
+      CUSTODY_WHITELIST_HOLD_HOURS: ${CUSTODY_WHITELIST_HOLD_HOURS:-48}
+      CUSTODY_NONCE_EXPIRY_MINUTES: ${CUSTODY_NONCE_EXPIRY_MINUTES:-10}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
 volumes:
-  custody-postgres-data:
+  postgres_data:
