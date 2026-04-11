@@ -57,7 +57,8 @@ class ConfirmationTrackerTest {
                 withdrawalRepository,
                 Executors.newSingleThreadExecutor(),
                 1,
-                0
+                0,
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
         );
 
         when(txAttemptRepository.findById(attemptId)).thenReturn(Optional.of(attempt), Optional.of(attempt));

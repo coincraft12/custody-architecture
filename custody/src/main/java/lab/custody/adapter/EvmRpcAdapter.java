@@ -1,5 +1,8 @@
 package lab.custody.adapter;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lab.custody.domain.withdrawal.ChainType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -33,15 +36,33 @@ public class EvmRpcAdapter implements ChainAdapter {
     private final Web3j web3j;
     private final long configuredChainId;
     private final Signer signer;
+    private final MeterRegistry meterRegistry;
 
     public EvmRpcAdapter(
             Web3j web3j,
             @Value("${custody.evm.chain-id}") long configuredChainId,
-            Signer signer
+            Signer signer,
+            MeterRegistry meterRegistry
     ) {
         this.web3j = web3j;
         this.configuredChainId = configuredChainId;
         this.signer = signer;
+        this.meterRegistry = meterRegistry;
+    }
+
+    private void recordRpcCall(String method, boolean success, long startNanos) {
+        Timer.builder("custody.rpc.call.duration")
+                .description("Duration of EVM RPC calls")
+                .tag("method", method)
+                .tag("success", String.valueOf(success))
+                .register(meterRegistry)
+                .record(System.nanoTime() - startNanos, java.util.concurrent.TimeUnit.NANOSECONDS);
+        Counter.builder("custody.rpc.call.total")
+                .description("Total number of EVM RPC calls")
+                .tag("method", method)
+                .tag("success", String.valueOf(success))
+                .register(meterRegistry)
+                .increment();
     }
 
     @Override
@@ -54,6 +75,8 @@ public class EvmRpcAdapter implements ChainAdapter {
 
         ensureConnectedChainIdMatchesConfigured();
 
+        long start = System.nanoTime();
+        boolean success = false;
         try {
                 BigInteger nonce = command.nonce() >= 0
                     ? BigInteger.valueOf(command.nonce())
@@ -88,9 +111,12 @@ public class EvmRpcAdapter implements ChainAdapter {
                 throw new IllegalStateException("RPC returned an empty tx hash");
             }
 
+            success = true;
             return new BroadcastResult(txHash, true);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to execute EVM RPC request", e);
+        } finally {
+            recordRpcCall("broadcast", success, start);
         }
     }
 
@@ -129,33 +155,49 @@ public class EvmRpcAdapter implements ChainAdapter {
 
     // Read the pending nonce (not latest) so new attempts account for in-flight transactions.
     public BigInteger getPendingNonce(String address) {
+        long start = System.nanoTime();
+        boolean success = false;
         try {
             EthGetTransactionCount txCountResponse = web3j.ethGetTransactionCount(address, DefaultBlockParameterName.PENDING).send();
             if (txCountResponse.hasError()) {
                 throw new IllegalStateException("Failed to fetch nonce from RPC: " + txCountResponse.getError().getMessage());
             }
+            success = true;
             return txCountResponse.getTransactionCount();
         } catch (IOException e) {
             throw new IllegalStateException("Failed to fetch pending nonce", e);
+        } finally {
+            recordRpcCall("getPendingNonce", success, start);
         }
     }
 
     // Receipt lookup is used by sync/confirmation tracking to detect inclusion/finalization progress.
     public Optional<TransactionReceipt> getReceipt(String txHash) {
+        long start = System.nanoTime();
+        boolean success = false;
         try {
-            return web3j.ethGetTransactionReceipt(txHash).send().getTransactionReceipt();
+            Optional<TransactionReceipt> result = web3j.ethGetTransactionReceipt(txHash).send().getTransactionReceipt();
+            success = true;
+            return result;
         } catch (IOException e) {
             throw new IllegalStateException("Failed to fetch receipt", e);
+        } finally {
+            recordRpcCall("getReceipt", success, start);
         }
     }
 
     // Transaction lookup is used by demo/wallet endpoints for observability during labs.
     public Optional<org.web3j.protocol.core.methods.response.Transaction> getTransaction(String txHash) {
+        long start = System.nanoTime();
+        boolean success = false;
         try {
             EthTransaction response = web3j.ethGetTransactionByHash(txHash).send();
+            success = true;
             return response.getTransaction();
         } catch (IOException e) {
             throw new IllegalStateException("Failed to fetch transaction", e);
+        } finally {
+            recordRpcCall("getTransaction", success, start);
         }
     }
 }

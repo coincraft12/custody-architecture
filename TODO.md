@@ -116,19 +116,19 @@
 현재 메트릭 수집 코드가 전혀 없습니다.
 
 ### 3-1. Micrometer + Prometheus 기반 메트릭 수집
-- [ ] 3-1-1. `spring-boot-starter-actuator` 의존성 추가 (이미 있으면 생략)
-- [ ] 3-1-2. `micrometer-registry-prometheus` 의존성 추가
-- [ ] 3-1-3. `application.yaml`에 `/actuator/prometheus` 엔드포인트 노출 설정
-- [ ] 3-1-4. `application.yaml`에 `/actuator/health`, `/actuator/info` 노출 설정
-- [ ] 3-1-5. `WithdrawalService`에 카운터 추가: `custody.withdrawal.created.total`
-- [ ] 3-1-6. `WithdrawalService`에 카운터 추가: `custody.withdrawal.policy_rejected.total` (이유 태그 포함)
-- [ ] 3-1-7. `WithdrawalService`에 카운터 추가: `custody.withdrawal.broadcasted.total`
-- [ ] 3-1-8. `WithdrawalService`에 히스토그램 추가: `custody.withdrawal.create.duration` (요청 처리 시간)
-- [ ] 3-1-9. `ConfirmationTracker`에 게이지 추가: `custody.confirmation_tracker.active_tasks` (추적 중인 TX 수)
-- [ ] 3-1-10. `ConfirmationTracker`에 카운터 추가: `custody.confirmation_tracker.timeout.total`
-- [ ] 3-1-11. `EvmRpcAdapter`에 카운터 추가: `custody.rpc.call.total` (메서드명·성공여부 태그)
-- [ ] 3-1-12. `EvmRpcAdapter`에 히스토그램 추가: `custody.rpc.call.duration`
-- [ ] 3-1-13. `RetryReplaceService`에 카운터 추가: `custody.withdrawal.retry.total`, `custody.withdrawal.replace.total`
+- [x] 3-1-1. `spring-boot-starter-actuator` 의존성 추가 (이미 있었음) ✅
+- [x] 3-1-2. `micrometer-registry-prometheus` 의존성 추가 ✅
+- [x] 3-1-3. `application.yaml`에 `/actuator/prometheus` 엔드포인트 노출 설정 ✅
+- [x] 3-1-4. `application.yaml`에 `/actuator/health`, `/actuator/info` 노출 설정 ✅
+- [x] 3-1-5. `WithdrawalService`에 카운터 추가: `custody.withdrawal.created.total` ✅
+- [x] 3-1-6. `WithdrawalService`에 카운터 추가: `custody.withdrawal.policy_rejected.total` (이유 태그 포함) ✅
+- [x] 3-1-7. `WithdrawalService`에 카운터 추가: `custody.withdrawal.broadcasted.total` ✅
+- [x] 3-1-8. `WithdrawalService`에 히스토그램 추가: `custody.withdrawal.create.duration` (요청 처리 시간) ✅
+- [x] 3-1-9. `ConfirmationTracker`에 게이지 추가: `custody.confirmation_tracker.active_tasks` (추적 중인 TX 수) ✅
+- [x] 3-1-10. `ConfirmationTracker`에 카운터 추가: `custody.confirmation_tracker.timeout.total` ✅
+- [x] 3-1-11. `EvmRpcAdapter`에 카운터 추가: `custody.rpc.call.total` (메서드명·성공여부 태그) ✅
+- [x] 3-1-12. `EvmRpcAdapter`에 히스토그램 추가: `custody.rpc.call.duration` ✅
+- [x] 3-1-13. `RetryReplaceService`에 카운터 추가: `custody.withdrawal.retry.total`, `custody.withdrawal.replace.total` ✅
 
 ### 3-2. Grafana 대시보드 구성 (선택적 — docker-compose 포함)
 - [ ] 3-2-1. `docker-compose.yml`에 Prometheus 서비스 추가 (scrape 설정 포함)

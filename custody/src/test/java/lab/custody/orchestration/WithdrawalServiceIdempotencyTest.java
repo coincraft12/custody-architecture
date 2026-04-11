@@ -59,7 +59,8 @@ class WithdrawalServiceIdempotencyTest {
                 policyAuditLogRepository,
                 router,
                 nonceAllocator,
-                transactionTemplate
+                transactionTemplate,
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
         );
 
         when(transactionTemplate.execute(any())).thenAnswer(invocation -> {

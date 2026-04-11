@@ -64,7 +64,8 @@ class RetryReplaceServiceTest {
                 attemptService,
                 router,
                 fakeChain,
-                nonceAllocator
+                nonceAllocator,
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
         );
     }
 

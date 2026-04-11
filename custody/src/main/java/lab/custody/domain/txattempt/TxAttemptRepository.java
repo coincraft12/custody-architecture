@@ -13,4 +13,6 @@ public interface TxAttemptRepository extends JpaRepository<TxAttempt, UUID> {
     Optional<TxAttempt> findFirstByAttemptGroupKeyAndCanonicalTrue(String attemptGroupKey);
 
     List<TxAttempt> findByAttemptGroupKeyOrderByAttemptNoAsc(String attemptGroupKey);
+
+    Optional<TxAttempt> findFirstByWithdrawalIdAndCanonicalTrue(UUID withdrawalId);
 }

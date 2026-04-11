@@ -1,5 +1,8 @@
 package lab.custody.orchestration;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.domain.ledger.LedgerEntry;
@@ -14,7 +17,6 @@ import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lab.custody.domain.withdrawal.WithdrawalStatus;
 import lab.custody.orchestration.policy.PolicyDecision;
 import lab.custody.orchestration.policy.PolicyEngine;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,7 +33,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class WithdrawalService {
 
@@ -43,6 +44,42 @@ public class WithdrawalService {
     private final NonceAllocator nonceAllocator;
     private final TransactionTemplate transactionTemplate;
     private final ConcurrentHashMap<String, ReentrantLock> idempotencyLocks = new ConcurrentHashMap<>();
+
+    private final Counter createdCounter;
+    private final Counter broadcastedCounter;
+    private final Timer createDurationTimer;
+
+    private final MeterRegistry meterRegistry;
+
+    public WithdrawalService(
+            WithdrawalRepository withdrawalRepository,
+            AttemptService attemptService,
+            PolicyEngine policyEngine,
+            PolicyAuditLogRepository policyAuditLogRepository,
+            ChainAdapterRouter router,
+            NonceAllocator nonceAllocator,
+            TransactionTemplate transactionTemplate,
+            MeterRegistry meterRegistry
+    ) {
+        this.withdrawalRepository = withdrawalRepository;
+        this.attemptService = attemptService;
+        this.policyEngine = policyEngine;
+        this.policyAuditLogRepository = policyAuditLogRepository;
+        this.router = router;
+        this.nonceAllocator = nonceAllocator;
+        this.transactionTemplate = transactionTemplate;
+        this.meterRegistry = meterRegistry;
+
+        this.createdCounter = Counter.builder("custody.withdrawal.created.total")
+                .description("Total number of new withdrawals created")
+                .register(meterRegistry);
+        this.broadcastedCounter = Counter.builder("custody.withdrawal.broadcasted.total")
+                .description("Total number of withdrawals successfully broadcasted")
+                .register(meterRegistry);
+        this.createDurationTimer = Timer.builder("custody.withdrawal.create.duration")
+                .description("Time to create and broadcast a withdrawal")
+                .register(meterRegistry);
+    }
 
     @Autowired(required = false)
     private ApprovalService approvalService;
@@ -90,6 +127,10 @@ public class WithdrawalService {
     }
 
     private Withdrawal createAndBroadcast(String idempotencyKey, ChainType chainType, CreateWithdrawalRequest req) {
+        return createDurationTimer.record(() -> doCreateAndBroadcast(idempotencyKey, chainType, req));
+    }
+
+    private Withdrawal doCreateAndBroadcast(String idempotencyKey, ChainType chainType, CreateWithdrawalRequest req) {
         long amountWei = ethToWei(req.amount());
 
         Withdrawal saved = withdrawalRepository.save(Withdrawal.requested(
@@ -101,6 +142,7 @@ public class WithdrawalService {
                 amountWei
         ));
         log.info("event=withdrawal_service.create.persisted withdrawalId={} status={}", saved.getId(), saved.getStatus());
+        createdCounter.increment();
         if (ledgerService != null) {
             saved = ledgerService.saveWithdrawal(saved);
         }
@@ -117,6 +159,11 @@ public class WithdrawalService {
         if (!decision.allowed()) {
             saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
             log.info("event=withdrawal_service.policy.rejected withdrawalId={} status={}", saved.getId(), saved.getStatus());
+            Counter.builder("custody.withdrawal.policy_rejected.total")
+                    .description("Total number of withdrawals rejected by policy")
+                    .tag("reason", decision.reason() != null ? decision.reason() : "unknown")
+                    .register(meterRegistry)
+                    .increment();
             if (ledgerService != null) {
                 return ledgerService.saveWithdrawal(saved);
             }
@@ -208,6 +255,7 @@ public class WithdrawalService {
         attempt.transitionTo(TxAttemptStatus.BROADCASTED);
         withdrawal.transitionTo(WithdrawalStatus.W5_SIGNED);
         withdrawal.transitionTo(WithdrawalStatus.W6_BROADCASTED);
+        broadcastedCounter.increment();
         log.info(
                 "event=withdrawal_service.broadcast.success withdrawalId={} attemptId={} txHash={} withdrawalStatus={} attemptStatus={}",
                 withdrawal.getId(),

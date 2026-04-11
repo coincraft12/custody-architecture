@@ -1,5 +1,7 @@
 package lab.custody.orchestration;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.adapter.EvmMockAdapter;
@@ -13,7 +15,6 @@ import lab.custody.domain.withdrawal.Withdrawal;
 import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lab.custody.domain.withdrawal.WithdrawalStatus;
 import lab.custody.sim.fakechain.FakeChain;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -24,7 +25,6 @@ import java.util.List;
 import java.util.UUID;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class RetryReplaceService {
 
@@ -37,9 +37,34 @@ public class RetryReplaceService {
     private final ChainAdapterRouter router;
     private final FakeChain fakeChain;
     private final NonceAllocator nonceAllocator;
+    private final Counter retryCounter;
+    private final Counter replaceCounter;
 
     @Autowired(required = false)
     private LedgerService ledgerService;
+
+    public RetryReplaceService(
+            WithdrawalRepository withdrawalRepository,
+            TxAttemptRepository txAttemptRepository,
+            AttemptService attemptService,
+            ChainAdapterRouter router,
+            FakeChain fakeChain,
+            NonceAllocator nonceAllocator,
+            MeterRegistry meterRegistry
+    ) {
+        this.withdrawalRepository = withdrawalRepository;
+        this.txAttemptRepository = txAttemptRepository;
+        this.attemptService = attemptService;
+        this.router = router;
+        this.fakeChain = fakeChain;
+        this.nonceAllocator = nonceAllocator;
+        this.retryCounter = Counter.builder("custody.withdrawal.retry.total")
+                .description("Total number of withdrawal retry attempts")
+                .register(meterRegistry);
+        this.replaceCounter = Counter.builder("custody.withdrawal.replace.total")
+                .description("Total number of withdrawal fee-bump replace attempts")
+                .register(meterRegistry);
+    }
 
     @Transactional
     public TxAttempt retry(UUID withdrawalId) {
@@ -64,6 +89,7 @@ public class RetryReplaceService {
         nonceAllocator.releaseByAttemptIdIfPresent(canonical.getId());
 
         TxAttempt saved = txAttemptRepository.save(retried);
+        retryCounter.increment();
         log.info(
                 "event=retry_replace.retry.done withdrawalId={} attemptId={} nonce={} status={} canonical={} reservationId={}",
                 withdrawalId,
@@ -108,6 +134,7 @@ public class RetryReplaceService {
         nonceAllocator.rebindAttemptIfPresent(canonical.getId(), replaced.getId());
 
         TxAttempt saved = txAttemptRepository.save(replaced);
+        replaceCounter.increment();
         log.info(
                 "event=retry_replace.replace.done withdrawalId={} attemptId={} nonce={} status={} canonical={} maxPriorityFeePerGas={} maxFeePerGas={}",
                 withdrawalId,

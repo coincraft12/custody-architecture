@@ -1,5 +1,8 @@
 package lab.custody.orchestration;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.adapter.EvmRpcAdapter;
@@ -16,9 +19,13 @@ import org.springframework.stereotype.Component;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
 @Slf4j
@@ -31,13 +38,18 @@ public class ConfirmationTracker {
     private final int maxTries;
     private final long pollIntervalSeconds;
 
+    private final AtomicInteger activeTasks = new AtomicInteger(0);
+    private final Set<UUID> trackingSet = ConcurrentHashMap.newKeySet();
+    private final Counter timeoutCounter;
+
     @Autowired
     public ConfirmationTracker(
             ChainAdapterRouter router,
             TxAttemptRepository txAttemptRepository,
-            WithdrawalRepository withdrawalRepository
+            WithdrawalRepository withdrawalRepository,
+            MeterRegistry meterRegistry
     ) {
-        this(router, txAttemptRepository, withdrawalRepository, Executors.newCachedThreadPool(), 60, 2);
+        this(router, txAttemptRepository, withdrawalRepository, Executors.newCachedThreadPool(), 60, 2, meterRegistry);
     }
 
     ConfirmationTracker(
@@ -46,7 +58,8 @@ public class ConfirmationTracker {
             WithdrawalRepository withdrawalRepository,
             ExecutorService executor,
             int maxTries,
-            long pollIntervalSeconds
+            long pollIntervalSeconds,
+            MeterRegistry meterRegistry
     ) {
         this.router = router;
         this.txAttemptRepository = txAttemptRepository;
@@ -54,16 +67,41 @@ public class ConfirmationTracker {
         this.executor = executor;
         this.maxTries = maxTries;
         this.pollIntervalSeconds = pollIntervalSeconds;
+
+        Gauge.builder("custody.confirmation_tracker.active_tasks", activeTasks, AtomicInteger::get)
+                .description("Number of transactions currently being tracked for confirmation")
+                .register(meterRegistry);
+        this.timeoutCounter = Counter.builder("custody.confirmation_tracker.timeout.total")
+                .description("Total number of confirmation tracking attempts that timed out")
+                .register(meterRegistry);
     }
 
     // Start receipt tracking asynchronously so API callers do not block on chain confirmation time.
     public void startTracking(TxAttempt attempt) {
-        submitWithMdc(() -> trackAttemptInternal(attempt.getId()));
+        startTrackingByAttemptId(attempt.getId());
     }
 
     // Variant used by demo/manual endpoints when only the attempt id is available.
-    public void startTrackingByAttemptId(java.util.UUID attemptId) {
-        submitWithMdc(() -> trackAttemptInternal(attemptId));
+    // Returns true if tracking was started, false if already in progress (duplicate skipped).
+    public boolean startTrackingByAttemptId(UUID attemptId) {
+        if (!trackingSet.add(attemptId)) {
+            log.debug("Confirmation tracking already active for attempt {}, skipping", attemptId);
+            return false;
+        }
+        activeTasks.incrementAndGet();
+        submitWithMdc(() -> {
+            try {
+                trackAttemptInternal(attemptId);
+            } finally {
+                trackingSet.remove(attemptId);
+                activeTasks.decrementAndGet();
+            }
+        });
+        return true;
+    }
+
+    public boolean isTracking(UUID attemptId) {
+        return trackingSet.contains(attemptId);
     }
 
     private void submitWithMdc(Runnable task) {
@@ -152,6 +190,7 @@ public class ConfirmationTracker {
                 timeoutAttempt.transitionTo(TxAttemptStatus.FAILED_TIMEOUT);
                 txAttemptRepository.save(timeoutAttempt);
             }
+            timeoutCounter.increment();
             log.info("Attempt {} marked FAILED_TIMEOUT after polling", attemptId);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
