@@ -9,6 +9,15 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- Prometheus AlertRule (3-4) + 트랜잭션 일관성 (6-2) + Outbox 패턴 (6-3) 완료 (2026-04-12)
+  - `monitoring/prometheus/alerts.yml`: 4개 AlertRule — WithdrawalHighPolicyRejectedRate / ConfirmationTrackerTimeoutHigh / EvmRpcHighErrorRate / HikariPoolSaturation
+  - `monitoring/prometheus/prometheus.yml`: `rule_files: - alerts.yml` 참조 추가
+  - `WithdrawalService.broadcastAttempt()`: 6-2-1 시나리오 분석 주석(broadcast→DB 롤백 불일치); 6-2-2/6-3-3 `WITHDRAWAL_BROADCASTED` OutboxEvent 동일 트랜잭션 저장
+  - `LedgerService`: 6-2-3/6-2-4 트랜잭션 경계 확인 javadoc 추가
+  - `OutboxPublisher`: `@Scheduled(fixedDelayString)` 5s 폴링 → PENDING 이벤트 로그 발행(Phase 3 Kafka 대체), `markPublished()` 중복 방지
+  - `OutboxEvent.payload`: `columnDefinition = "jsonb"` → `@JdbcTypeCode(SqlTypes.JSON)` (H2/PostgreSQL 공용)
+  - `WithdrawalService` 생성자에 `OutboxEventRepository` 추가; `WithdrawalServiceIdempotencyTest` 업데이트
+  - 전체 124개 테스트 통과
 - 에러 응답 표준화 (6-1) + 커스텀 헬스 인디케이터 (3-3) 완료 (2026-04-12)
   - `GlobalExceptionHandler` 전면 재작성: 통합 `ApiErrorResponse { status, errorCode, message, path, correlationId, timestamp }`
   - 신규 핸들러: `DataAccessException`/`TransactionSystemException` → 503, `NoHandlerFoundException`/`NoResourceFoundException` → 404
@@ -72,6 +81,9 @@
   - 기존 생성자 주입 방식으로 `MeterRegistry` 주입, 테스트 3개 `SimpleMeterRegistry` 추가
 
 ## 완료된 주요 작업
+- Prometheus AlertRule (3-4) 완료 (2026-04-12)
+- 트랜잭션 일관성 보장 (6-2) 완료 (2026-04-12)
+- Outbox 패턴 기본 구현 (6-3) 완료 (2026-04-12)
 - 에러 응답 표준화 (6-1) 완료 (2026-04-12)
 - 커스텀 헬스 인디케이터 (3-3) 완료 (2026-04-12)
 - 넌스 충돌 감지 복구 (1-4) 완료 (2026-04-12)
@@ -92,8 +104,9 @@
 - Rate Limiting (2-4) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟡 Prometheus AlertRule 정의 (3-4)
-2. 🟡 트랜잭션 일관성 보장 (6-2)
+1. 🟠 Circuit Breaker + Retry (4-1~4-2)
+2. 🔴 ConfirmationTracker 설정 외부화 (5-1)
+3. 🔴 Finalization 블록 수 확인 (5-2)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)

@@ -2,6 +2,8 @@ package lab.custody.domain.outbox;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -46,8 +48,9 @@ public class OutboxEvent {
     @Column(name = "event_type", nullable = false, length = 64)
     private String eventType;
 
-    /** JSON 직렬화된 이벤트 페이로드 */
-    @Column(nullable = false, columnDefinition = "jsonb")
+    /** JSON 직렬화된 이벤트 페이로드. Hibernate 6: PostgreSQL → jsonb, H2 → json */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(nullable = false)
     private String payload;
 
     @Enumerated(EnumType.STRING)

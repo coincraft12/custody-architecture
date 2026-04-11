@@ -7,6 +7,8 @@ import lab.custody.adapter.BroadcastRejectedException;
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.domain.ledger.LedgerEntry;
+import lab.custody.domain.outbox.OutboxEvent;
+import lab.custody.domain.outbox.OutboxEventRepository;
 import lab.custody.domain.txattempt.AttemptExceptionType;
 import lab.custody.domain.nonce.NonceReservation;
 import lab.custody.domain.policy.PolicyAuditLog;
@@ -51,6 +53,7 @@ public class WithdrawalService {
     private final Counter broadcastedCounter;
     private final Timer createDurationTimer;
 
+    private final OutboxEventRepository outboxEventRepository;
     private final MeterRegistry meterRegistry;
 
     public WithdrawalService(
@@ -61,6 +64,7 @@ public class WithdrawalService {
             ChainAdapterRouter router,
             NonceAllocator nonceAllocator,
             TransactionTemplate transactionTemplate,
+            OutboxEventRepository outboxEventRepository,
             MeterRegistry meterRegistry
     ) {
         this.withdrawalRepository = withdrawalRepository;
@@ -70,6 +74,7 @@ public class WithdrawalService {
         this.router = router;
         this.nonceAllocator = nonceAllocator;
         this.transactionTemplate = transactionTemplate;
+        this.outboxEventRepository = outboxEventRepository;
         this.meterRegistry = meterRegistry;
 
         this.createdCounter = Counter.builder("custody.withdrawal.created.total")
@@ -263,6 +268,13 @@ public class WithdrawalService {
     }
 
     private void broadcastAttempt(Withdrawal withdrawal, TxAttempt attempt) {
+        // 6-2-1: 브로드캐스트 성공 후 트랜잭션 커밋 전에 DB 저장 실패 시나리오.
+        // RPC broadcast()가 반환된 시점에 TX는 이미 mempool에 존재한다.
+        // 이후 nonceAllocator.commit() 또는 ledgerService.saveWithdrawal()이 예외를 던지면
+        // transactionTemplate이 전체 트랜잭션을 롤백하므로 DB에는 W6_BROADCASTED 기록이 없다.
+        // 결과: TX는 mempool에 있지만 DB는 이전 상태를 유지 → 데이터 불일치.
+        // 경감 전략: (a) OutboxEvent 기록 (아래), (b) StartupRecoveryService 재추적,
+        //            (c) Phase 3 — 트랜잭션 경계를 broadcast 전/후로 분리하여 근본 해결.
         ChainAdapter.BroadcastResult result = router.resolve(withdrawal.getChainType()).broadcast(
                 new ChainAdapter.BroadcastCommand(
                         withdrawal.getId(),
@@ -289,6 +301,17 @@ public class WithdrawalService {
                 withdrawal.getStatus(),
                 attempt.getStatus()
         );
+
+        // 6-2-2 / 6-3-3: 같은 트랜잭션 내에 WITHDRAWAL_BROADCASTED Outbox 이벤트 기록.
+        // 트랜잭션이 정상 커밋되면 OutboxPublisher가 외부 시스템에 발행한다.
+        // ⚠️ 제한(6-2-1 참조): 이 저장도 외부 TX 롤백 시 함께 롤백된다.
+        //    Phase 3에서 broadcast 전/후 트랜잭션 분리로 근본 해결 예정.
+        String payload = String.format(
+                "{\"withdrawalId\":\"%s\",\"txHash\":\"%s\",\"nonce\":%d,\"fromAddress\":\"%s\",\"toAddress\":\"%s\"}",
+                withdrawal.getId(), result.txHash(), attempt.getNonce(),
+                withdrawal.getFromAddress(), withdrawal.getToAddress());
+        outboxEventRepository.save(
+                OutboxEvent.create("Withdrawal", withdrawal.getId(), "WITHDRAWAL_BROADCASTED", payload));
     }
 
     private Withdrawal validateIdempotentRequest(Withdrawal existing, ChainType chainType, CreateWithdrawalRequest req) {

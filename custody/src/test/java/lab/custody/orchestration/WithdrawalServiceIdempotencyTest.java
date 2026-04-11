@@ -3,6 +3,7 @@ package lab.custody.orchestration;
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.domain.nonce.NonceReservation;
+import lab.custody.domain.outbox.OutboxEventRepository;
 import lab.custody.domain.policy.PolicyAuditLogRepository;
 import lab.custody.domain.txattempt.TxAttemptRepository;
 import lab.custody.domain.withdrawal.ChainType;
@@ -45,6 +46,7 @@ class WithdrawalServiceIdempotencyTest {
     @Mock NonceAllocator nonceAllocator;
     @Mock ChainAdapter adapter;
     @Mock TransactionTemplate transactionTemplate;
+    @Mock OutboxEventRepository outboxEventRepository;
 
     WithdrawalService withdrawalService;
 
@@ -60,6 +62,7 @@ class WithdrawalServiceIdempotencyTest {
                 router,
                 nonceAllocator,
                 transactionTemplate,
+                outboxEventRepository,
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
         );
 

@@ -2,6 +2,10 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# 3-4: AlertRule 파일 참조
+rule_files:
+  - alerts.yml
+
 scrape_configs:
   - job_name: custody
     metrics_path: /actuator/prometheus

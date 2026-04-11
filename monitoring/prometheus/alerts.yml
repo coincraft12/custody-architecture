@@ -1,0 +1,64 @@
+groups:
+  - name: custody
+    interval: 1m
+    rules:
+
+      # 3-4-1: 출금 정책 거부율 — 5분간 policy_rejected / created 비율 50% 초과 시 경고
+      - alert: WithdrawalHighPolicyRejectedRate
+        expr: |
+          (
+            rate(custody_withdrawal_policy_rejected_total[5m])
+            /
+            clamp_min(rate(custody_withdrawal_created_total[5m]), 0.001)
+          ) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High withdrawal policy rejection rate ({{ $labels.instance }})"
+          description: >
+            Policy rejection rate is {{ $value | humanizePercentage }} over the last 5 minutes.
+            Possible causes: policy rule change, abnormal request pattern, address whitelist expiry.
+
+      # 3-4-2: ConfirmationTracker 타임아웃 급증 — 10분간 5건 초과
+      - alert: ConfirmationTrackerTimeoutHigh
+        expr: |
+          increase(custody_confirmation_tracker_timeout_total[10m]) > 5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High ConfirmationTracker timeout count ({{ $labels.instance }})"
+          description: >
+            {{ $value }} TX confirmation timeouts in the last 10 minutes.
+            Possible causes: RPC node unavailable, gas price too low, network congestion.
+
+      # 3-4-3: EVM RPC 오류율 — 5분간 실패 비율 20% 초과
+      - alert: EvmRpcHighErrorRate
+        expr: |
+          (
+            rate(custody_rpc_call_total{success="false"}[5m])
+            /
+            clamp_min(rate(custody_rpc_call_total[5m]), 0.001)
+          ) > 0.2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High EVM RPC error rate ({{ $labels.instance }})"
+          description: >
+            RPC error rate is {{ $value | humanizePercentage }} over the last 5 minutes.
+            Possible causes: RPC node overload, network partition, authentication failure.
+
+      # 3-4-4: HikariCP 커넥션 풀 포화 — 대기 스레드 1건 이상 1분 지속
+      - alert: HikariPoolSaturation
+        expr: |
+          hikaricp_connections_pending > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HikariCP connection pool saturation ({{ $labels.instance }})"
+          description: >
+            {{ $value }} threads are waiting for a DB connection.
+            Consider increasing maximum-pool-size or investigating slow queries.

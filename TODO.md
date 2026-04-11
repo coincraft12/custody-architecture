@@ -143,10 +143,10 @@
 - [x] 3-3-4. 헬스체크 응답에 버전 정보 포함 — `build.gradle: springBoot { buildInfo() }` + `management.info.build.enabled: true` + `info.app.*` 설정 추가 ✅
 
 ### 3-4. 알림 (Alerting)
-- [ ] 3-4-1. 출금 실패율 임계값 초과 시 알림 규칙 정의 (Prometheus AlertRule 파일)
-- [ ] 3-4-2. ConfirmationTracker 타임아웃 건수 임계값 알림 규칙 정의
-- [ ] 3-4-3. RPC 오류율 임계값 알림 규칙 정의
-- [ ] 3-4-4. DB 커넥션 풀 포화 알림 규칙 정의
+- [x] 3-4-1. 출금 실패율 임계값 초과 시 알림 규칙 정의 (Prometheus AlertRule 파일) — `monitoring/prometheus/alerts.yml` + `prometheus.yml` rule_files 참조 ✅
+- [x] 3-4-2. ConfirmationTracker 타임아웃 건수 임계값 알림 규칙 정의 ✅
+- [x] 3-4-3. RPC 오류율 임계값 알림 규칙 정의 ✅
+- [x] 3-4-4. DB 커넥션 풀 포화 알림 규칙 정의 ✅
 
 ---
 
@@ -222,17 +222,17 @@
 - [x] 6-1-6. 에러 응답 표준화: `ApiErrorResponse { status, errorCode, message, path, correlationId, timestamp }` 통합 적용; `ValidationErrorResponse`에도 `errorCode`/`timestamp` 추가 ✅
 
 ### 6-2. 트랜잭션 일관성 보장
-- [ ] 6-2-1. `WithdrawalService.createAndBroadcast()`에서 브로드캐스트 성공 후 DB 저장 실패 시 TX가 mempool에 남는 시나리오 분석 및 주석 추가
-- [ ] 6-2-2. 브로드캐스트 후 DB 저장 실패 시 `outbox_events` 테이블에 보상(compensation) 이벤트 기록하는 로직 추가
-- [ ] 6-2-3. `LedgerService.reserve()`가 실패하면 W3 전이 롤백되는지 트랜잭션 경계 확인
-- [ ] 6-2-4. `LedgerService.settle()` + W9→W10 전이가 동일 트랜잭션 안에 있는지 확인
+- [x] 6-2-1. `WithdrawalService.createAndBroadcast()`에서 브로드캐스트 성공 후 DB 저장 실패 시 TX가 mempool에 남는 시나리오 분석 및 주석 추가 — `broadcastAttempt()` 상단 6-2-1 주석 ✅
+- [x] 6-2-2. 브로드캐스트 후 DB 저장 실패 시 `outbox_events` 테이블에 보상(compensation) 이벤트 기록하는 로직 추가 — `broadcastAttempt()` 말미에 `WITHDRAWAL_BROADCASTED` OutboxEvent 저장; 롤백 한계 및 Phase 3 분리 계획 주석 포함 ✅
+- [x] 6-2-3. `LedgerService.reserve()`가 실패하면 W3 전이 롤백되는지 트랜잭션 경계 확인 — `LedgerService.reserve()` javadoc 확인 주석 추가 ✅
+- [x] 6-2-4. `LedgerService.settle()` + W9→W10 전이가 동일 트랜잭션 안에 있는지 확인 — `LedgerService.settle()` `@Transactional` javadoc 확인 주석 추가 ✅
 
 ### 6-3. Outbox 패턴 (기본 구현) — ⚠️ CRITICAL 격상 권고
-- [ ] 6-3-1. `OutboxEvent` JPA 엔티티 클래스 작성 (`id`, `aggregateType`, `aggregateId`, `eventType`, `payload`(JSONB), `published`, `createdAt`)
-- [ ] 6-3-2. `OutboxEventRepository` 작성
-- [ ] 6-3-3. `WithdrawalService`의 주요 상태 전이 시 Outbox 이벤트 기록 (같은 트랜잭션 내)
-- [ ] 6-3-4. `OutboxPublisher` 스케줄러 작성: unpublished 이벤트를 주기적으로 조회 후 로그에 출력 (실제 Kafka 연동은 Phase 3)
-- [ ] 6-3-5. `outbox_events.published = true` 처리로 중복 발행 방지
+- [x] 6-3-1. `OutboxEvent` JPA 엔티티 클래스 작성 — 섹션 0-1-2에서 완료; `@JdbcTypeCode(SqlTypes.JSON)` 적용으로 H2/PostgreSQL 공용 JSON 컬럼 ✅
+- [x] 6-3-2. `OutboxEventRepository` 작성 — 섹션 0-2-3에서 완료 ✅
+- [x] 6-3-3. `WithdrawalService`의 주요 상태 전이 시 Outbox 이벤트 기록 (같은 트랜잭션 내) — `broadcastAttempt()` 말미에 `WITHDRAWAL_BROADCASTED` 이벤트 저장 ✅
+- [x] 6-3-4. `OutboxPublisher` 스케줄러 작성: PENDING 이벤트를 주기적으로 조회 후 로그에 출력 (`custody.outbox.poll-interval-ms` 설정, Phase 3 Kafka 연동 예정) ✅
+- [x] 6-3-5. `outbox_events.published = true` 처리로 중복 발행 방지 — `OutboxEvent.markPublished()` 호출 후 저장 ✅
 
 ---
 

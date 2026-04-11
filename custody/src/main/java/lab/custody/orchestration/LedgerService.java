@@ -36,6 +36,10 @@ public class LedgerService {
     /**
      * W3_APPROVED 시점: 출금 자금 예약(RESERVE) 원장 기록.
      * createAndBroadcast() 트랜잭션 내에서 호출되므로 W6_BROADCASTED와 함께 커밋됨.
+     *
+     * <p>6-2-3 확인: {@code WithdrawalService.doCreateAndBroadcast()}는
+     * {@code TransactionTemplate.execute()} 안에서 실행되므로,
+     * {@code reserve()}가 예외를 던지면 W3 전이와 원장 기록이 함께 롤백된다. ✓
      */
     public void reserve(Withdrawal w) {
         LedgerEntry entry = LedgerEntry.reserve(
@@ -48,6 +52,9 @@ public class LedgerService {
     /**
      * W8_SAFE_FINALIZED 시점: 온체인 최종 확정 후 정산(SETTLE) 원장 기록.
      * W9_LEDGER_POSTED → W10_COMPLETED 전환 포함.
+     *
+     * <p>6-2-4 확인: {@code @Transactional}이 선언되어 있으므로 SETTLE 원장 기록과
+     * W9_LEDGER_POSTED → W10_COMPLETED 전이가 동일 트랜잭션 안에서 커밋된다. ✓
      */
     @Transactional
     public Withdrawal settle(Withdrawal w) {
