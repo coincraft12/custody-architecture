@@ -9,6 +9,13 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- Rate Limiting (2-4) 구현 완료 (2026-04-11)
+  - `bucket4j-core:8.10.1` 의존성 추가
+  - `RateLimitProperties`: `custody.rate-limit.enabled/withdrawalsPerSecond/whitelistPerSecond`
+  - `RateLimitFilter`: `OncePerRequestFilter`, `ConcurrentHashMap<IP, Bucket>`, `POST /withdrawals`(10/s) + `POST /whitelist`(20/s) 대상, 초과 시 429 + `Retry-After: 1`
+  - `@ConditionalOnProperty(custody.rate-limit.enabled=true)` — 테스트에서 비활성화 가능
+  - `RateLimitFilterTest` 3개 테스트 (X-Forwarded-For로 IP 격리)
+  - 전체 119개 테스트 통과
 - Grafana 대시보드 구성 (3-2) 완료 (2026-04-11)
   - `monitoring/prometheus/prometheus.yml`: custody:8080/actuator/prometheus 15s 스크래핑
   - `monitoring/grafana/provisioning/`: datasource(Prometheus) + dashboard 자동 프로비저닝
@@ -52,9 +59,10 @@
 - 서버 재시작 후 미완료 TX 재추적 (5-3) 완료 (2026-04-11)
 - 입력 검증 Bean Validation (2-2) 완료 (2026-04-11)
 - Grafana 대시보드 구성 (3-2) 완료 (2026-04-11)
+- Rate Limiting (2-4) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟠 Rate Limiting (2-4) — bucket4j
+1. 🟡 민감정보 마스킹 (2-5)
 2. 🟡 넌스 충돌 감지 복구 (1-4)
 
 ## 참고 파일

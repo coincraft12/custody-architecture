@@ -59,6 +59,10 @@ custody:
     scheduler-delay-ms: ${CUSTODY_WHITELIST_SCHEDULER_DELAY_MS:60000}
   nonce:
     expiry-minutes: ${CUSTODY_NONCE_EXPIRY_MINUTES:10}
+  rate-limit:
+    enabled: ${CUSTODY_RATE_LIMIT_ENABLED:true}
+    withdrawals-per-second: ${CUSTODY_RATE_LIMIT_WITHDRAWALS_PER_SECOND:10}
+    whitelist-per-second: ${CUSTODY_RATE_LIMIT_WHITELIST_PER_SECOND:20}
   evm:
     rpc-url: ${CUSTODY_EVM_RPC_URL:https://ethereum-sepolia-rpc.publicnode.com}
     chain-id: ${CUSTODY_EVM_CHAIN_ID:11155111}

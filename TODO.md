@@ -97,10 +97,10 @@
 - [x] 2-3-6. H2 콘솔(`/h2/**`)을 `production` 프로파일에서 비활성화 확인
 
 ### 2-4. Rate Limiting / DDoS 방어
-- [ ] 2-4-1. `bucket4j` 의존성 추가 (`com.github.bucket4j:bucket4j-core`)
-- [ ] 2-4-2. `POST /withdrawals` 엔드포인트에 IP 기준 Rate Limit 필터 적용 (예: 초당 10 요청)
-- [ ] 2-4-3. `POST /whitelist` 엔드포인트에 IP 기준 Rate Limit 적용
-- [ ] 2-4-4. Rate Limit 초과 시 `429 Too Many Requests` 표준 응답 반환
+- [x] 2-4-1. `bucket4j` 의존성 추가 (`com.github.bucket4j:bucket4j-core`)
+- [x] 2-4-2. `POST /withdrawals` 엔드포인트에 IP 기준 Rate Limit 필터 적용 (예: 초당 10 요청)
+- [x] 2-4-3. `POST /whitelist` 엔드포인트에 IP 기준 Rate Limit 적용
+- [x] 2-4-4. Rate Limit 초과 시 `429 Too Many Requests` 표준 응답 반환
 
 ### 2-5. 민감정보 마스킹
 - [ ] 2-5-1. 로그 출력 시 `private-key` 값 마스킹 확인 (`application.yaml` `logging.level` 수준 점검)
