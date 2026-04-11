@@ -8,6 +8,7 @@ import lab.custody.domain.withdrawal.ChainType;
 import lab.custody.orchestration.InvalidRequestException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -114,22 +115,31 @@ public class WhitelistService {
     @Scheduled(fixedDelayString = "${custody.whitelist.scheduler-delay-ms:60000}")
     @Transactional
     public void promoteHoldingToActive() {
-        List<WhitelistAddress> ready =
-                whitelistRepository.findByStatusAndActiveAfterLessThanEqual(WhitelistStatus.HOLDING, Instant.now());
+        // 8-1-3: 스케줄러 실행마다 고유 correlationId 생성
+        String correlationId = "sched-wl-" + UUID.randomUUID().toString().substring(0, 8);
+        MDC.put("correlationId", correlationId);
+        try {
+            List<WhitelistAddress> ready =
+                    whitelistRepository.findByStatusAndActiveAfterLessThanEqual(WhitelistStatus.HOLDING, Instant.now());
 
-        if (ready.isEmpty()) return;
+            if (ready.isEmpty()) return;
 
-        log.info("event=whitelist.scheduler.promote count={}", ready.size());
-        for (WhitelistAddress entry : ready) {
-            try {
-                entry.activate();
-                whitelistRepository.save(entry);
-                log.info("event=whitelist.activated id={} address={} chainType={}",
-                        entry.getId(), entry.getAddress(), entry.getChainType());
-            } catch (IllegalStateException e) {
-                // Ignore race with concurrent revoke/activate and continue.
-                log.warn("event=whitelist.scheduler.promote.skip id={} reason={}", entry.getId(), e.getMessage());
+            // 8-1-4: scheduler=WhitelistScheduler 형식 구조화 로그
+            log.info("event=whitelist.scheduler.promote scheduler=WhitelistScheduler promoted={}", ready.size());
+            for (WhitelistAddress entry : ready) {
+                try {
+                    entry.activate();
+                    whitelistRepository.save(entry);
+                    log.info("event=whitelist.activated scheduler=WhitelistScheduler id={} address={} chainType={}",
+                            entry.getId(), entry.getAddress(), entry.getChainType());
+                } catch (IllegalStateException e) {
+                    // Ignore race with concurrent revoke/activate and continue.
+                    log.warn("event=whitelist.scheduler.promote.skip scheduler=WhitelistScheduler id={} reason={}",
+                            entry.getId(), e.getMessage());
+                }
             }
+        } finally {
+            MDC.remove("correlationId");
         }
     }
 

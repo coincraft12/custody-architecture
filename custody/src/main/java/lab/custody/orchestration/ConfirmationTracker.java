@@ -119,7 +119,7 @@ public class ConfirmationTracker {
     // Returns true if tracking was started, false if already in progress (duplicate skipped).
     public boolean startTrackingByAttemptId(UUID attemptId) {
         if (!trackingSet.add(attemptId)) {
-            log.debug("Confirmation tracking already active for attempt {}, skipping", attemptId);
+            log.debug("event=confirmation_tracker.skip_duplicate attemptId={}", attemptId);
             return false;
         }
         activeTasks.incrementAndGet();
@@ -158,31 +158,32 @@ public class ConfirmationTracker {
     // Tracking and broadcasting are intentionally separate responsibilities in this architecture.
     private void trackAttemptInternal(UUID attemptId) {
         try {
-            log.debug("Starting confirmation tracking for attempt {}", attemptId);
+            log.debug("event=confirmation_tracker.start attemptId={}", attemptId);
 
             var attemptOpt = txAttemptRepository.findById(attemptId);
             if (attemptOpt.isEmpty()) {
-                log.warn("Attempt {} not found, aborting tracking", attemptId);
+                log.warn("event=confirmation_tracker.attempt_not_found attemptId={}", attemptId);
                 return;
             }
             TxAttempt attempt = attemptOpt.get();
 
             var wopt = withdrawalRepository.findById(attempt.getWithdrawalId());
             if (wopt.isEmpty()) {
-                log.warn("Withdrawal {} not found for attempt {}, aborting", attempt.getWithdrawalId(), attemptId);
+                log.warn("event=confirmation_tracker.withdrawal_not_found withdrawalId={} attemptId={}",
+                        attempt.getWithdrawalId(), attemptId);
                 return;
             }
             Withdrawal withdrawal = wopt.get();
 
             ChainAdapter adapter = router.resolve(withdrawal.getChainType());
             if (!(adapter instanceof EvmRpcAdapter rpcAdapter)) {
-                log.debug("Adapter for chain {} does not support receipt polling", withdrawal.getChainType());
+                log.debug("event=confirmation_tracker.no_receipt_support chainType={}", withdrawal.getChainType());
                 return;
             }
 
             String txHash = attempt.getTxHash();
             if (txHash == null) {
-                log.debug("Attempt {} has no txHash, aborting tracking", attemptId);
+                log.debug("event=confirmation_tracker.no_tx_hash attemptId={}", attemptId);
                 return;
             }
 
@@ -197,7 +198,7 @@ public class ConfirmationTracker {
                         // Mark W7_INCLUDED
                         var toUpdateAttemptOpt = txAttemptRepository.findById(attemptId);
                         if (toUpdateAttemptOpt.isEmpty()) {
-                            log.warn("Attempt {} disappeared before update", attemptId);
+                            log.warn("event=confirmation_tracker.attempt_gone attemptId={}", attemptId);
                             return;
                         }
                         TxAttempt toUpdateAttempt = toUpdateAttemptOpt.get();
@@ -218,7 +219,7 @@ public class ConfirmationTracker {
                         return;
                     }
                 } catch (Exception e) {
-                    log.warn("Error while polling receipt for tx {}: {}", txHash, e.getMessage());
+                    log.warn("event=confirmation_tracker.receipt_poll_error txHash={} error={}", txHash, e.getMessage());
                 }
                 tries++;
                 if (pollIntervalMs > 0) {
@@ -238,9 +239,9 @@ public class ConfirmationTracker {
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.warn("Confirmation tracking interrupted for attempt {}", attemptId);
+            log.warn("event=confirmation_tracker.interrupted attemptId={}", attemptId);
         } catch (Exception e) {
-            log.error("Unexpected error in confirmation tracker for attempt {}: {}", attemptId, e.getMessage(), e);
+            log.error("event=confirmation_tracker.unexpected_error attemptId={} error={}", attemptId, e.getMessage(), e);
         }
     }
 

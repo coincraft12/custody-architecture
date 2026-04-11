@@ -9,6 +9,16 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- DB 인덱스 최적화 (7-2) + HikariCP 설정 (7-3) + DB 백업 문서화 (7-4) + 로그 표준화 (8-1) 완료 (2026-04-12)
+  - `V4__add_performance_indexes.sql`: `idx_withdrawals_status`, `idx_withdrawals_status_updated_at`, `idx_ledger_entries_withdrawal_type` 3개 인덱스 추가
+  - `application-postgres.yaml`: HikariCP 8개 설정 (maximum-pool-size/minimum-idle/idle-timeout/max-lifetime/connection-timeout/keepalive-time/pool-name) + 환경변수 오버라이드
+  - `docs/operations/db-backup.md`: pg_dump 전체 백업 / WAL PITR / 복구 시나리오 4종 / OutboxEvent 무결성 주의사항 / Prometheus 알림 문서화
+  - `NonceCleaner`: 로그 `event=...` 형식으로 통일 + MDC `correlationId` 자동 생성 (8-1-3/8-1-4)
+  - `WhitelistService.promoteHoldingToActive()`: MDC `correlationId` 자동 생성 + `scheduler=WhitelistScheduler` 형식 (8-1-3/8-1-4)
+  - `OutboxPublisher.publish()`: MDC `correlationId` 자동 생성, `doPublish()` 내부 메서드로 분리 (8-1-3)
+  - `ConfirmationTracker`: 비표준 로그 메시지 전부 `event=...` 형식으로 통일 (8-1-1)
+  - `logback-spring.xml`: `<springProfile name="production">` — JSON_CONSOLE만 출력; `!production` — 파일 appender 병행 (8-1-5)
+  - 전체 124개 테스트 통과
 - 다중 RPC 프로바이더 폴백 (4-3) + Web3j 타임아웃 (4-4) 완료 (2026-04-12)
   - `EvmRpcProviderPool`: primary + fallback Web3j 인스턴스 리스트 보유
   - `EvmRpcConfig`: `@Bean EvmRpcProviderPool` — primary + fallback URL + OkHttp 타임아웃(30s) 설정으로 인스턴스 생성
@@ -103,6 +113,10 @@
   - 기존 생성자 주입 방식으로 `MeterRegistry` 주입, 테스트 3개 `SimpleMeterRegistry` 추가
 
 ## 완료된 주요 작업
+- DB 인덱스 최적화 (7-2) 완료 (2026-04-12)
+- HikariCP 설정 (7-3) 완료 (2026-04-12)
+- DB 백업 및 복구 전략 문서화 (7-4) 완료 (2026-04-12)
+- 로그 표준화 (8-1) 완료 (2026-04-12)
 - 다중 RPC 프로바이더 폴백 (4-3) 완료 (2026-04-12)
 - Web3j 타임아웃 설정 (4-4) 완료 (2026-04-12)
 - Circuit Breaker (4-1) 완료 (2026-04-12)
@@ -132,9 +146,9 @@
 - Rate Limiting (2-4) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟠 DB 인덱스 최적화 (7-2)
-2. 🟠 HikariCP 설정 (7-3)
-3. 🟠 로그 표준화 (8-1)
+1. 🟡 분산 추적 OpenTelemetry 준비 (8-2)
+2. 🟡 감사 로그 강화 (8-3)
+3. 🟡 테스트 커버리지 보강 (9-1~9-4)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)

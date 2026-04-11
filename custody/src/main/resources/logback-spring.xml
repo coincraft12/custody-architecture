@@ -29,18 +29,28 @@
         </encoder>
     </appender>
 
-    <root level="INFO">
-        <appender-ref ref="JSON_CONSOLE"/>
-    </root>
+    <!-- 8-1-5: production 프로파일 — JSON_CONSOLE만 사용 (파일 appender 제외) -->
+    <springProfile name="production">
+        <root level="INFO">
+            <appender-ref ref="JSON_CONSOLE"/>
+        </root>
+    </springProfile>
 
-    <!-- Pretty file log is for lab request-flow logs only (exclude framework/system/test noise). -->
-    <logger name="lab.custody.common" level="INFO" additivity="true">
-        <appender-ref ref="JSON_PRETTY_FILE"/>
-    </logger>
-    <logger name="lab.custody.orchestration" level="INFO" additivity="true">
-        <appender-ref ref="JSON_PRETTY_FILE"/>
-    </logger>
-    <logger name="lab.custody.adapter" level="INFO" additivity="true">
-        <appender-ref ref="JSON_PRETTY_FILE"/>
-    </logger>
+    <!-- non-production: JSON_CONSOLE + lab 패키지는 JSON_PRETTY_FILE 병행 출력 -->
+    <springProfile name="!production">
+        <root level="INFO">
+            <appender-ref ref="JSON_CONSOLE"/>
+        </root>
+
+        <!-- Pretty file log is for lab request-flow logs only (exclude framework/system/test noise). -->
+        <logger name="lab.custody.common" level="INFO" additivity="true">
+            <appender-ref ref="JSON_PRETTY_FILE"/>
+        </logger>
+        <logger name="lab.custody.orchestration" level="INFO" additivity="true">
+            <appender-ref ref="JSON_PRETTY_FILE"/>
+        </logger>
+        <logger name="lab.custody.adapter" level="INFO" additivity="true">
+            <appender-ref ref="JSON_PRETTY_FILE"/>
+        </logger>
+    </springProfile>
 </configuration>

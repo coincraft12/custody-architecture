@@ -5,6 +5,7 @@ import lab.custody.domain.outbox.OutboxEventRepository;
 import lab.custody.domain.outbox.OutboxEventStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -12,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 6-3-4: Outbox 이벤트 발행 스케줄러.
@@ -38,6 +40,17 @@ public class OutboxPublisher {
     @Scheduled(fixedDelayString = "${custody.outbox.poll-interval-ms:5000}")
     @Transactional
     public void publish() {
+        // 8-1-3: 스케줄러 실행마다 고유 correlationId 생성
+        String correlationId = "sched-outbox-" + UUID.randomUUID().toString().substring(0, 8);
+        MDC.put("correlationId", correlationId);
+        try {
+            doPublish();
+        } finally {
+            MDC.remove("correlationId");
+        }
+    }
+
+    private void doPublish() {
         List<OutboxEvent> pending = outboxEventRepository
                 .findByStatusAndAvailableAtLessThanEqualOrderByAvailableAtAsc(
                         OutboxEventStatus.PENDING, Instant.now());
@@ -46,7 +59,7 @@ public class OutboxPublisher {
             return;
         }
 
-        log.debug("event=outbox_publisher.poll pending_count={}", pending.size());
+        log.debug("event=outbox_publisher.poll scheduler=OutboxPublisher pending_count={}", pending.size());
 
         for (OutboxEvent event : pending) {
             try {
