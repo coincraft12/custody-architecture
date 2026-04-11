@@ -9,6 +9,12 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- 다중 RPC 프로바이더 폴백 (4-3) + Web3j 타임아웃 (4-4) 완료 (2026-04-12)
+  - `EvmRpcProviderPool`: primary + fallback Web3j 인스턴스 리스트 보유
+  - `EvmRpcConfig`: `@Bean EvmRpcProviderPool` — primary + fallback URL + OkHttp 타임아웃(30s) 설정으로 인스턴스 생성
+  - `EvmRpcAdapter`: `withFallback()` 헬퍼 — 순서대로 프로바이더 시도, URL 로그 기록; `broadcast()`는 primary only
+  - `application.yaml`: `custody.evm.fallback-rpc-urls` + `connect/read-timeout-seconds` 추가 (환경변수 오버라이드 포함)
+  - 전체 124개 테스트 통과
 - Circuit Breaker (4-1) + Retry + Backoff (4-2) 완료 (2026-04-12)
   - `build.gradle`: `resilience4j-spring-boot3:2.2.0` + `spring-boot-starter-aop` 추가
   - `EvmRpcAdapter.broadcast()`: `@CircuitBreaker(name="evmRpc")` — open 시 `broadcastFallback()` → BroadcastRejectedException
@@ -97,6 +103,8 @@
   - 기존 생성자 주입 방식으로 `MeterRegistry` 주입, 테스트 3개 `SimpleMeterRegistry` 추가
 
 ## 완료된 주요 작업
+- 다중 RPC 프로바이더 폴백 (4-3) 완료 (2026-04-12)
+- Web3j 타임아웃 설정 (4-4) 완료 (2026-04-12)
 - Circuit Breaker (4-1) 완료 (2026-04-12)
 - Retry + Backoff (4-2) 완료 (2026-04-12)
 - ConfirmationTracker 설정 외부화 (5-1) 완료 (2026-04-12)
@@ -124,9 +132,9 @@
 - Rate Limiting (2-4) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟠 다중 RPC 프로바이더 폴백 (4-3)
-2. 🟠 Web3j 타임아웃 설정 (4-4)
-3. 🟠 DB 인덱스 최적화 (7-2)
+1. 🟠 DB 인덱스 최적화 (7-2)
+2. 🟠 HikariCP 설정 (7-3)
+3. 🟠 로그 표준화 (8-1)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)

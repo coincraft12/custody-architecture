@@ -167,17 +167,17 @@
 - [x] 4-2-5. `AttemptExceptionType`에 RPC_TRANSIENT/RPC_PERMANENT/RPC_NETWORK 추가 + javadoc 분류 체계 ✅
 
 ### 4-3. 다중 RPC 프로바이더 폴백
-- [ ] 4-3-1. `application.yaml`에 `custody.evm.fallback-rpc-urls` 리스트 설정 추가
-- [ ] 4-3-2. `EvmRpcConfig`에서 폴백 URL 리스트 읽어 `Web3j` 인스턴스 리스트 생성
-- [ ] 4-3-3. `EvmRpcAdapter`에 Round-Robin 또는 Priority 기반 프로바이더 선택 로직 구현
-- [ ] 4-3-4. 1차 RPC 실패 시 자동으로 다음 프로바이더로 전환하는 폴백 로직 구현
-- [ ] 4-3-5. 사용 중인 RPC URL을 로그에 기록 (추적 가능성)
+- [x] 4-3-1. `application.yaml`에 `custody.evm.fallback-rpc-urls` 추가 (쉼표 구분, 기본 빈 값) ✅
+- [x] 4-3-2. `EvmRpcConfig`: `EvmRpcProviderPool` 빈 생성 — primary + fallback URL 리스트로 Web3j 인스턴스 리스트 구성 ✅
+- [x] 4-3-3. `EvmRpcAdapter.withFallback()`: Priority 순서 (0→N) 기반 프로바이더 선택 로직 구현 ✅
+- [x] 4-3-4. `getPendingNonce/getReceipt/getBlockNumber/getTransaction()`: 1차 실패 시 다음 프로바이더 자동 전환; `broadcast()`는 primary only (멱등성) ✅
+- [x] 4-3-5. `withFallback()`: fallback 성공/실패 시 provider_index + URL 로그 기록 ✅
 
 ### 4-4. RPC 응답 시간 타임아웃 설정
-- [ ] 4-4-1. `Web3j` HTTP 클라이언트 커넥션 타임아웃 설정 (현재 기본값 사용 중, 30s 명시 설정)
-- [ ] 4-4-2. `Web3j` 읽기 타임아웃 설정 (30s)
-- [ ] 4-4-3. `ConfirmationTracker` 폴링 간격과 타임아웃을 `application.yaml`에서 설정 가능하도록 변경
-- [ ] 4-4-4. 타임아웃 설정값을 환경변수로 오버라이드 가능하도록 처리
+- [x] 4-4-1. OkHttpClient 커넥션 타임아웃 30s 명시 설정 (`custody.evm.connect-timeout-seconds`) ✅
+- [x] 4-4-2. OkHttpClient 읽기 타임아웃 30s 명시 설정 (`custody.evm.read-timeout-seconds`) ✅
+- [x] 4-4-3. ConfirmationTracker 폴링 간격 5-1에서 설정가능화 완료 ✅
+- [x] 4-4-4. 환경변수 오버라이드: `CUSTODY_EVM_CONNECT_TIMEOUT_SECONDS`, `CUSTODY_EVM_READ_TIMEOUT_SECONDS` ✅
 
 ---
 

@@ -105,8 +105,13 @@ custody:
     whitelist-per-second: ${CUSTODY_RATE_LIMIT_WHITELIST_PER_SECOND:20}
   evm:
     rpc-url: ${CUSTODY_EVM_RPC_URL:https://ethereum-sepolia-rpc.publicnode.com}
+    # 4-3-1: 폴백 RPC URL 목록 (쉼표 구분, 빈 값이면 단일 프로바이더)
+    fallback-rpc-urls: ${CUSTODY_EVM_FALLBACK_RPC_URLS:}
     chain-id: ${CUSTODY_EVM_CHAIN_ID:11155111}
     private-key: ${CUSTODY_EVM_PRIVATE_KEY:}
+    # 4-4-1/4-4-2: OkHttp 커넥션/읽기 타임아웃 (4-4-4: 환경변수 오버라이드 가능)
+    connect-timeout-seconds: ${CUSTODY_EVM_CONNECT_TIMEOUT_SECONDS:30}
+    read-timeout-seconds: ${CUSTODY_EVM_READ_TIMEOUT_SECONDS:30}
     proxy:
       enabled: ${CUSTODY_EVM_PROXY_ENABLED:false}
       host: ${CUSTODY_EVM_PROXY_HOST:}
