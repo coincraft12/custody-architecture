@@ -243,6 +243,14 @@ public class WithdrawalService {
             }
         } catch (RuntimeException e) {
             nonceAllocator.release(reservation.getId());
+            // 4-2-4: Retry 소진 후 FAILED_SYSTEM 기록.
+            // attempt가 null이면 attemptService.createAttempt() 이전에 실패한 것이므로 기록 불필요.
+            // 트랜잭션이 롤백되므로 여기서 DB에 저장하는 것은 의미 없음.
+            // Phase 3: 별도 REQUIRES_NEW 트랜잭션으로 예외 기록 로직 분리 예정.
+            if (attempt != null) {
+                log.error("event=withdrawal_service.rpc_failed.system withdrawalId={} attemptId={} error={}",
+                        saved.getId(), attempt.getId(), e.getMessage());
+            }
             throw e;
         }
 

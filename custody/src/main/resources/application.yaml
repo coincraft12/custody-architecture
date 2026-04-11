@@ -45,6 +45,31 @@ info:
     name: ${spring.application.name}
     version: "@project.version@"
 
+resilience4j:
+  # 4-1: Circuit Breaker — 실패율 50% 초과, 슬라이딩 윈도우 10, 대기 30s
+  circuitbreaker:
+    instances:
+      evmRpc:
+        failure-rate-threshold: 50
+        sliding-window-size: 10
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        register-health-indicator: true
+  # 4-2: Retry — broadcast() 제외, 최대 3회, 지수 백오프 1s/2s/4s
+  retry:
+    instances:
+      evmRpcRetry:
+        max-attempts: 3
+        wait-duration: 1s
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2.0
+        retry-exceptions:
+          - java.io.IOException
+          - java.lang.IllegalStateException
+        ignore-exceptions:
+          - io.github.resilience4j.circuitbreaker.CallNotPermittedException
+          - lab.custody.adapter.BroadcastRejectedException
+
 logging:
   level:
     com.zaxxer.hikari.pool.HikariPool: ERROR

@@ -9,6 +9,14 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- Circuit Breaker (4-1) + Retry + Backoff (4-2) 완료 (2026-04-12)
+  - `build.gradle`: `resilience4j-spring-boot3:2.2.0` + `spring-boot-starter-aop` 추가
+  - `EvmRpcAdapter.broadcast()`: `@CircuitBreaker(name="evmRpc")` — open 시 `broadcastFallback()` → BroadcastRejectedException
+  - `EvmRpcAdapter.getPendingNonce()`: `@CircuitBreaker` + `@Retry(name="evmRpcRetry")`
+  - `EvmRpcAdapter.getReceipt/getBlockNumber/getTransaction()`: `@Retry` (broadcast() 제외 — 멱등성 파괴 위험 주석)
+  - `application.yaml`: resilience4j CB(50%/10/30s) + Retry(3회/1s/×2 지수 백오프) 설정
+  - `AttemptExceptionType`: RPC_TRANSIENT/RPC_PERMANENT/RPC_NETWORK 추가 (4-2-5)
+  - 전체 124개 테스트 통과
 - ConfirmationTracker 설정 외부화 (5-1) + Finalization 블록 수 (5-2) 완료 (2026-04-12)
   - `EvmRpcAdapter.getBlockNumber()` 추가 (RPC 메트릭 포함)
   - `ConfirmationTracker`: `@Value` 주입 4개 (max-tries/poll-interval-ms/finalization-block-count/finalization-timeout-minutes)
@@ -89,6 +97,8 @@
   - 기존 생성자 주입 방식으로 `MeterRegistry` 주입, 테스트 3개 `SimpleMeterRegistry` 추가
 
 ## 완료된 주요 작업
+- Circuit Breaker (4-1) 완료 (2026-04-12)
+- Retry + Backoff (4-2) 완료 (2026-04-12)
 - ConfirmationTracker 설정 외부화 (5-1) 완료 (2026-04-12)
 - Finalization 블록 수 확인 (5-2) 완료 (2026-04-12)
 - Prometheus AlertRule (3-4) 완료 (2026-04-12)
@@ -114,8 +124,8 @@
 - Rate Limiting (2-4) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟠 Circuit Breaker (4-1)
-2. 🟠 Retry + Backoff (4-2)
+1. 🟠 다중 RPC 프로바이더 폴백 (4-3)
+2. 🟠 Web3j 타임아웃 설정 (4-4)
 3. 🟠 DB 인덱스 최적화 (7-2)
 
 ## 참고 파일

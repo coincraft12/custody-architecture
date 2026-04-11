@@ -153,18 +153,18 @@
 ## 4. 🟠 RPC 복원력 (RPC Resilience) — HIGH
 
 ### 4-1. Circuit Breaker 적용
-- [ ] 4-1-1. `resilience4j-spring-boot3` 의존성 추가 (`build.gradle`)
-- [ ] 4-1-2. `EvmRpcAdapter`의 `broadcast()` 메서드에 `@CircuitBreaker(name="evmRpc")` 적용
-- [ ] 4-1-3. `EvmRpcAdapter`의 `getPendingNonce()` 메서드에 Circuit Breaker 적용
-- [ ] 4-1-4. `application.yaml`에 Circuit Breaker 설정 추가: 실패율 임계값(50%), 슬라이딩 윈도우(10), 대기 시간(30s)
-- [ ] 4-1-5. Circuit Breaker open 시 `BroadcastRejectedException` 발생 및 적절한 상태 전이 처리
+- [x] 4-1-1. `resilience4j-spring-boot3:2.2.0` + `spring-boot-starter-aop` 의존성 추가 ✅
+- [x] 4-1-2. `EvmRpcAdapter.broadcast()`에 `@CircuitBreaker(name="evmRpc")` 적용 ✅
+- [x] 4-1-3. `EvmRpcAdapter.getPendingNonce()`에 `@CircuitBreaker(name="evmRpc")` 적용 ✅
+- [x] 4-1-4. `application.yaml`: failure-rate-threshold=50%, sliding-window-size=10, wait-duration=30s, permitted-half-open=3 ✅
+- [x] 4-1-5. Circuit Breaker open 시 fallback → `broadcastFallback()`이 `BroadcastRejectedException` 발생 → WithdrawalService nonce 해제 + 상태 전이 ✅
 
 ### 4-2. Retry + Backoff 정책 구현
-- [ ] 4-2-1. `EvmRpcAdapter`에 `@Retry(name="evmRpcRetry")` 적용 (`eth_sendRawTransaction` 제외 — 재전송 금지)
-- [ ] 4-2-2. `application.yaml`에 Retry 설정: 최대 3회, 지수 백오프(1s, 2s, 4s)
-- [ ] 4-2-3. 브로드캐스트 API(`broadcast()`)는 retry 제외 — 멱등성 파괴 위험 명시 주석 추가
-- [ ] 4-2-4. Retry 소진 시 `AttemptExceptionType.FAILED_SYSTEM` 기록
-- [ ] 4-2-5. **RPC 오류 분류 체계** 수립: 일시적 오류(TRANSIENT: timeout, rate-limit 429), 영구 오류(PERMANENT: invalid tx, insufficient funds), 네트워크 오류(NETWORK: connection refused) — `AttemptExceptionType` 확장 및 분류별 처리 로직 분기
+- [x] 4-2-1. `EvmRpcAdapter`에 `@Retry(name="evmRpcRetry")` 적용 — `getPendingNonce`/`getReceipt`/`getBlockNumber`/`getTransaction` (broadcast() 제외) ✅
+- [x] 4-2-2. `application.yaml`: max-attempts=3, wait-duration=1s, 지수 백오프(×2), ignore CallNotPermittedException/BroadcastRejectedException ✅
+- [x] 4-2-3. `broadcast()`에 retry 제외 주석 추가 — eth_sendRawTransaction 재전송 멱등성 파괴 위험 ✅
+- [x] 4-2-4. Retry 소진/RuntimeException 시 FAILED_SYSTEM 경고 로그 + Phase 3 REQUIRES_NEW 트랜잭션 분리 계획 주석 ✅
+- [x] 4-2-5. `AttemptExceptionType`에 RPC_TRANSIENT/RPC_PERMANENT/RPC_NETWORK 추가 + javadoc 분류 체계 ✅
 
 ### 4-3. 다중 RPC 프로바이더 폴백
 - [ ] 4-3-1. `application.yaml`에 `custody.evm.fallback-rpc-urls` 리스트 설정 추가

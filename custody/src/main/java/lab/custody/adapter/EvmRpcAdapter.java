@@ -1,5 +1,7 @@
 package lab.custody.adapter;
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -67,8 +69,10 @@ public class EvmRpcAdapter implements ChainAdapter {
     }
 
     @Override
-    // Submit an EVM transfer via RPC using EIP-1559 fields and return the tx hash if accepted by the node.
-    // This adapter hides RPC/web3j details so upper layers only deal with BroadcastCommand/BroadcastResult.
+    // 4-1-2: Circuit Breaker — 실패율 50% 초과 시 open, 30s 대기 후 half-open.
+    // 4-2-3: broadcast()는 @Retry 제외 — eth_sendRawTransaction 재전송 시 멱등성 파괴 위험
+    //        (nonce 충돌 또는 이중 전송 발생 가능). nonce-too-low 복구는 WithdrawalService에서 별도 처리.
+    @CircuitBreaker(name = "evmRpc", fallbackMethod = "broadcastFallback")
     public BroadcastResult broadcast(BroadcastCommand command) {
         if (!isValidAddress(command.to())) {
             throw new IllegalArgumentException("Invalid EVM to-address: " + command.to());
@@ -154,6 +158,9 @@ public class EvmRpcAdapter implements ChainAdapter {
         return configuredChainId;
     }
 
+    // 4-1-3: Circuit Breaker + 4-2-1: Retry — getPendingNonce는 재시도 안전(멱등).
+    @CircuitBreaker(name = "evmRpc", fallbackMethod = "getPendingNonceFallback")
+    @Retry(name = "evmRpcRetry")
     // Read the pending nonce (not latest) so new attempts account for in-flight transactions.
     public BigInteger getPendingNonce(String address) {
         long start = System.nanoTime();
@@ -172,6 +179,8 @@ public class EvmRpcAdapter implements ChainAdapter {
         }
     }
 
+    // 4-2-1: Retry — getReceipt는 재시도 안전(멱등).
+    @Retry(name = "evmRpcRetry")
     // Receipt lookup is used by sync/confirmation tracking to detect inclusion/finalization progress.
     public Optional<TransactionReceipt> getReceipt(String txHash) {
         long start = System.nanoTime();
@@ -187,6 +196,8 @@ public class EvmRpcAdapter implements ChainAdapter {
         }
     }
 
+    // 4-2-1: Retry — getBlockNumber는 재시도 안전(멱등).
+    @Retry(name = "evmRpcRetry")
     // 5-2-2: 현재 블록 번호 조회 — ConfirmationTracker 확정(finalization) 블록 수 확인에 사용.
     public long getBlockNumber() {
         long start = System.nanoTime();
@@ -205,6 +216,8 @@ public class EvmRpcAdapter implements ChainAdapter {
         }
     }
 
+    // 4-2-1: Retry — getTransaction는 재시도 안전(멱등).
+    @Retry(name = "evmRpcRetry")
     // Transaction lookup is used by demo/wallet endpoints for observability during labs.
     public Optional<org.web3j.protocol.core.methods.response.Transaction> getTransaction(String txHash) {
         long start = System.nanoTime();
@@ -218,5 +231,26 @@ public class EvmRpcAdapter implements ChainAdapter {
         } finally {
             recordRpcCall("getTransaction", success, start);
         }
+    }
+
+    // ─────────────── 4-1: Circuit Breaker fallback methods ───────────────
+
+    /**
+     * 4-1-5: Circuit Breaker가 OPEN 상태일 때 broadcast() 대신 호출되는 fallback.
+     * BroadcastRejectedException을 던져 WithdrawalService의 nonce 해제 + 상태 전이 로직으로 흐름.
+     */
+    @SuppressWarnings("unused")
+    private BroadcastResult broadcastFallback(BroadcastCommand command, Throwable t) {
+        throw new BroadcastRejectedException(
+                "EVM RPC circuit breaker is open — broadcast rejected: " + t.getMessage());
+    }
+
+    /**
+     * 4-1-5: Circuit Breaker가 OPEN 상태일 때 getPendingNonce() fallback.
+     */
+    @SuppressWarnings("unused")
+    private BigInteger getPendingNonceFallback(String address, Throwable t) {
+        throw new IllegalStateException(
+                "EVM RPC circuit breaker is open — getPendingNonce rejected: " + t.getMessage());
     }
 }
