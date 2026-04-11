@@ -3,9 +3,11 @@ package lab.custody.orchestration;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import lab.custody.adapter.BroadcastRejectedException;
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.domain.ledger.LedgerEntry;
+import lab.custody.domain.txattempt.AttemptExceptionType;
 import lab.custody.domain.nonce.NonceReservation;
 import lab.custody.domain.policy.PolicyAuditLog;
 import lab.custody.domain.policy.PolicyAuditLogRepository;
@@ -198,7 +200,7 @@ public class WithdrawalService {
         log.info("event=withdrawal_service.approval.approved withdrawalId={}", saved.getId());
 
         NonceReservation reservation = nonceAllocator.reserve(chainType, req.fromAddress(), saved.getId());
-        TxAttempt attempt;
+        TxAttempt attempt = null;
         try {
             attempt = attemptService.createAttempt(saved.getId(), req.fromAddress(), reservation.getNonce());
             log.info(
@@ -211,6 +213,29 @@ public class WithdrawalService {
             );
             broadcastAttempt(saved, attempt);
             nonceAllocator.commit(reservation.getId(), attempt.getId());
+        } catch (BroadcastRejectedException e) {
+            nonceAllocator.release(reservation.getId());
+            if (e.isNonceTooLow() && attempt != null) {
+                // 1-4-1/1-4-2: RPC가 "nonce too low"를 반환했으므로 해당 예약을 해제하고
+                // 체인의 최신 pending nonce로 재예약 후 1회 재시도한다.
+                log.warn("event=withdrawal_service.nonce_too_low.detected withdrawalId={} failedNonce={}",
+                        saved.getId(), reservation.getNonce());
+                attempt.markException(AttemptExceptionType.RPC_INCONSISTENT, "nonce too low — auto re-reserving");
+                attempt.setCanonical(false);
+                NonceReservation retryReservation = nonceAllocator.reserve(chainType, req.fromAddress(), saved.getId());
+                try {
+                    attempt = attemptService.createAttempt(saved.getId(), req.fromAddress(), retryReservation.getNonce());
+                    broadcastAttempt(saved, attempt);
+                    nonceAllocator.commit(retryReservation.getId(), attempt.getId());
+                    log.info("event=withdrawal_service.nonce_too_low.recovered withdrawalId={} newNonce={}",
+                            saved.getId(), retryReservation.getNonce());
+                } catch (RuntimeException retryEx) {
+                    nonceAllocator.release(retryReservation.getId());
+                    throw retryEx;
+                }
+            } else {
+                throw e;
+            }
         } catch (RuntimeException e) {
             nonceAllocator.release(reservation.getId());
             throw e;

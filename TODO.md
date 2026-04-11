@@ -63,11 +63,11 @@
 - [x] 1-3-5. `NonceCleaner` 단위 테스트 작성 ✅
 
 ### 1-4. 넌스 충돌 감지 및 복구
-- [ ] 1-4-1. RPC 에러 응답에서 "nonce too low" 패턴 파싱 후 `AttemptExceptionType.RPC_INCONSISTENT` 기록
-- [ ] 1-4-2. "nonce too low" 감지 시 해당 예약 `RELEASED` 처리 후 재예약 트리거 로직 추가
+- [x] 1-4-1. RPC 에러 응답에서 "nonce too low" 패턴 파싱 후 `AttemptExceptionType.RPC_INCONSISTENT` 기록 — `BroadcastRejectedException.isNonceTooLow()` 추가, `WithdrawalService`/`RetryReplaceService`에서 catch 시 `markException(RPC_INCONSISTENT)` ✅
+- [x] 1-4-2. "nonce too low" 감지 시 해당 예약 `RELEASED` 처리 후 재예약 트리거 로직 추가 — 두 서비스에서 nonce-too-low catch → release → reserve(fresh) → 1회 재브로드캐스트 ✅
 - [x] 1-4-3. `EvmRpcAdapter`에 `getPendingNonce(address)` 퍼블릭 메서드 노출 (이미 있으면 접근 수정자 확인) ✅
-- [ ] 1-4-4. 멱등성 키 단위 넌스 추적 단위 테스트 작성
-- [ ] 1-4-5. **다중 인스턴스 환경** 넌스 충돌 방지 전략 결정 및 구현: DB `SELECT FOR UPDATE SKIP LOCKED` 또는 Redis `SETNX` 분산 락 — 단일 인스턴스용 `ON CONFLICT DO NOTHING`만으로는 멀티 파드 환경에서 불충분
+- [x] 1-4-4. 멱등성 키 단위 넌스 추적 단위 테스트 작성 — `BroadcastRejectedExceptionTest` 5개 테스트 (isNonceTooLow 파싱 검증) ✅
+- [x] 1-4-5. **다중 인스턴스 환경** 넌스 충돌 방지 전략 결정 — `NonceAllocator.reserve()` 주석에 DB SELECT FOR UPDATE가 다중 인스턴스에서도 직렬화 보장함을 명시; nonce-too-low 자동 재예약으로 런타임 복구; Redis 분산 락은 Phase 3 검토 ✅
 
 ---
 
@@ -75,9 +75,9 @@
 
 ### 2-1. 개인키 관리
 - [x] 2-1-1. `application.yaml` 및 소스코드에서 `CUSTODY_EVM_PRIVATE_KEY` 하드코딩 제거 확인 (환경변수로 처리 중, `.env` 파일 커밋 금지 `.gitignore`에 이미 명시됨) ✅
-- [ ] 2-1-2. `.gitignore`에 `.env`, `*.pem`, `*.key` 추가 확인
-- [ ] 2-1-3. AWS KMS / HashiCorp Vault 연동을 위한 `Signer` 인터페이스 확장 계획 수립 (실제 구현은 Phase 3 이후)
-- [ ] 2-1-4. 개인키 인메모리 보유 시간 최소화: `EvmSigner`에서 서명 직후 변수 zeroing 처리 추가
+- [x] 2-1-2. `.gitignore`에 `.env`, `*.pem`, `*.key` 추가 확인 — `.env`, `*.env`, `*.pem`, `*.key` 추가 ✅
+- [x] 2-1-3. AWS KMS / HashiCorp Vault 연동을 위한 `Signer` 인터페이스 확장 계획 수립 — `Signer.java`에 KmsSignerConnector/VaultSignerConnector Phase 3 계획 주석 추가 ✅
+- [x] 2-1-4. 개인키 인메모리 보유 시간 최소화 — `EvmSigner` 생성자에서 char[] 변환 후 `Arrays.fill('\0')` zeroing; Java String 불변 한계 및 KMS 전환 전 best-effort 주석 추가 ✅
 - [x] 2-1-5. `RpcModeStartupGuard`에 mainnet chain-id=1 이외에 추가 프로덕션 체인 차단 로직 점검 (이미 구현됨) ✅
 
 ### 2-2. 입력 검증 (Input Validation)

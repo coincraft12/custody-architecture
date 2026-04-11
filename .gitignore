@@ -1,5 +1,11 @@
 custody track/
 
+# Sensitive credentials — never commit
+.env
+*.env
+*.pem
+*.key
+
 # Binary / large files → _Archive
 *.pdf
 *.pptx

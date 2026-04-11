@@ -1,5 +1,7 @@
 package lab.custody.adapter;
 
+import java.util.Arrays;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -18,7 +20,15 @@ public class EvmSigner implements Signer {
         if (privateKey == null || privateKey.isBlank()) {
             throw new IllegalStateException("custody.evm.private-key must be configured when custody.chain.mode=rpc");
         }
-        this.credentials = Credentials.create(privateKey.trim());
+        // 2-1-4: best-effort zeroing — @Value delivers a String (immutable, cannot be zeroed),
+        // so we copy to char[] to limit the mutable key material lifetime, then zero immediately.
+        // Full zeroing is only possible with KMS/HSM (see Signer interface KMS plan).
+        char[] keyChars = privateKey.toCharArray();
+        try {
+            this.credentials = Credentials.create(new String(keyChars).trim());
+        } finally {
+            Arrays.fill(keyChars, '\0');
+        }
     }
 
     @Override

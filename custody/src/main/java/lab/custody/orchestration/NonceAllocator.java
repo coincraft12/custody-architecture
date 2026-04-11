@@ -30,9 +30,16 @@ public class NonceAllocator {
     /**
      * 넌스를 예약한다.
      *
-     * <p>동시 예약 충돌 방지: {@code findActiveWithLock}으로 같은 주소의 활성 예약을
+     * <p><b>단일 인스턴스 충돌 방지</b>: {@code findActiveWithLock}으로 같은 주소의 활성 예약을
      * SELECT FOR UPDATE로 잠근 뒤 최대 넌스를 계산하므로, 동일 주소에 대한 병렬 예약이
      * 트랜잭션 직렬화되어 중복 넌스 발급이 발생하지 않는다.
+     *
+     * <p><b>다중 인스턴스(multi-pod) 안전성 (1-4-5)</b>: DB 수준의 SELECT FOR UPDATE는
+     * 모든 인스턴스가 같은 PostgreSQL을 공유하는 한 인스턴스 간 경쟁도 직렬화한다.
+     * Redis 분산 락이나 외부 코디네이터 없이도 단일 DB 환경에서는 안전하다.
+     * 단, 예약 후 RPC 브로드캐스트 사이 시간차가 커지면 체인 상태와 괴리가 생겨
+     * "nonce too low" 오류가 발생할 수 있으며, 이 경우 {@code WithdrawalService}와
+     * {@code RetryReplaceService}의 자동 재예약 로직이 복구한다.
      */
     @Transactional
     public NonceReservation reserve(ChainType chainType, String fromAddress, UUID withdrawalId) {

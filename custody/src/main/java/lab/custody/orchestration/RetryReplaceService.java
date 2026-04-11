@@ -2,6 +2,7 @@ package lab.custody.orchestration;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import lab.custody.adapter.BroadcastRejectedException;
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.adapter.EvmMockAdapter;
@@ -76,11 +77,32 @@ public class RetryReplaceService {
         canonical.setCanonical(false);
 
         NonceReservation reservation = nonceAllocator.reserve(w.getChainType(), canonical.getFromAddress(), withdrawalId);
-        TxAttempt retried;
+        TxAttempt retried = null;
         try {
             retried = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), reservation.getNonce());
             broadcast(w, retried);
             nonceAllocator.commit(reservation.getId(), retried.getId());
+        } catch (BroadcastRejectedException e) {
+            nonceAllocator.release(reservation.getId());
+            if (e.isNonceTooLow() && retried != null) {
+                log.warn("event=retry_replace.retry.nonce_too_low.detected withdrawalId={} failedNonce={}",
+                        withdrawalId, reservation.getNonce());
+                retried.markException(AttemptExceptionType.RPC_INCONSISTENT, "nonce too low — auto re-reserving");
+                retried.setCanonical(false);
+                NonceReservation retryReservation = nonceAllocator.reserve(w.getChainType(), canonical.getFromAddress(), withdrawalId);
+                try {
+                    retried = attemptService.createAttempt(withdrawalId, canonical.getFromAddress(), retryReservation.getNonce());
+                    broadcast(w, retried);
+                    nonceAllocator.commit(retryReservation.getId(), retried.getId());
+                    log.info("event=retry_replace.retry.nonce_too_low.recovered withdrawalId={} newNonce={}",
+                            withdrawalId, retryReservation.getNonce());
+                } catch (RuntimeException retryEx) {
+                    nonceAllocator.release(retryReservation.getId());
+                    throw retryEx;
+                }
+            } else {
+                throw e;
+            }
         } catch (RuntimeException e) {
             nonceAllocator.release(reservation.getId());
             throw e;

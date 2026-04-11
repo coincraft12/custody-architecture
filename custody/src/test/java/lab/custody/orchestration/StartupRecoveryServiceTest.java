@@ -145,8 +145,9 @@ class StartupRecoveryServiceTest {
         attempt.setTxHash("0xdup");
         attempt.transitionTo(TxAttemptStatus.BROADCASTED);
 
-        // Pre-register to simulate already-tracking state
-        when(txAttemptRepository.findById(aId)).thenReturn(Optional.empty());
+        // Pre-register to simulate already-tracking state.
+        // trackAttemptInternal runs async — lenient because it may finish after Mockito teardown.
+        lenient().when(txAttemptRepository.findById(aId)).thenReturn(Optional.empty());
         tracker.startTrackingByAttemptId(aId);
 
         when(withdrawalRepository.findByStatus(WithdrawalStatus.W6_BROADCASTED)).thenReturn(List.of(w));
