@@ -6,6 +6,9 @@
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <timeZone>UTC</timeZone>
             <customFields>{"service":"${appName}","log_format":"json"}</customFields>
+            <!-- 8-2-4: OTel traceId/spanId를 MDC에서 읽어 로그에 포함 (Micrometer Tracing이 MDC에 주입) -->
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
             <!-- Mask private keys (64 hex) and signed raw transactions (>64 hex) in all log values -->
             <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
                 <valueMask>0x[a-fA-F0-9]{64,}</valueMask>

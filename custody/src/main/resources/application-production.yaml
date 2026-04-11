@@ -37,6 +37,14 @@ management:
   endpoint:
     health:
       show-details: never
+  # 8-2-3: 운영 환경 OpenTelemetry 추적 활성화
+  tracing:
+    enabled: true
+    sampling:
+      probability: ${CUSTODY_TRACING_SAMPLING_PROBABILITY:0.1}
+  otlp:
+    tracing:
+      endpoint: ${CUSTODY_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
 
 logging:
   structured:

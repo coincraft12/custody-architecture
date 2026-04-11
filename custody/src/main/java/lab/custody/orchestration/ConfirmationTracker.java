@@ -138,6 +138,12 @@ public class ConfirmationTracker {
         return trackingSet.contains(attemptId);
     }
 
+    /**
+     * 8-2-5: MDC(correlationId 포함) 전파 + OTel Span 전파.
+     * Micrometer Tracing은 MDC에 traceId/spanId를 자동 주입하므로
+     * MDC 전체 복사본을 스레드에 전달하면 traceId/spanId도 함께 전파된다.
+     * Phase 3에서 Observation API로 명시적 Span 생성을 고려할 것.
+     */
     private void submitWithMdc(Runnable task) {
         Map<String, String> contextMap = MDC.getCopyOfContextMap();
         executor.submit(() -> {

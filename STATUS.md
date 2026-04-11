@@ -9,6 +9,13 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- 분산 추적 OpenTelemetry 준비 (8-2) 완료 (2026-04-12)
+  - `build.gradle`: `micrometer-tracing-bridge-otel` + `opentelemetry-exporter-otlp` 의존성 추가
+  - `application.yaml`: `management.tracing.enabled/sampling.probability` (기본 비활성, 환경변수 오버라이드)
+  - `application-production.yaml`: tracing 활성화 + OTLP endpoint 설정
+  - `logback-spring.xml`: `includeMdcKeyName traceId/spanId` — OTel traceId를 JSON 로그에 자동 포함
+  - `ConfirmationTracker.submitWithMdc()`: MDC 전체 복사로 traceId/spanId 비동기 스레드 전파 주석 (8-2-5)
+  - 전체 124개 테스트 통과
 - DB 인덱스 최적화 (7-2) + HikariCP 설정 (7-3) + DB 백업 문서화 (7-4) + 로그 표준화 (8-1) 완료 (2026-04-12)
   - `V4__add_performance_indexes.sql`: `idx_withdrawals_status`, `idx_withdrawals_status_updated_at`, `idx_ledger_entries_withdrawal_type` 3개 인덱스 추가
   - `application-postgres.yaml`: HikariCP 8개 설정 (maximum-pool-size/minimum-idle/idle-timeout/max-lifetime/connection-timeout/keepalive-time/pool-name) + 환경변수 오버라이드
@@ -113,6 +120,7 @@
   - 기존 생성자 주입 방식으로 `MeterRegistry` 주입, 테스트 3개 `SimpleMeterRegistry` 추가
 
 ## 완료된 주요 작업
+- 분산 추적 OpenTelemetry 준비 (8-2) 완료 (2026-04-12)
 - DB 인덱스 최적화 (7-2) 완료 (2026-04-12)
 - HikariCP 설정 (7-3) 완료 (2026-04-12)
 - DB 백업 및 복구 전략 문서화 (7-4) 완료 (2026-04-12)
@@ -146,9 +154,9 @@
 - Rate Limiting (2-4) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟡 분산 추적 OpenTelemetry 준비 (8-2)
-2. 🟡 감사 로그 강화 (8-3)
-3. 🟡 테스트 커버리지 보강 (9-1~9-4)
+1. 🟡 감사 로그 강화 (8-3)
+2. 🟡 테스트 커버리지 보강 (9-1~9-4)
+3. 🟡 승인 워크플로 실제 구현 (10)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)

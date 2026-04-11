@@ -39,6 +39,11 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+  # 8-2-3: Micrometer Tracing — 기본 샘플링 비율 (개발: 1.0, 운영: 0.1 권장)
+  tracing:
+    enabled: ${CUSTODY_TRACING_ENABLED:false}
+    sampling:
+      probability: ${CUSTODY_TRACING_SAMPLING_PROBABILITY:1.0}
 
 info:
   app:
