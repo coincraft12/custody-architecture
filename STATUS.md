@@ -9,6 +9,14 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- ConfirmationTracker 설정 외부화 (5-1) + Finalization 블록 수 (5-2) 완료 (2026-04-12)
+  - `EvmRpcAdapter.getBlockNumber()` 추가 (RPC 메트릭 포함)
+  - `ConfirmationTracker`: `@Value` 주입 4개 (max-tries/poll-interval-ms/finalization-block-count/finalization-timeout-minutes)
+  - `waitForFinalization()`: receipt 후 블록 수 경과 대기 → W8_SAFE_FINALIZED + LedgerService.settle()
+  - `finalization_timeout.total` 카운터 신규; `finalizationBlockCount=0` 시 즉시 확정 (mock/dev 기본)
+  - `ConfirmationTrackerTest`, `StartupRecoveryServiceTest`: 패키지 private 생성자 인수 추가
+  - `application.yaml`: 4개 `custody.confirmation-tracker.*` 설정 추가
+  - 전체 124개 테스트 통과
 - Prometheus AlertRule (3-4) + 트랜잭션 일관성 (6-2) + Outbox 패턴 (6-3) 완료 (2026-04-12)
   - `monitoring/prometheus/alerts.yml`: 4개 AlertRule — WithdrawalHighPolicyRejectedRate / ConfirmationTrackerTimeoutHigh / EvmRpcHighErrorRate / HikariPoolSaturation
   - `monitoring/prometheus/prometheus.yml`: `rule_files: - alerts.yml` 참조 추가
@@ -81,6 +89,8 @@
   - 기존 생성자 주입 방식으로 `MeterRegistry` 주입, 테스트 3개 `SimpleMeterRegistry` 추가
 
 ## 완료된 주요 작업
+- ConfirmationTracker 설정 외부화 (5-1) 완료 (2026-04-12)
+- Finalization 블록 수 확인 (5-2) 완료 (2026-04-12)
 - Prometheus AlertRule (3-4) 완료 (2026-04-12)
 - 트랜잭션 일관성 보장 (6-2) 완료 (2026-04-12)
 - Outbox 패턴 기본 구현 (6-3) 완료 (2026-04-12)
@@ -104,9 +114,9 @@
 - Rate Limiting (2-4) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟠 Circuit Breaker + Retry (4-1~4-2)
-2. 🔴 ConfirmationTracker 설정 외부화 (5-1)
-3. 🔴 Finalization 블록 수 확인 (5-2)
+1. 🟠 Circuit Breaker (4-1)
+2. 🟠 Retry + Backoff (4-2)
+3. 🟠 DB 인덱스 최적화 (7-2)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)

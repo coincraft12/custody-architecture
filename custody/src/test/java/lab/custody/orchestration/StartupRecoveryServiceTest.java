@@ -37,8 +37,10 @@ class StartupRecoveryServiceTest {
                 txAttemptRepository,
                 withdrawalRepository,
                 Executors.newSingleThreadExecutor(),
-                1,
-                0,
+                1,   // maxTries
+                0,   // pollIntervalMs
+                0,   // finalizationBlockCount
+                30,  // finalizationTimeoutMinutes
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
         );
         service = new StartupRecoveryService(withdrawalRepository, txAttemptRepository);

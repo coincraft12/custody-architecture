@@ -186,23 +186,23 @@
 > 서버 재시작 시 추적 중인 TX가 전부 소실됩니다. 운영 배포 차단 수준으로 격상합니다.
 
 ### 5-1. 설정 가변화
-- [ ] 5-1-1. `ConfirmationTracker`의 `MAX_TRIES`(60), `POLL_INTERVAL_MS`(2000) 하드코딩 제거
-- [ ] 5-1-2. `application.yaml`에 `custody.confirmation-tracker.max-tries`, `custody.confirmation-tracker.poll-interval-ms` 추가
-- [ ] 5-1-3. `ConfirmationTracker`에 `@ConfigurationProperties`로 위 설정값 주입
-- [ ] 5-1-4. 환경변수 오버라이드 키 추가: `CUSTODY_CONFIRMATION_TRACKER_MAX_TRIES`, `CUSTODY_CONFIRMATION_TRACKER_POLL_INTERVAL_MS`
+- [x] 5-1-1. `ConfirmationTracker`의 `MAX_TRIES`(60), `POLL_INTERVAL_MS`(2000) 하드코딩 제거 — `@Value` 주입으로 교체 ✅
+- [x] 5-1-2. `application.yaml`에 `custody.confirmation-tracker.max-tries`, `custody.confirmation-tracker.poll-interval-ms` 추가 ✅
+- [x] 5-1-3. `ConfirmationTracker`에 `@Value`로 설정값 주입 (`@ConfigurationProperties` 불필요 — 4개 이하) ✅
+- [x] 5-1-4. 환경변수 오버라이드 키 추가: `CUSTODY_CONFIRMATION_TRACKER_MAX_TRIES`, `CUSTODY_CONFIRMATION_TRACKER_POLL_INTERVAL_MS` ✅
 
 ### 5-2. 확정(Finalization) 블록 수 확인 로직 추가
-- [ ] 5-2-1. `application.yaml`에 `custody.confirmation-tracker.finalization-block-count` 추가 (예: Ethereum mainnet = 64, Sepolia = 3)
-- [ ] 5-2-2. `ConfirmationTracker`에서 receipt 수신 후 현재 블록 번호 조회 (이미 `getBlockNumber()` 메서드 있음)
-- [ ] 5-2-3. `(현재 블록번호 - receipt.blockNumber) >= finalizationBlockCount` 조건 충족 시 W7→W8 전이 로직 구현
-- [ ] 5-2-4. 아직 finalization 미달인 TX는 pending queue에 유지하며 재폴링
-- [ ] 5-2-5. 최대 확정 대기 시간(`finalization-timeout-minutes`) 초과 시 알림 발생 처리
+- [x] 5-2-1. `application.yaml`에 `custody.confirmation-tracker.finalization-block-count` + `finalization-timeout-minutes` 추가 (0=즉시 확정, mainnet=64, Sepolia=3) ✅
+- [x] 5-2-2. `EvmRpcAdapter.getBlockNumber()` 추가; `ConfirmationTracker.waitForFinalization()` 내에서 현재 블록 번호 조회 ✅
+- [x] 5-2-3. `(현재 블록번호 - receipt.blockNumber) >= finalizationBlockCount` 조건 충족 시 W8_SAFE_FINALIZED 전이 + `LedgerService.settle()` 호출 ✅
+- [x] 5-2-4. 미달 TX는 `pollIntervalMs` 간격으로 재폴링, deadline 도달 전까지 반복 ✅
+- [x] 5-2-5. `finalization-timeout-minutes` 초과 시 `custody.confirmation_tracker.finalization_timeout.total` 카운터 증가 + WARN 로그 ✅
 
 ### 5-3. 서버 재시작 후 미완료 TX 재추적
-- [ ] 5-3-1. `CustodyApplication` 시작 시 `W6_BROADCASTED` 상태인 `Withdrawal` 목록 조회
-- [ ] 5-3-2. 각 미완료 TX를 `ConfirmationTracker`에 재등록하는 `@PostConstruct` 메서드 추가
-- [ ] 5-3-3. 재등록 시 중복 추적 방지: `ConfirmationTracker` 내부 추적 Set에 이미 있는 경우 스킵
-- [ ] 5-3-4. 재시작 후 재추적 건수를 로그로 기록
+- [x] 5-3-1. `StartupRecoveryService`: `@PostConstruct`로 W6_BROADCASTED Withdrawal 목록 조회 ✅
+- [x] 5-3-2. 각 미완료 TX의 canonical TxAttempt를 `ConfirmationTracker`에 재등록 ✅
+- [x] 5-3-3. `trackingSet` 기반 중복 추적 방지, 이미 추적 중이면 스킵 ✅
+- [x] 5-3-4. 재시작 시 재추적 건수 로그 기록 ✅
 
 ### 5-4. Mock 어댑터에서의 자동 확인
 - [ ] 5-4-1. `EvmMockAdapter`에서 broadcast 후 일정 지연(예: 500ms) 뒤 자동으로 W7→W8→W10 전이하는 옵션 추가

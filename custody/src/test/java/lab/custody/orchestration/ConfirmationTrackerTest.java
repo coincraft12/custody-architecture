@@ -56,8 +56,10 @@ class ConfirmationTrackerTest {
                 txAttemptRepository,
                 withdrawalRepository,
                 Executors.newSingleThreadExecutor(),
-                1,
-                0,
+                1,   // maxTries
+                0,   // pollIntervalMs (5-1: ms 단위로 변경)
+                0,   // finalizationBlockCount (5-2: 0=즉시 확정)
+                30,  // finalizationTimeoutMinutes
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
         );
 

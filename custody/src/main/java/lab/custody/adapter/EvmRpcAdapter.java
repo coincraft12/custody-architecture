@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.web3j.crypto.RawTransaction;
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameterName;
+import org.web3j.protocol.core.methods.response.EthBlockNumber;
 import org.web3j.protocol.core.methods.response.EthChainId;
 import org.web3j.protocol.core.methods.response.EthGetTransactionCount;
 import org.web3j.protocol.core.methods.response.EthSendTransaction;
@@ -183,6 +184,24 @@ public class EvmRpcAdapter implements ChainAdapter {
             throw new IllegalStateException("Failed to fetch receipt", e);
         } finally {
             recordRpcCall("getReceipt", success, start);
+        }
+    }
+
+    // 5-2-2: 현재 블록 번호 조회 — ConfirmationTracker 확정(finalization) 블록 수 확인에 사용.
+    public long getBlockNumber() {
+        long start = System.nanoTime();
+        boolean success = false;
+        try {
+            EthBlockNumber response = web3j.ethBlockNumber().send();
+            if (response.hasError()) {
+                throw new IllegalStateException("Failed to fetch block number: " + response.getError().getMessage());
+            }
+            success = true;
+            return response.getBlockNumber().longValue();
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to fetch block number", e);
+        } finally {
+            recordRpcCall("getBlockNumber", success, start);
         }
     }
 

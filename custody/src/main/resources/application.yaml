@@ -62,6 +62,13 @@ custody:
     mode: ${CUSTODY_CHAIN_MODE:mock}
   confirmation-tracker:
     auto-start: ${CUSTODY_CONFIRMATION_TRACKER_AUTO_START:false}
+    # 5-1: 설정 외부화 — 환경변수 오버라이드 가능
+    max-tries: ${CUSTODY_CONFIRMATION_TRACKER_MAX_TRIES:60}
+    poll-interval-ms: ${CUSTODY_CONFIRMATION_TRACKER_POLL_INTERVAL_MS:2000}
+    # 5-2: 확정 블록 수 — 0이면 receipt 수신 즉시 W8로 전이 (mock/dev 기본값)
+    # Ethereum mainnet=64, Sepolia=3
+    finalization-block-count: ${CUSTODY_CONFIRMATION_TRACKER_FINALIZATION_BLOCK_COUNT:0}
+    finalization-timeout-minutes: ${CUSTODY_CONFIRMATION_TRACKER_FINALIZATION_TIMEOUT_MINUTES:30}
   whitelist:
     default-hold-hours: ${CUSTODY_WHITELIST_HOLD_HOURS:48}
     scheduler-delay-ms: ${CUSTODY_WHITELIST_SCHEDULER_DELAY_MS:60000}

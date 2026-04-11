@@ -15,8 +15,12 @@ import lab.custody.domain.withdrawal.WithdrawalStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.web3j.protocol.core.methods.response.TransactionReceipt;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -35,30 +39,55 @@ public class ConfirmationTracker {
     private final TxAttemptRepository txAttemptRepository;
     private final WithdrawalRepository withdrawalRepository;
     private final ExecutorService executor;
+
+    // 5-1: 하드코딩 제거 — application.yaml에서 주입
     private final int maxTries;
-    private final long pollIntervalSeconds;
+    private final long pollIntervalMs;
+
+    // 5-2: 확정(finalization) 블록 수 — 0이면 receipt 수신 즉시 W8로 전이
+    private final int finalizationBlockCount;
+    // 5-2-5: 최대 확정 대기 시간 초과 시 카운터 증가 + 경고 로그
+    private final int finalizationTimeoutMinutes;
 
     private final AtomicInteger activeTasks = new AtomicInteger(0);
     private final Set<UUID> trackingSet = ConcurrentHashMap.newKeySet();
     private final Counter timeoutCounter;
+    private final Counter finalizationTimeoutCounter;
 
+    @Autowired(required = false)
+    private LedgerService ledgerService;
+
+    // 5-1: @Autowired 생성자 — application.yaml / 환경변수로 설정 주입
     @Autowired
     public ConfirmationTracker(
             ChainAdapterRouter router,
             TxAttemptRepository txAttemptRepository,
             WithdrawalRepository withdrawalRepository,
-            MeterRegistry meterRegistry
+            MeterRegistry meterRegistry,
+            // 5-1-2/5-1-4: max-tries (env: CUSTODY_CONFIRMATION_TRACKER_MAX_TRIES)
+            @Value("${custody.confirmation-tracker.max-tries:60}") int maxTries,
+            // 5-1-2/5-1-4: poll-interval-ms (env: CUSTODY_CONFIRMATION_TRACKER_POLL_INTERVAL_MS)
+            @Value("${custody.confirmation-tracker.poll-interval-ms:2000}") long pollIntervalMs,
+            // 5-2-1: finalization-block-count (env: CUSTODY_CONFIRMATION_TRACKER_FINALIZATION_BLOCK_COUNT)
+            @Value("${custody.confirmation-tracker.finalization-block-count:0}") int finalizationBlockCount,
+            // 5-2-5: finalization-timeout-minutes (env: CUSTODY_CONFIRMATION_TRACKER_FINALIZATION_TIMEOUT_MINUTES)
+            @Value("${custody.confirmation-tracker.finalization-timeout-minutes:30}") int finalizationTimeoutMinutes
     ) {
-        this(router, txAttemptRepository, withdrawalRepository, Executors.newCachedThreadPool(), 60, 2, meterRegistry);
+        this(router, txAttemptRepository, withdrawalRepository,
+                Executors.newCachedThreadPool(), maxTries, pollIntervalMs,
+                finalizationBlockCount, finalizationTimeoutMinutes, meterRegistry);
     }
 
+    // Package-private constructor for unit tests
     ConfirmationTracker(
             ChainAdapterRouter router,
             TxAttemptRepository txAttemptRepository,
             WithdrawalRepository withdrawalRepository,
             ExecutorService executor,
             int maxTries,
-            long pollIntervalSeconds,
+            long pollIntervalMs,
+            int finalizationBlockCount,
+            int finalizationTimeoutMinutes,
             MeterRegistry meterRegistry
     ) {
         this.router = router;
@@ -66,13 +95,18 @@ public class ConfirmationTracker {
         this.withdrawalRepository = withdrawalRepository;
         this.executor = executor;
         this.maxTries = maxTries;
-        this.pollIntervalSeconds = pollIntervalSeconds;
+        this.pollIntervalMs = pollIntervalMs;
+        this.finalizationBlockCount = finalizationBlockCount;
+        this.finalizationTimeoutMinutes = finalizationTimeoutMinutes;
 
         Gauge.builder("custody.confirmation_tracker.active_tasks", activeTasks, AtomicInteger::get)
                 .description("Number of transactions currently being tracked for confirmation")
                 .register(meterRegistry);
         this.timeoutCounter = Counter.builder("custody.confirmation_tracker.timeout.total")
                 .description("Total number of confirmation tracking attempts that timed out")
+                .register(meterRegistry);
+        this.finalizationTimeoutCounter = Counter.builder("custody.confirmation_tracker.finalization_timeout.total")
+                .description("Total number of TXs that exceeded the finalization wait timeout")
                 .register(meterRegistry);
     }
 
@@ -122,11 +156,10 @@ public class ConfirmationTracker {
 
     // Poll the chain for a receipt and apply confirmation state transitions when a receipt is found.
     // Tracking and broadcasting are intentionally separate responsibilities in this architecture.
-    private void trackAttemptInternal(java.util.UUID attemptId) {
+    private void trackAttemptInternal(UUID attemptId) {
         try {
             log.debug("Starting confirmation tracking for attempt {}", attemptId);
 
-            // Reload attempt to get latest data
             var attemptOpt = txAttemptRepository.findById(attemptId);
             if (attemptOpt.isEmpty()) {
                 log.warn("Attempt {} not found, aborting tracking", attemptId);
@@ -144,7 +177,7 @@ public class ConfirmationTracker {
             ChainAdapter adapter = router.resolve(withdrawal.getChainType());
             if (!(adapter instanceof EvmRpcAdapter rpcAdapter)) {
                 log.debug("Adapter for chain {} does not support receipt polling", withdrawal.getChainType());
-                return; // only EVM RPC currently supported by this tracker
+                return;
             }
 
             String txHash = attempt.getTxHash();
@@ -153,12 +186,15 @@ public class ConfirmationTracker {
                 return;
             }
 
+            // ── Phase 1: poll until receipt arrives ──────────────────────────
             int tries = 0;
-            while (tries < maxTries) { // default: ~2 minutes polling
+            while (tries < maxTries) {
                 try {
-                    Optional<org.web3j.protocol.core.methods.response.TransactionReceipt> r = rpcAdapter.getReceipt(txHash);
+                    Optional<TransactionReceipt> r = rpcAdapter.getReceipt(txHash);
                     if (r.isPresent()) {
-                        // reload attempt/withdrawal before updating to avoid stale entity issues
+                        TransactionReceipt receipt = r.get();
+
+                        // Mark W7_INCLUDED
                         var toUpdateAttemptOpt = txAttemptRepository.findById(attemptId);
                         if (toUpdateAttemptOpt.isEmpty()) {
                             log.warn("Attempt {} disappeared before update", attemptId);
@@ -168,22 +204,29 @@ public class ConfirmationTracker {
                         toUpdateAttempt.transitionTo(TxAttemptStatus.INCLUDED);
                         txAttemptRepository.save(toUpdateAttempt);
 
-                        var toUpdateWithdrawalOpt = withdrawalRepository.findById(withdrawal.getId());
-                        if (toUpdateWithdrawalOpt.isPresent()) {
-                            Withdrawal toUpdateWithdrawal = toUpdateWithdrawalOpt.get();
-                            toUpdateWithdrawal.transitionTo(WithdrawalStatus.W7_INCLUDED);
-                            withdrawalRepository.save(toUpdateWithdrawal);
+                        var wIncludedOpt = withdrawalRepository.findById(withdrawal.getId());
+                        if (wIncludedOpt.isPresent()) {
+                            Withdrawal wIncluded = wIncludedOpt.get();
+                            wIncluded.transitionTo(WithdrawalStatus.W7_INCLUDED);
+                            withdrawalRepository.save(wIncluded);
                         }
-                        log.info("Attempt {} marked INCLUDED and withdrawal {} marked INCLUDED", attemptId, withdrawal.getId());
+                        log.info("event=confirmation_tracker.included attemptId={} withdrawalId={} txHash={}",
+                                attemptId, withdrawal.getId(), txHash);
+
+                        // ── Phase 2: wait for finalization ────────────────────
+                        waitForFinalization(rpcAdapter, receipt, withdrawal);
                         return;
                     }
                 } catch (Exception e) {
                     log.warn("Error while polling receipt for tx {}: {}", txHash, e.getMessage());
                 }
                 tries++;
-                TimeUnit.SECONDS.sleep(pollIntervalSeconds);
+                if (pollIntervalMs > 0) {
+                    TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
+                }
             }
-            // reload attempt and mark timeout
+
+            // Receipt never arrived → FAILED_TIMEOUT
             var timeoutAttemptOpt = txAttemptRepository.findById(attemptId);
             if (timeoutAttemptOpt.isPresent()) {
                 TxAttempt timeoutAttempt = timeoutAttemptOpt.get();
@@ -191,12 +234,93 @@ public class ConfirmationTracker {
                 txAttemptRepository.save(timeoutAttempt);
             }
             timeoutCounter.increment();
-            log.info("Attempt {} marked FAILED_TIMEOUT after polling", attemptId);
+            log.info("event=confirmation_tracker.timeout attemptId={} tries={}", attemptId, tries);
+
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.warn("Confirmation tracking interrupted for attempt {}", attemptId);
         } catch (Exception e) {
             log.error("Unexpected error in confirmation tracker for attempt {}: {}", attemptId, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 5-2-2~5-2-5: receipt 수신 후 finalizationBlockCount 블록 경과를 확인하여
+     * W8_SAFE_FINALIZED 전이 + LedgerService.settle() 호출.
+     *
+     * <p>finalizationBlockCount == 0 이면 즉시 W8로 전이한다 (mock/dev 환경 기본값).
+     * finalizationTimeoutMinutes 초과 시 카운터를 증가시키고 경고 로그를 남긴다.
+     */
+    private void waitForFinalization(
+            EvmRpcAdapter rpcAdapter,
+            TransactionReceipt receipt,
+            Withdrawal withdrawal
+    ) throws InterruptedException {
+
+        long receiptBlock = receipt.getBlockNumber() != null
+                ? receipt.getBlockNumber().longValue() : -1L;
+
+        // finalizationBlockCount == 0: 즉시 확정 처리 (mock 모드 기본값)
+        if (finalizationBlockCount <= 0 || receiptBlock < 0) {
+            finalizeWithdrawal(withdrawal);
+            return;
+        }
+
+        // 5-2-3/5-2-4: finalizationBlockCount 블록 경과 대기
+        Instant deadline = Instant.now().plus(finalizationTimeoutMinutes, ChronoUnit.MINUTES);
+        log.info("event=confirmation_tracker.finalization.waiting withdrawalId={} receiptBlock={} required={}",
+                withdrawal.getId(), receiptBlock, finalizationBlockCount);
+
+        while (Instant.now().isBefore(deadline)) {
+            try {
+                long currentBlock = rpcAdapter.getBlockNumber();
+                long elapsed = currentBlock - receiptBlock;
+                if (elapsed >= finalizationBlockCount) {
+                    log.info("event=confirmation_tracker.finalization.reached withdrawalId={} currentBlock={} elapsed={}",
+                            withdrawal.getId(), currentBlock, elapsed);
+                    finalizeWithdrawal(withdrawal);
+                    return;
+                }
+                log.debug("event=confirmation_tracker.finalization.pending withdrawalId={} currentBlock={} elapsed={}/{}",
+                        withdrawal.getId(), currentBlock, elapsed, finalizationBlockCount);
+            } catch (Exception e) {
+                log.warn("event=confirmation_tracker.finalization.block_fetch_error withdrawalId={} error={}",
+                        withdrawal.getId(), e.getMessage());
+            }
+            if (pollIntervalMs > 0) {
+                TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
+            }
+        }
+
+        // 5-2-5: finalization-timeout-minutes 초과
+        finalizationTimeoutCounter.increment();
+        log.warn("event=confirmation_tracker.finalization.timeout withdrawalId={} timeoutMinutes={}",
+                withdrawal.getId(), finalizationTimeoutMinutes);
+    }
+
+    /**
+     * W8_SAFE_FINALIZED 전이 + LedgerService.settle() (W9→W10).
+     */
+    private void finalizeWithdrawal(Withdrawal withdrawal) {
+        var wFinalizeOpt = withdrawalRepository.findById(withdrawal.getId());
+        if (wFinalizeOpt.isEmpty()) {
+            log.warn("event=confirmation_tracker.finalization.withdrawal_gone withdrawalId={}", withdrawal.getId());
+            return;
+        }
+        Withdrawal wFinalize = wFinalizeOpt.get();
+        wFinalize.transitionTo(WithdrawalStatus.W8_SAFE_FINALIZED);
+        wFinalize = withdrawalRepository.save(wFinalize);
+        log.info("event=confirmation_tracker.finalized withdrawalId={}", wFinalize.getId());
+
+        // LedgerService가 주입된 경우 W9→W10 정산 처리
+        if (ledgerService != null) {
+            try {
+                ledgerService.settle(wFinalize);
+                log.info("event=confirmation_tracker.settled withdrawalId={}", wFinalize.getId());
+            } catch (Exception e) {
+                log.error("event=confirmation_tracker.settle_failed withdrawalId={} error={}",
+                        wFinalize.getId(), e.getMessage(), e);
+            }
         }
     }
 }
