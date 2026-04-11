@@ -6,6 +6,10 @@
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <timeZone>UTC</timeZone>
             <customFields>{"service":"${appName}","log_format":"json"}</customFields>
+            <!-- Mask private keys (64 hex) and signed raw transactions (>64 hex) in all log values -->
+            <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+                <valueMask>0x[a-fA-F0-9]{64,}</valueMask>
+            </jsonGeneratorDecorator>
         </encoder>
     </appender>
 
@@ -16,7 +20,12 @@
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <timeZone>UTC</timeZone>
             <customFields>{"service":"${appName}","log_format":"json_pretty"}</customFields>
-            <jsonGeneratorDecorator class="net.logstash.logback.decorate.PrettyPrintingJsonGeneratorDecorator"/>
+            <jsonGeneratorDecorator class="net.logstash.logback.decorate.CompositeJsonGeneratorDecorator">
+                <jsonGeneratorDecorator class="net.logstash.logback.decorate.PrettyPrintingJsonGeneratorDecorator"/>
+                <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+                    <valueMask>0x[a-fA-F0-9]{64,}</valueMask>
+                </jsonGeneratorDecorator>
+            </jsonGeneratorDecorator>
         </encoder>
     </appender>
 

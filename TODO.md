@@ -103,11 +103,11 @@
 - [x] 2-4-4. Rate Limit 초과 시 `429 Too Many Requests` 표준 응답 반환
 
 ### 2-5. 민감정보 마스킹
-- [ ] 2-5-1. 로그 출력 시 `private-key` 값 마스킹 확인 (`application.yaml` `logging.level` 수준 점검)
-- [ ] 2-5-2. `EvmRpcConfig`에서 개인키 로깅 제거 확인
-- [ ] 2-5-3. `GlobalExceptionHandler`에서 스택 트레이스에 포함될 수 있는 주소·키 마스킹 처리
-- [ ] 2-5-4. Logback 패턴에 민감 필드 필터 규칙 추가 (`logback-spring.xml` 수정)
-- [ ] 2-5-5. **DEBUG 레벨 로그** 마스킹 — RPC 응답 원문, 서명된 트랜잭션 바이트, `eth_sendRawTransaction` 파라미터가 DEBUG 로그에 노출되지 않도록 `toString()` 오버라이드 또는 Logback 필터 추가
+- [x] 2-5-1. 로그 출력 시 `private-key` 값 마스킹 확인 (`application.yaml` `logging.level` 수준 점검) — EvmSigner에서 private-key 로깅 없음, root level=INFO 확인 ✅
+- [x] 2-5-2. `EvmRpcConfig`에서 개인키 로깅 제거 확인 — EvmRpcConfig는 private-key 직접 사용하지 않음 ✅
+- [x] 2-5-3. `GlobalExceptionHandler`에서 스택 트레이스에 포함될 수 있는 주소·키 마스킹 처리 — `SENSITIVE_HEX_PATTERN(0x[a-fA-F0-9]{64,})` + `sanitizeMessage()` 이미 구현됨 ✅
+- [x] 2-5-4. Logback 패턴에 민감 필드 필터 규칙 추가 (`logback-spring.xml` 수정) — `MaskingJsonGeneratorDecorator` + `valueMask: 0x[a-fA-F0-9]{64,}` 두 encoder에 추가 ✅
+- [x] 2-5-5. **DEBUG 레벨 로그** 마스킹 — `MaskingJsonGeneratorDecorator`로 signedTxHex(64+ hex) 포함 모든 값 마스킹, root level=INFO이므로 DEBUG 기본 비활성화 ✅
 
 ---
 

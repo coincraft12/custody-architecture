@@ -4,11 +4,16 @@
 > 다음 작업자가 이 파일 하나만 읽어도 현재 상태를 파악할 수 있어야 한다.
 
 ## 현재 상태
-- **단계**: 운영형 전환 TODO 진행 중 (2026-04-11)
+- **단계**: 운영형 전환 TODO 진행 중 (2026-04-12)
 - **언어**: Java / Spring Boot
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- 민감정보 마스킹 (2-5) 구현 완료 (2026-04-12)
+  - 2-5-1/2/3: 확인 작업 — EvmSigner/EvmRpcConfig 로깅 없음, GlobalExceptionHandler `SENSITIVE_HEX_PATTERN(0x[a-fA-F0-9]{64,})` 이미 있음
+  - 2-5-4/5: `logback-spring.xml` — `JSON_CONSOLE` encoder에 `MaskingJsonGeneratorDecorator` + `valueMask: 0x[a-fA-F0-9]{64,}` 추가; `JSON_PRETTY_FILE` encoder에 `CompositeJsonGeneratorDecorator`(Pretty + Masking) 적용
+  - private key(64 hex) 및 서명된 raw tx(>64 hex) 가 로그 JSON 값에 포함되면 자동 `****` 처리
+  - 전체 119개 테스트 통과
 - Rate Limiting (2-4) 구현 완료 (2026-04-11)
   - `bucket4j-core:8.10.1` 의존성 추가
   - `RateLimitProperties`: `custody.rate-limit.enabled/withdrawalsPerSecond/whitelistPerSecond`
@@ -47,6 +52,7 @@
   - 기존 생성자 주입 방식으로 `MeterRegistry` 주입, 테스트 3개 `SimpleMeterRegistry` 추가
 
 ## 완료된 주요 작업
+- 민감정보 마스킹 (2-5) 완료 (2026-04-12)
 - JPA 엔티티 사전 과제 전체 완료 (섹션 0)
 - DB 기반 nonce reservation 구현 완료 (섹션 1-2)
 - 테스트 커버리지 보강 (섹션 9 주요 항목)
@@ -62,8 +68,7 @@
 - Rate Limiting (2-4) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟡 민감정보 마스킹 (2-5)
-2. 🟡 넌스 충돌 감지 복구 (1-4)
+1. 🟡 넌스 충돌 감지 복구 (1-4)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)
