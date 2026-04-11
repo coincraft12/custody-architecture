@@ -131,10 +131,10 @@
 - [x] 3-1-13. `RetryReplaceService`에 카운터 추가: `custody.withdrawal.retry.total`, `custody.withdrawal.replace.total` ✅
 
 ### 3-2. Grafana 대시보드 구성 (선택적 — docker-compose 포함)
-- [ ] 3-2-1. `docker-compose.yml`에 Prometheus 서비스 추가 (scrape 설정 포함)
-- [ ] 3-2-2. `docker-compose.yml`에 Grafana 서비스 추가
-- [ ] 3-2-3. Prometheus `scrape_configs`에 custody 앱 타겟 추가
-- [ ] 3-2-4. 기본 Grafana 대시보드 JSON 파일 생성 (출금 성공률, 레이턴시, 브로드캐스트 수)
+- [x] 3-2-1. `docker-compose.yml`에 Prometheus 서비스 추가 (scrape 설정 포함)
+- [x] 3-2-2. `docker-compose.yml`에 Grafana 서비스 추가
+- [x] 3-2-3. Prometheus `scrape_configs`에 custody 앱 타겟 추가
+- [x] 3-2-4. 기본 Grafana 대시보드 JSON 파일 생성 (출금 성공률, 레이턴시, 브로드캐스트 수)
 
 ### 3-3. 헬스체크 엔드포인트 강화
 - [ ] 3-3-1. DB 커넥션 헬스 인디케이터 활성화 확인 (`spring.datasource` → `HealthIndicator`)

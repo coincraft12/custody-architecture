@@ -9,6 +9,11 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- Grafana 대시보드 구성 (3-2) 완료 (2026-04-11)
+  - `monitoring/prometheus/prometheus.yml`: custody:8080/actuator/prometheus 15s 스크래핑
+  - `monitoring/grafana/provisioning/`: datasource(Prometheus) + dashboard 자동 프로비저닝
+  - `monitoring/grafana/dashboards/custody.json`: 10개 패널 — 출금 생성/브로드캐스트 속도, 정책 거부율, 생성 레이턴시 P50/P95/P99, 추적 중인 TX 수, 타임아웃, Retry/Replace, RPC 속도/레이턴시/에러율
+  - `docker-compose.yml`: prometheus(9090), grafana(3000) 서비스 추가 + volume 추가
 - 입력 검증 Bean Validation (2-2) 구현 완료 (2026-04-11)
   - `spring-boot-starter-validation` 의존성 추가
   - `CreateWithdrawalRequest`: `@NotBlank` (chainType/fromAddress/toAddress/asset), `@Positive` (amount), `@Pattern` (EVM 40-hex 주소), `@Size` (asset≤20)
@@ -46,10 +51,11 @@
 - Micrometer + Prometheus 메트릭 수집 (3-1) 완료 (2026-04-11)
 - 서버 재시작 후 미완료 TX 재추적 (5-3) 완료 (2026-04-11)
 - 입력 검증 Bean Validation (2-2) 완료 (2026-04-11)
+- Grafana 대시보드 구성 (3-2) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟠 Grafana 대시보드 구성 — docker-compose Prometheus + Grafana (3-2)
-2. 🟠 Rate Limiting (2-4) — bucket4j
+1. 🟠 Rate Limiting (2-4) — bucket4j
+2. 🟡 넌스 충돌 감지 복구 (1-4)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)
