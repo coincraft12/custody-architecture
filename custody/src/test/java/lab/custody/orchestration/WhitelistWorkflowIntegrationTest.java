@@ -223,7 +223,7 @@ class WhitelistWorkflowIntegrationTest {
         return """
                 {
                   "chainType": "EVM",
-                  "fromAddress": "0xfrom-lab7",
+                  "fromAddress": "0xfabb0ac9d68b0b445fb7357272ff202c5651694a",
                   "toAddress": "%s",
                   "asset": "ETH",
                   "amount": 0.0001

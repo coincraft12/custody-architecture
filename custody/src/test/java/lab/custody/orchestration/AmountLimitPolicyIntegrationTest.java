@@ -39,8 +39,8 @@ class AmountLimitPolicyIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "evm",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                                  "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
                                   "amount": 6
                                 }
@@ -57,8 +57,8 @@ class AmountLimitPolicyIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "evm",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                                  "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
                                   "amount": 5
                                 }
@@ -75,8 +75,8 @@ class AmountLimitPolicyIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "evm",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                                  "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
                                   "amount": 1
                                 }
@@ -93,8 +93,8 @@ class AmountLimitPolicyIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "evm",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+                                  "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
                                   "amount": 7
                                 }

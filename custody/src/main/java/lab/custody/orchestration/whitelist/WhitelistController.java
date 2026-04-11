@@ -4,6 +4,7 @@ import lab.custody.domain.whitelist.WhitelistAddress;
 import lab.custody.domain.whitelist.WhitelistStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -24,7 +25,7 @@ public class WhitelistController {
      * 이후 approve API 로 승인해야 HOLDING → ACTIVE 워크플로우 시작.
      */
     @PostMapping
-    public ResponseEntity<WhitelistAddress> register(@RequestBody RegisterAddressRequest req) {
+    public ResponseEntity<WhitelistAddress> register(@Valid @RequestBody RegisterAddressRequest req) {
         log.info("event=whitelist.controller.register address={} chainType={}", req.address(), req.chainType());
         return ResponseEntity.ok(whitelistService.register(req));
     }

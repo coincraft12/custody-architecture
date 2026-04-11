@@ -13,16 +13,34 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 
 import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private static final Pattern SENSITIVE_HEX_PATTERN = Pattern.compile("0x[a-fA-F0-9]{64,}");
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ValidationErrorResponse> handleValidationError(MethodArgumentNotValidException ex) {
+        List<String> errors = ex.getBindingResult().getFieldErrors().stream()
+                .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
+                .collect(Collectors.toList());
+
+        ValidationErrorResponse body = new ValidationErrorResponse(
+                HttpStatus.BAD_REQUEST.value(),
+                "Validation failed",
+                errors,
+                currentCorrelationId()
+        );
+
+        return ResponseEntity.badRequest().body(body);
+    }
 
     @ExceptionHandler({MethodArgumentTypeMismatchException.class, IllegalArgumentException.class})
     public ResponseEntity<ErrorResponse> handleBadRequest(Exception ex) {
@@ -141,6 +159,13 @@ public class GlobalExceptionHandler {
     private String currentCorrelationId() {
         return MDC.get(CorrelationIdFilter.MDC_CORRELATION_ID_KEY);
     }
+
+    public record ValidationErrorResponse(
+            int status,
+            String message,
+            List<String> errors,
+            String correlationId
+    ) {}
 
     public record ErrorResponse(
             int status,

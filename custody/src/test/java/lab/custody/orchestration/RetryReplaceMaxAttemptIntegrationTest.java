@@ -43,8 +43,8 @@ class RetryReplaceMaxAttemptIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "evm",
-                                  "fromAddress": "0xfrom-max-attempt",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "0xbcd4042de499d14e55001ccbb24a551f3b954096",
+                                  "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
                                   "amount": 0.0001
                                 }
@@ -82,8 +82,8 @@ class RetryReplaceMaxAttemptIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "evm",
-                                  "fromAddress": "0xfrom-max-replace",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "0x71be63f3384f5fb98995aa9b7a22c58fc65ab84c",
+                                  "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
                                   "amount": 0.0001
                                 }

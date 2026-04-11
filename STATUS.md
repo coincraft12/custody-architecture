@@ -9,6 +9,16 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- 입력 검증 Bean Validation (2-2) 구현 완료 (2026-04-11)
+  - `spring-boot-starter-validation` 의존성 추가
+  - `CreateWithdrawalRequest`: `@NotBlank` (chainType/fromAddress/toAddress/asset), `@Positive` (amount), `@Pattern` (EVM 40-hex 주소), `@Size` (asset≤20)
+  - `RegisterAddressRequest`: `@NotBlank` (address/chainType/registeredBy), `@Pattern` (EVM), `@Size` (registeredBy/note≤255)
+  - `GlobalExceptionHandler`: `MethodArgumentNotValidException` 핸들러 추가 → `ValidationErrorResponse {status, message, errors[], correlationId}`
+  - `WithdrawalController`, `WhitelistController`에 `@Valid` 추가
+  - 기존 통합 테스트 주소를 유효한 40자 hex EVM 주소로 전환 (`"0xto"` → Hardhat account 1, `"0xfrom"` → Hardhat account 0 등)
+  - `create_withoutChainType_defaultsToEvm` 테스트 → `create_withoutChainType_returnsBadRequest`로 변경
+  - `WithdrawalValidationTest` 7개 + `RegisterAddressValidationTest` 5개 신규 테스트 추가
+  - 전체 116개 테스트 통과
 - 서버 재시작 후 미완료 TX 재추적 (5-3) 구현 완료 (2026-04-11)
   - `StartupRecoveryService`: `@PostConstruct`로 W6_BROADCASTED 출금 DB 조회 → canonical TxAttempt 재등록
   - `ConfirmationTracker`: `ConcurrentHashMap.newKeySet()` 기반 중복 추적 방지 (`trackingSet`)
@@ -35,10 +45,11 @@
 - 넌스 만료 스케줄러 (1-3) 완료 (2026-04-10)
 - Micrometer + Prometheus 메트릭 수집 (3-1) 완료 (2026-04-11)
 - 서버 재시작 후 미완료 TX 재추적 (5-3) 완료 (2026-04-11)
+- 입력 검증 Bean Validation (2-2) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟠 입력 검증 — Bean Validation (2-2)
-2. 🟠 Grafana 대시보드 구성 — docker-compose Prometheus + Grafana (3-2)
+1. 🟠 Grafana 대시보드 구성 — docker-compose Prometheus + Grafana (3-2)
+2. 🟠 Rate Limiting (2-4) — bucket4j
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)

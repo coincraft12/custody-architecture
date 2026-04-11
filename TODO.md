@@ -81,12 +81,12 @@
 - [x] 2-1-5. `RpcModeStartupGuard`에 mainnet chain-id=1 이외에 추가 프로덕션 체인 차단 로직 점검 (이미 구현됨) ✅
 
 ### 2-2. 입력 검증 (Input Validation)
-- [ ] 2-2-1. `CreateWithdrawalRequest`에 Bean Validation 어노테이션 추가: `@NotBlank`, `@NotNull`, `@Positive(amount)`, `@Pattern(fromAddress/toAddress 형식)`
+- [x] 2-2-1. `CreateWithdrawalRequest`에 Bean Validation 어노테이션 추가: `@NotBlank`, `@NotNull`, `@Positive(amount)`, `@Pattern(fromAddress/toAddress 형식)`
 - [x] 2-2-2. EVM 주소 형식 검증 유틸리티 메서드 (`isValidEvmAddress()`) 추가 및 `PolicyEngine` 진입 전 사전 검증 (이미 구현됨) ✅
-- [ ] 2-2-3. `RegisterAddressRequest`에도 동일한 Bean Validation 추가
-- [ ] 2-2-4. `@ControllerAdvice`에서 `MethodArgumentNotValidException` 처리 추가 (현재 `GlobalExceptionHandler`에 없는 경우)
-- [ ] 2-2-5. 입력 길이 제한 추가: `note`, `registeredBy`, `approvedBy`, `revokedBy` 필드 최대 길이 255 제한
-- [ ] 2-2-6. `amount` 필드 최소값 0 초과 검증 추가 (0 ETH 출금 방지)
+- [x] 2-2-3. `RegisterAddressRequest`에도 동일한 Bean Validation 추가
+- [x] 2-2-4. `@ControllerAdvice`에서 `MethodArgumentNotValidException` 처리 추가 (현재 `GlobalExceptionHandler`에 없는 경우)
+- [x] 2-2-5. 입력 길이 제한 추가: `note`, `registeredBy`, `approvedBy`, `revokedBy` 필드 최대 길이 255 제한
+- [x] 2-2-6. `amount` 필드 최소값 0 초과 검증 추가 (0 ETH 출금 방지)
 
 ### 2-3. API 인증·인가
 - [x] 2-3-1. Spring Security 의존성 추가 (`spring-boot-starter-security`)

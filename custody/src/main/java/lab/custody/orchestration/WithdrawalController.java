@@ -5,6 +5,7 @@ import lab.custody.domain.policy.PolicyAuditLog;
 import lab.custody.domain.withdrawal.Withdrawal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -24,7 +25,7 @@ public class WithdrawalController {
     @PostMapping
     public ResponseEntity<Withdrawal> create(
             @RequestHeader("Idempotency-Key") String idempotencyKey,
-            @RequestBody CreateWithdrawalRequest req
+            @Valid @RequestBody CreateWithdrawalRequest req
     ) {
         log.info(
                 "event=withdrawal.create.request chainType={} asset={} amount={} toAddress={} idempotencyKeyPresent={}",

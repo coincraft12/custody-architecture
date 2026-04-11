@@ -20,6 +20,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class WithdrawalControllerIntegrationTest {
 
+    // Hardhat test addresses (valid 40-hex EVM format)
+    private static final String FROM = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+    private static final String TO   = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8"; // whitelisted seed
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -33,12 +37,12 @@ class WithdrawalControllerIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "bft",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "%s",
+                                  "toAddress": "%s",
                                   "asset": "USDC",
                                   "amount": 1
                                 }
-                                """))
+                                """.formatted(FROM, TO)))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Correlation-Id", "cid-withdrawal-create-001"))
                 .andExpect(jsonPath("$.chainType").value("BFT"))
@@ -53,12 +57,12 @@ class WithdrawalControllerIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "evm",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "%s",
+                                  "toAddress": "%s",
                                   "asset": "USDC",
                                   "amount": 1
                                 }
-                                """))
+                                """.formatted(FROM, TO)))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Correlation-Id", not(isEmptyOrNullString())));
     }
@@ -71,51 +75,51 @@ class WithdrawalControllerIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "unknown",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "%s",
+                                  "toAddress": "%s",
                                   "asset": "USDC",
                                   "amount": 1
                                 }
-                                """))
+                                """.formatted(FROM, TO)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("invalid chainType: unknown"));
     }
 
     @Test
-    void create_withoutChainType_defaultsToEvm() throws Exception {
+    void create_withoutChainType_returnsBadRequest() throws Exception {
         mockMvc.perform(post("/withdrawals")
-                        .header("Idempotency-Key", "idem-default-chain-1")
+                        .header("Idempotency-Key", "idem-no-chain-type-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "%s",
+                                  "toAddress": "%s",
                                   "asset": "USDC",
                                   "amount": 1
                                 }
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.chainType").value("EVM"))
-                .andExpect(jsonPath("$.status").value("W6_BROADCASTED"));
+                                """.formatted(FROM, TO)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0]").value("chainType: chainType is required"));
     }
 
     @Test
     void create_normalizesAddressFieldsAtDtoBoundary() throws Exception {
+        // Mixed-case + whitespace input → normalized to lowercase trimmed
         mockMvc.perform(post("/withdrawals")
                         .header("Idempotency-Key", "idem-normalize-address-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                   "chainType": "evm",
-                                  "fromAddress": "  0xFrOm  ",
-                                  "toAddress": "  0XTO  ",
+                                  "fromAddress": "  0xF39Fd6e51aad88F6F4ce6aB8827279cffFb92266  ",
+                                  "toAddress": "  0x70997970C51812DC3A010C7D01B50E0D17DC79C8  ",
                                   "asset": "USDC",
                                   "amount": 1
                                 }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.fromAddress").value("0xfrom"))
-                .andExpect(jsonPath("$.toAddress").value("0xto"))
+                .andExpect(jsonPath("$.fromAddress").value("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+                .andExpect(jsonPath("$.toAddress").value("0x70997970c51812dc3a010c7d01b50e0d17dc79c8"))
                 .andExpect(jsonPath("$.status").value("W6_BROADCASTED"));
     }
 
@@ -129,12 +133,12 @@ class WithdrawalControllerIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "evm",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "%s",
+                                  "toAddress": "%s",
                                   "asset": "USDC",
                                   "amount": 1
                                 }
-                                """))
+                                """.formatted(FROM, TO)))
                 .andExpect(status().isOk());
 
         mockMvc.perform(post("/withdrawals")
@@ -143,12 +147,12 @@ class WithdrawalControllerIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "bft",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "%s",
+                                  "toAddress": "%s",
                                   "asset": "USDC",
                                   "amount": 1
                                 }
-                                """))
+                                """.formatted(FROM, TO)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value("same Idempotency-Key cannot be used with a different request body"));
     }
@@ -159,7 +163,7 @@ class WithdrawalControllerIntegrationTest {
                         .header("Idempotency-Key", "idem-malformed-json-1")
                         .header("X-Correlation-Id", "cid-bad-json-001")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{'chainType':'evm','fromAddress':'0xfrom','toAddress':'0xto','asset':'USDC','amount':100}"))
+                        .content("{'chainType':'evm','fromAddress':'%s','toAddress':'%s','asset':'USDC','amount':100}".formatted(FROM, TO)))
                 .andExpect(status().isBadRequest())
                 .andExpect(header().string("X-Correlation-Id", "cid-bad-json-001"))
                 .andExpect(jsonPath("$.correlationId").value("cid-bad-json-001"))
@@ -174,30 +178,31 @@ class WithdrawalControllerIntegrationTest {
                         .content("""
                                 {
                                   "chainType": "evm",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xto",
+                                  "fromAddress": "%s",
+                                  "toAddress": "%s",
                                   "asset": "USDC",
                                   "amount": 1
                                 }
-                                """))
+                                """.formatted(FROM, TO)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Missing required header: Idempotency-Key"));
     }
 
     @Test
     void create_withNonWhitelistedAddress_isRejectedAndAuditLogged() throws Exception {
+        String notAllowed = "0xffffffffffffffffffffffffffffffffffffffff";
         String response = mockMvc.perform(post("/withdrawals")
                         .header("Idempotency-Key", "idem-policy-reject-1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
                                   "chainType": "evm",
-                                  "fromAddress": "0xfrom",
-                                  "toAddress": "0xnot-allowed",
+                                  "fromAddress": "%s",
+                                  "toAddress": "%s",
                                   "asset": "USDC",
                                   "amount": 1
                                 }
-                                """))
+                                """.formatted(FROM, notAllowed)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("W0_POLICY_REJECTED"))
                 .andReturn()
@@ -209,6 +214,6 @@ class WithdrawalControllerIntegrationTest {
         mockMvc.perform(get("/withdrawals/{id}/policy-audits", withdrawalId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].allowed").value(false))
-                .andExpect(jsonPath("$[0].reason").value("TO_ADDRESS_NOT_WHITELISTED: 0xnot-allowed"));
+                .andExpect(jsonPath("$[0].reason").value("TO_ADDRESS_NOT_WHITELISTED: " + notAllowed));
     }
 }
