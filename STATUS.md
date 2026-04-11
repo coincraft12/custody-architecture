@@ -9,6 +9,15 @@
 - **DB**: PostgreSQL + Flyway
 
 ## 마지막 작업 내용
+- 에러 응답 표준화 (6-1) + 커스텀 헬스 인디케이터 (3-3) 완료 (2026-04-12)
+  - `GlobalExceptionHandler` 전면 재작성: 통합 `ApiErrorResponse { status, errorCode, message, path, correlationId, timestamp }`
+  - 신규 핸들러: `DataAccessException`/`TransactionSystemException` → 503, `NoHandlerFoundException`/`NoResourceFoundException` → 404
+  - `ValidationErrorResponse`에 `errorCode`/`timestamp` 추가
+  - `CustodyHealthIndicator`: W6_BROADCASTED TX 수 포함 `/actuator/health` 커스텀 지표
+  - `build.gradle: springBoot { buildInfo() }` + `info.app.*` → `/actuator/info` 빌드 버전 노출
+  - `WithdrawalRepository.countByStatus()` 추가
+  - `AdapterDemoControllerBadRequestTest`: `allowedTypes` → `errorCode`/`timestamp` 검증으로 업데이트
+  - 전체 124개 테스트 통과
 - 넌스 충돌 감지 복구 (1-4) + 개인키 보안 (2-1) 완료 (2026-04-12)
   - `BroadcastRejectedException.isNonceTooLow()` 추가 — RPC 에러 메시지에서 "nonce too low" 감지
   - `WithdrawalService.doCreateAndBroadcast()`: nonce-too-low catch → `markException(RPC_INCONSISTENT)` + release → re-reserve → 재브로드캐스트 1회 자동 복구
@@ -63,6 +72,8 @@
   - 기존 생성자 주입 방식으로 `MeterRegistry` 주입, 테스트 3개 `SimpleMeterRegistry` 추가
 
 ## 완료된 주요 작업
+- 에러 응답 표준화 (6-1) 완료 (2026-04-12)
+- 커스텀 헬스 인디케이터 (3-3) 완료 (2026-04-12)
 - 넌스 충돌 감지 복구 (1-4) 완료 (2026-04-12)
 - 개인키 보안 (2-1) 완료 (2026-04-12)
 - 민감정보 마스킹 (2-5) 완료 (2026-04-12)
@@ -81,8 +92,8 @@
 - Rate Limiting (2-4) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟡 에러 응답 표준화 (6-1)
-2. 🟡 커스텀 헬스 인디케이터 (3-3)
+1. 🟡 Prometheus AlertRule 정의 (3-4)
+2. 🟡 트랜잭션 일관성 보장 (6-2)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)

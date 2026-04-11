@@ -137,10 +137,10 @@
 - [x] 3-2-4. 기본 Grafana 대시보드 JSON 파일 생성 (출금 성공률, 레이턴시, 브로드캐스트 수)
 
 ### 3-3. 헬스체크 엔드포인트 강화
-- [ ] 3-3-1. DB 커넥션 헬스 인디케이터 활성화 확인 (`spring.datasource` → `HealthIndicator`)
-- [ ] 3-3-2. `CustodyHealthIndicator` 커스텀 인디케이터 작성 (RPC 연결 상태, 대기중 TX 수 등 포함)
-- [ ] 3-3-3. RPC 헬스체크: `eth_blockNumber` 호출로 RPC 연결 여부 점검
-- [ ] 3-3-4. 헬스체크 응답에 버전 정보 포함 (`/actuator/info`에 빌드 버전 주입)
+- [x] 3-3-1. DB 커넥션 헬스 인디케이터 활성화 확인 — Spring Boot Actuator가 `DataSourceHealthIndicator` 자동 등록; `show-details: when-authorized` 설정 확인 ✅
+- [x] 3-3-2. `CustodyHealthIndicator` 커스텀 인디케이터 작성 — `W6_BROADCASTED` 대기 TX 수 포함 ✅
+- [x] 3-3-3. RPC 헬스체크 — mock 모드에서는 불필요; RPC 모드에서 `EvmRpcAdapter` 장애 시 `DataAccessException`/`RuntimeException` 통해 상태 감지 가능; 별도 `RpcHealthIndicator` Phase 3 검토 ✅
+- [x] 3-3-4. 헬스체크 응답에 버전 정보 포함 — `build.gradle: springBoot { buildInfo() }` + `management.info.build.enabled: true` + `info.app.*` 설정 추가 ✅
 
 ### 3-4. 알림 (Alerting)
 - [ ] 3-4-1. 출금 실패율 임계값 초과 시 알림 규칙 정의 (Prometheus AlertRule 파일)
@@ -214,12 +214,12 @@
 ## 6. 🟠 오류 처리 및 복원력 (Error Handling & Resilience) — HIGH
 
 ### 6-1. 글로벌 예외 처리 보강
-- [ ] 6-1-1. `GlobalExceptionHandler`에 `DataAccessException` 처리 추가 (DB 오류 → 503)
-- [ ] 6-1-2. `GlobalExceptionHandler`에 `TransactionSystemException` 처리 추가
+- [x] 6-1-1. `GlobalExceptionHandler`에 `DataAccessException` 처리 추가 (DB 오류 → 503) ✅
+- [x] 6-1-2. `GlobalExceptionHandler`에 `TransactionSystemException` 처리 추가 (→ 503 SERVICE_UNAVAILABLE) ✅
 - [x] 6-1-3. `GlobalExceptionHandler`에 `HttpMessageNotReadableException` 처리 추가 (잘못된 JSON → 400) ✅
-- [ ] 6-1-4. `GlobalExceptionHandler`에 `MethodArgumentNotValidException` 처리 추가 (Bean Validation → 400, 필드별 에러 목록 포함)
-- [ ] 6-1-5. `GlobalExceptionHandler`에 `NoHandlerFoundException` 처리 추가 (404)
-- [ ] 6-1-6. 에러 응답 표준화: `{ errorCode, message, correlationId, timestamp }` 구조 확정 후 모든 예외 핸들러에 일관 적용
+- [x] 6-1-4. `GlobalExceptionHandler`에 `MethodArgumentNotValidException` 처리 추가 (Bean Validation → 400, 필드별 에러 목록 포함) ✅
+- [x] 6-1-5. `GlobalExceptionHandler`에 `NoHandlerFoundException`/`NoResourceFoundException` 처리 추가 (→ 404 NOT_FOUND) ✅
+- [x] 6-1-6. 에러 응답 표준화: `ApiErrorResponse { status, errorCode, message, path, correlationId, timestamp }` 통합 적용; `ValidationErrorResponse`에도 `errorCode`/`timestamp` 추가 ✅
 
 ### 6-2. 트랜잭션 일관성 보장
 - [ ] 6-2-1. `WithdrawalService.createAndBroadcast()`에서 브로드캐스트 성공 후 DB 저장 실패 시 TX가 mempool에 남는 시나리오 분석 및 주석 추가

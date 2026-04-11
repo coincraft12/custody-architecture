@@ -45,6 +45,11 @@ tasks.named('test') {
 	useJUnitPlatform()
 }
 
+// 3-3-4: /actuator/info에 빌드 버전·시간 정보 주입
+springBoot {
+	buildInfo()
+}
+
 tasks.named('clean') {
     doFirst {
         delete 'logs'

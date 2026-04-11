@@ -33,9 +33,17 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+  info:
+    build:
+      enabled: true
   metrics:
     tags:
       application: ${spring.application.name}
+
+info:
+  app:
+    name: ${spring.application.name}
+    version: "@project.version@"
 
 logging:
   level:

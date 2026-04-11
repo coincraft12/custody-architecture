@@ -9,4 +9,5 @@ import java.util.UUID;
 public interface WithdrawalRepository extends JpaRepository<Withdrawal, UUID> {
     Optional<Withdrawal> findByIdempotencyKey(String idempotencyKey);
     List<Withdrawal> findByStatus(WithdrawalStatus status);
+    long countByStatus(WithdrawalStatus status);
 }

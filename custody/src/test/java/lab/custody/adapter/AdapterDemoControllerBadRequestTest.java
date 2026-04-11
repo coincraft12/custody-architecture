@@ -33,7 +33,7 @@ class AdapterDemoControllerBadRequestTest {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400))
-                .andExpect(jsonPath("$.allowedTypes[0]").value("EVM"))
-                .andExpect(jsonPath("$.allowedTypes[1]").value("BFT"));
+                .andExpect(jsonPath("$.errorCode").value("BAD_REQUEST"))
+                .andExpect(jsonPath("$.timestamp").exists());
     }
 }

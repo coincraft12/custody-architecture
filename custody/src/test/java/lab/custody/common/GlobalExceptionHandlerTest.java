@@ -35,9 +35,11 @@ class GlobalExceptionHandlerTest {
                 .andExpect(header().string("X-Correlation-Id", "cid-test-error-001"))
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.status").value(500))
+                .andExpect(jsonPath("$.errorCode").value("INTERNAL_ERROR"))
                 .andExpect(jsonPath("$.path").value("/test-error"))
                 .andExpect(jsonPath("$.message").value("Failed with secret 0x[REDACTED]"))
-                .andExpect(jsonPath("$.correlationId").value("cid-test-error-001"));
+                .andExpect(jsonPath("$.correlationId").value("cid-test-error-001"))
+                .andExpect(jsonPath("$.timestamp").exists());
     }
 
     @TestConfiguration
