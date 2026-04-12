@@ -1,0 +1,46 @@
+name: PR Build & Test
+
+# 14-2-1: Run on every PR to main — tests + coverage check
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Run tests
+        working-directory: custody
+        run: ./gradlew test --no-daemon
+
+      # 14-2-2: Generate and upload JaCoCo coverage report
+      - name: Generate JaCoCo coverage report
+        working-directory: custody
+        run: ./gradlew jacocoTestReport --no-daemon
+
+      - name: Upload JaCoCo coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-coverage-report
+          path: custody/build/reports/jacoco/test/html/
+
+      - name: Build (no tests — already ran above)
+        working-directory: custody
+        run: ./gradlew build -x test --no-daemon
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: custody/build/reports/tests/test/

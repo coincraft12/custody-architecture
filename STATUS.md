@@ -4,11 +4,20 @@
 > 다음 작업자가 이 파일 하나만 읽어도 현재 상태를 파악할 수 있어야 한다.
 
 ## 현재 상태
-- **단계**: 운영형 전환 TODO 진행 중 (2026-04-12)
+- **단계**: 운영형 전환 TODO 진행 중 (2026-04-13)
 - **언어**: Java / Spring Boot
 - **DB**: PostgreSQL + Flyway
+- **테스트**: 142개 통과 (2026-04-13)
 
 ## 마지막 작업 내용
+- 섹션 11~16 구현 완료 (2026-04-13)
+  - 11: EIP-1559 Gas Price Oracle — `getLatestBaseFee()`, `getFeeHistory()`, `fetchGasPrices()` with AtomicReference TTL 12s cache; `broadcast()` 동적 가스 적용; `feeBumpPercentage` 설정화 (110%)
+  - 12: BFT 어댑터 완성 — `BftMockAdapter.getTransactionReceipt()` + `getPendingNonce()` 구현; `ChainAdapter` 인터페이스에 `getTransactionReceipt()` default 메서드 추가; `ConfirmationTracker` `instanceof EvmRpcAdapter` 제거 → 인터페이스 메서드 통일; 체인별 finalization 블록 수 설정 분리
+  - 13: OpenAPI/Swagger — `springdoc-openapi-starter-webmvc-ui:2.5.0` 추가; `@OpenAPIDefinition`; `WithdrawalController`에 `@Operation`/`@ApiResponse`; `CreateWithdrawalRequest`에 `@Schema`; production 프로파일 Swagger 비활성화
+  - 14: CI/CD — `.github/workflows/build.yml` (PR 트리거, JaCoCo 업로드); Dockerfile/docker-compose.yml 이미 완성 확인; `application-production.yaml` Swagger 비활성화 추가
+  - 15: 보안 강화 — Flashbots RPC 환경변수 교체 주석; HSM `Signer` Phase 3 계획 + PDS hook 예약; Redis 분산 락 Phase 3 주석
+  - 16: PDS 구조 예약 — `V5__pds_structure_reservation.sql` (`tenant_pds_records` + `policy_audit_logs` 해시 컬럼); `Signer.getRecoveryKeyPdsId()` no-op default; `pds.*` feature flag yaml; `PdsProperties` 클래스
+  - 전체 142개 테스트 통과
 - 분산 추적 OpenTelemetry 준비 (8-2) 완료 (2026-04-12)
   - `build.gradle`: `micrometer-tracing-bridge-otel` + `opentelemetry-exporter-otlp` 의존성 추가
   - `application.yaml`: `management.tracing.enabled/sampling.probability` (기본 비활성, 환경변수 오버라이드)
@@ -120,6 +129,15 @@
   - 기존 생성자 주입 방식으로 `MeterRegistry` 주입, 테스트 3개 `SimpleMeterRegistry` 추가
 
 ## 완료된 주요 작업
+- 섹션 11 EIP-1559 Gas Price Oracle 완료 (2026-04-13)
+- 섹션 12 멀티체인 BFT 어댑터 + ChainAdapter 인터페이스 통일 완료 (2026-04-13)
+- 섹션 13 OpenAPI/Swagger 연동 완료 (2026-04-13)
+- 섹션 14 CI/CD (build.yml) + 설정 관리 완료 (2026-04-13)
+- 섹션 15 보안 강화 계획 문서화 완료 (2026-04-13)
+- 섹션 16 PDS 구조 예약 (Phase 1) 완료 (2026-04-13)
+- 섹션 8-3 감사 로그 강화 완료 (2026-04-13)
+- 섹션 9 테스트 커버리지 보강 완료 (2026-04-13)
+- 섹션 10 승인 워크플로 실제 구현 완료 (2026-04-13)
 - 분산 추적 OpenTelemetry 준비 (8-2) 완료 (2026-04-12)
 - DB 인덱스 최적화 (7-2) 완료 (2026-04-12)
 - HikariCP 설정 (7-3) 완료 (2026-04-12)
@@ -154,9 +172,11 @@
 - Rate Limiting (2-4) 완료 (2026-04-11)
 
 ## 다음 작업 항목 (우선순위 순)
-1. 🟡 감사 로그 강화 (8-3)
-2. 🟡 테스트 커버리지 보강 (9-1~9-4)
-3. 🟡 승인 워크플로 실제 구현 (10)
+1. 🟡 BFT 어댑터 통합 테스트 작성 (12-1-5)
+2. 🟡 `ChainAdapterRouter` 설정 기반 어댑터 선택 로직 확장 (12-2-2)
+3. 🟡 README 환경변수 목록 업데이트 + 운영 플레이북 문서화 (13-2, 14-3-2/3)
+4. 🟢 Phase 2+ PDS 통합 (파일럿 고객 확보 후) (16-2+)
+5. 🟢 HSM/KMS Signer PoC (15-2-2+)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)

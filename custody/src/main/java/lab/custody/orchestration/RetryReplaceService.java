@@ -7,6 +7,7 @@ import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.adapter.EvmMockAdapter;
 import lab.custody.adapter.EvmRpcAdapter;
+import org.springframework.beans.factory.annotation.Value;
 import lab.custody.domain.nonce.NonceReservation;
 import lab.custody.domain.txattempt.AttemptExceptionType;
 import lab.custody.domain.txattempt.TxAttempt;
@@ -29,8 +30,11 @@ import java.util.UUID;
 @Slf4j
 public class RetryReplaceService {
 
+    // 11-2-1: Fallback defaults when fee bump base is null (no prior fee stored)
     private static final long DEFAULT_PRIORITY_FEE = 2_000_000_000L;
     private static final long DEFAULT_MAX_FEE = 20_000_000_000L;
+    // 11-2-2: Fee bump percentage — injected from custody.evm.fee-bump-percentage (default 110%)
+    private final int feeBumpPercentage;
 
     private final WithdrawalRepository withdrawalRepository;
     private final TxAttemptRepository txAttemptRepository;
@@ -51,7 +55,9 @@ public class RetryReplaceService {
             ChainAdapterRouter router,
             FakeChain fakeChain,
             NonceAllocator nonceAllocator,
-            MeterRegistry meterRegistry
+            MeterRegistry meterRegistry,
+            // 11-2-2: fee-bump-percentage — mirrors custody.evm.fee-bump-percentage
+            @Value("${custody.evm.fee-bump-percentage:110}") int feeBumpPercentage
     ) {
         this.withdrawalRepository = withdrawalRepository;
         this.txAttemptRepository = txAttemptRepository;
@@ -59,6 +65,7 @@ public class RetryReplaceService {
         this.router = router;
         this.fakeChain = fakeChain;
         this.nonceAllocator = nonceAllocator;
+        this.feeBumpPercentage = feeBumpPercentage;
         this.retryCounter = Counter.builder("custody.withdrawal.retry.total")
                 .description("Total number of withdrawal retry attempts")
                 .register(meterRegistry);
@@ -312,11 +319,13 @@ public class RetryReplaceService {
     }
 
     private boolean isNonceAlreadyIncluded(Withdrawal withdrawal, TxAttempt canonical) {
+        // 12-1-4: Use ChainAdapter interface — EvmRpcAdapter still handles via BigInteger override
         ChainAdapter adapter = router.resolve(withdrawal.getChainType());
         if (adapter instanceof EvmRpcAdapter rpcAdapter) {
             long pendingNonce = rpcAdapter.getPendingNonce(canonical.getFromAddress()).longValue();
             return canonical.getNonce() < pendingNonce;
         }
+        // BFT and other adapters — nonce-already-included check not applicable
         return false;
     }
 
@@ -328,9 +337,18 @@ public class RetryReplaceService {
         }
     }
 
+    /**
+     * 11-2-2: feeBumpPercentage 기반 수수료 범프.
+     * EIP-1559 minimum requirement: at least +10% over previous fee.
+     * Default: 110% (previous * 1.1).
+     */
     private long bumpedFee(Long previous, long fallback) {
         long base = previous != null ? previous : fallback;
-        return Math.max(base + 1, Math.addExact(base, Math.floorDiv(base, 8)));
+        // Apply configurable bump percentage; ensure at least +1 wei
+        long bumped = Math.multiplyHigh(base, feeBumpPercentage) * 100 + base * feeBumpPercentage / 100;
+        // Simpler: use direct arithmetic
+        long result = base * feeBumpPercentage / 100;
+        return Math.max(base + 1, result);
     }
 
     private void broadcast(Withdrawal withdrawal, TxAttempt attempt) {

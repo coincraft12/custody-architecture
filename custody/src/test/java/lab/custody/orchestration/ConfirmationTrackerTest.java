@@ -66,7 +66,8 @@ class ConfirmationTrackerTest {
         when(txAttemptRepository.findById(attemptId)).thenReturn(Optional.of(attempt), Optional.of(attempt));
         when(withdrawalRepository.findById(withdrawalId)).thenReturn(Optional.of(withdrawal));
         when(router.resolve(ChainType.EVM)).thenReturn(rpcAdapter);
-        when(rpcAdapter.getReceipt("0xtx-timeout")).thenReturn(Optional.empty());
+        // 12-1-4: tracker now calls getTransactionReceipt() from ChainAdapter interface
+        when(rpcAdapter.getTransactionReceipt("0xtx-timeout")).thenReturn(Optional.empty());
         when(txAttemptRepository.save(attempt)).thenAnswer(invocation -> invocation.getArgument(0));
 
         ReflectionTestUtils.invokeMethod(tracker, "trackAttemptInternal", attemptId);

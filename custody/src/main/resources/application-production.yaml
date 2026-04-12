@@ -33,7 +33,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
   endpoint:
     health:
       show-details: never
@@ -45,6 +45,13 @@ management:
   otlp:
     tracing:
       endpoint: ${CUSTODY_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+
+# 13-1-5: Swagger UI 비활성화 (production 환경)
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
 
 logging:
   structured:

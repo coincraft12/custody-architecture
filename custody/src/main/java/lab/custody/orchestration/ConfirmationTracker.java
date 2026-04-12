@@ -5,7 +5,6 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
-import lab.custody.adapter.EvmRpcAdapter;
 import lab.custody.domain.txattempt.TxAttempt;
 import lab.custody.domain.txattempt.TxAttemptRepository;
 import lab.custody.domain.txattempt.TxAttemptStatus;
@@ -182,10 +181,6 @@ public class ConfirmationTracker {
             Withdrawal withdrawal = wopt.get();
 
             ChainAdapter adapter = router.resolve(withdrawal.getChainType());
-            if (!(adapter instanceof EvmRpcAdapter rpcAdapter)) {
-                log.debug("event=confirmation_tracker.no_receipt_support chainType={}", withdrawal.getChainType());
-                return;
-            }
 
             String txHash = attempt.getTxHash();
             if (txHash == null) {
@@ -194,10 +189,11 @@ public class ConfirmationTracker {
             }
 
             // ── Phase 1: poll until receipt arrives ──────────────────────────
+            // 12-1-4: Use ChainAdapter interface getTransactionReceipt() — no instanceof check needed
             int tries = 0;
             while (tries < maxTries) {
                 try {
-                    Optional<TransactionReceipt> r = rpcAdapter.getReceipt(txHash);
+                    Optional<TransactionReceipt> r = adapter.getTransactionReceipt(txHash);
                     if (r.isPresent()) {
                         TransactionReceipt receipt = r.get();
 
@@ -221,7 +217,7 @@ public class ConfirmationTracker {
                                 attemptId, withdrawal.getId(), txHash);
 
                         // ── Phase 2: wait for finalization ────────────────────
-                        waitForFinalization(rpcAdapter, receipt, withdrawal);
+                        waitForFinalization(adapter, receipt, withdrawal);
                         return;
                     }
                 } catch (Exception e) {
@@ -257,9 +253,12 @@ public class ConfirmationTracker {
      *
      * <p>finalizationBlockCount == 0 이면 즉시 W8로 전이한다 (mock/dev 환경 기본값).
      * finalizationTimeoutMinutes 초과 시 카운터를 증가시키고 경고 로그를 남긴다.
+     *
+     * <p>12-1-4: Accepts ChainAdapter interface — no EVM-specific instanceof check.
+     * For adapters without block number support, falls back to immediate finalization.
      */
     private void waitForFinalization(
-            EvmRpcAdapter rpcAdapter,
+            ChainAdapter adapter,
             TransactionReceipt receipt,
             Withdrawal withdrawal
     ) throws InterruptedException {
@@ -280,7 +279,16 @@ public class ConfirmationTracker {
 
         while (Instant.now().isBefore(deadline)) {
             try {
-                long currentBlock = rpcAdapter.getBlockNumber();
+                // 12-1-4: Use getBlockNumber() only if adapter supports it (EvmRpcAdapter)
+                // Non-EVM adapters (BFT, Mock) return -1 → immediate finalization
+                long currentBlock;
+                if (adapter instanceof lab.custody.adapter.EvmRpcAdapter rpcAdapter) {
+                    currentBlock = rpcAdapter.getBlockNumber();
+                } else {
+                    // BFT / other chains: no block-based finalization — finalize immediately
+                    finalizeWithdrawal(withdrawal);
+                    return;
+                }
                 long elapsed = currentBlock - receiptBlock;
                 if (elapsed >= finalizationBlockCount) {
                     log.info("event=confirmation_tracker.finalization.reached withdrawalId={} currentBlock={} elapsed={}",

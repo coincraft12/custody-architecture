@@ -50,6 +50,14 @@ info:
     name: ${spring.application.name}
     version: "@project.version@"
 
+# 13-1-5: Swagger UI — enabled in dev, disabled in production via application-production.yaml
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+
 resilience4j:
   # 4-1: Circuit Breaker — 실패율 50% 초과, 슬라이딩 윈도우 10, 대기 30s
   circuitbreaker:
@@ -99,6 +107,11 @@ custody:
     # Ethereum mainnet=64, Sepolia=3
     finalization-block-count: ${CUSTODY_CONFIRMATION_TRACKER_FINALIZATION_BLOCK_COUNT:0}
     finalization-timeout-minutes: ${CUSTODY_CONFIRMATION_TRACKER_FINALIZATION_TIMEOUT_MINUTES:30}
+  # 12-2-1: 체인별 확정 블록 수 설정 (ChainType별 독립 오버라이드)
+  # EVM: Ethereum mainnet=64, Sepolia=3 / BFT: 즉시 확정(0)
+  chain-finalization:
+    evm: ${CUSTODY_CHAIN_FINALIZATION_EVM:0}
+    bft: ${CUSTODY_CHAIN_FINALIZATION_BFT:0}
   whitelist:
     default-hold-hours: ${CUSTODY_WHITELIST_HOLD_HOURS:48}
     scheduler-delay-ms: ${CUSTODY_WHITELIST_SCHEDULER_DELAY_MS:60000}
@@ -127,6 +140,26 @@ custody:
     # 4-4-1/4-4-2: OkHttp 커넥션/읽기 타임아웃 (4-4-4: 환경변수 오버라이드 가능)
     connect-timeout-seconds: ${CUSTODY_EVM_CONNECT_TIMEOUT_SECONDS:30}
     read-timeout-seconds: ${CUSTODY_EVM_READ_TIMEOUT_SECONDS:30}
+    # 11-2-2: fee bump percentage for replace (EIP-1559 minimum: +10%)
+    fee-bump-percentage: ${CUSTODY_EVM_FEE_BUMP_PERCENTAGE:110}
+    # 15-1-1: MEV protection — set CUSTODY_EVM_RPC_URL to Flashbots Protect endpoint to enable
+    # Flashbots: https://rpc.flashbots.net (mainnet), https://rpc-sepolia.flashbots.net (Sepolia)
+    # Leave as-is for standard mempool. Override via env var without code changes.
+
+# 15-2-1: HSM / KMS signer abstraction — see Signer.java Phase 3 plan comments
+# Future: CUSTODY_SIGNER_TYPE: kms | vault | local (default: local)
+
+# 15-3-1: Redis distributed lock — Phase 3 (see NonceAllocator for current DB-based SELECT FOR UPDATE approach)
+# Future: CUSTODY_REDIS_URL: redis://localhost:6379
+
+# 16-1-4: PDS integration feature flags (all disabled until Phase 2)
+pds:
+  enabled: ${PDS_ENABLED:false}
+  endpoint: ${PDS_ENDPOINT:http://pds-core:3100}
+  features:
+    signer-key-pds: ${PDS_FEATURE_SIGNER_KEY:false}
+    policy-audit-chain: ${PDS_FEATURE_AUDIT_CHAIN:false}
+    emergency-access: ${PDS_FEATURE_EMERGENCY_ACCESS:false}
     proxy:
       enabled: ${CUSTODY_EVM_PROXY_ENABLED:false}
       host: ${CUSTODY_EVM_PROXY_HOST:}

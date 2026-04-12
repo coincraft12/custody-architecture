@@ -13,8 +13,10 @@ import org.springframework.stereotype.Component;
 import org.web3j.crypto.RawTransaction;
 import org.web3j.protocol.Web3j;
 import org.web3j.protocol.core.DefaultBlockParameterName;
+import org.web3j.protocol.core.methods.response.EthBlock;
 import org.web3j.protocol.core.methods.response.EthBlockNumber;
 import org.web3j.protocol.core.methods.response.EthChainId;
+import org.web3j.protocol.core.methods.response.EthFeeHistory;
 import org.web3j.protocol.core.methods.response.EthGetTransactionCount;
 import org.web3j.protocol.core.methods.response.EthSendTransaction;
 import org.web3j.protocol.core.methods.response.EthTransaction;
@@ -22,8 +24,13 @@ import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import org.web3j.utils.Numeric;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 @Component
@@ -33,25 +40,36 @@ public class EvmRpcAdapter implements ChainAdapter {
 
     private static final Pattern EVM_ADDRESS_PATTERN = Pattern.compile("^0x[a-fA-F0-9]{40}$");
     private static final BigInteger GAS_LIMIT = BigInteger.valueOf(21_000);
+    // 11-1-5: Fallback defaults — used when RPC gas price fetch fails
     private static final BigInteger DEFAULT_MAX_PRIORITY_FEE_PER_GAS = BigInteger.valueOf(2_000_000_000L);
     private static final BigInteger DEFAULT_MAX_FEE_PER_GAS = BigInteger.valueOf(20_000_000_000L);
+    // 11-1-5: Gas price cache TTL — 12 seconds (roughly 1 Ethereum block)
+    private static final long GAS_PRICE_CACHE_TTL_NS = TimeUnit.SECONDS.toNanos(12);
+
+    // 11-1-5: Cached gas prices — AtomicReference for lock-free, thread-safe read/write
+    private record GasPriceCache(BigInteger maxPriorityFeePerGas, BigInteger maxFeePerGas, long timestampNs) {}
+    private final AtomicReference<GasPriceCache> gasPriceCache = new AtomicReference<>();
 
     // 4-3: EvmRpcProviderPool — primary + fallback providers
     private final EvmRpcProviderPool providerPool;
     private final long configuredChainId;
     private final Signer signer;
     private final MeterRegistry meterRegistry;
+    private final int feeBumpPercentage;
 
     public EvmRpcAdapter(
             EvmRpcProviderPool providerPool,
             @Value("${custody.evm.chain-id}") long configuredChainId,
             Signer signer,
-            MeterRegistry meterRegistry
+            MeterRegistry meterRegistry,
+            // 11-2-2: fee-bump-percentage — default 110% (EIP-1559 minimum +10%)
+            @Value("${custody.evm.fee-bump-percentage:110}") int feeBumpPercentage
     ) {
         this.providerPool = providerPool;
         this.configuredChainId = configuredChainId;
         this.signer = signer;
         this.meterRegistry = meterRegistry;
+        this.feeBumpPercentage = feeBumpPercentage;
     }
 
     private void recordRpcCall(String method, boolean success, long startNanos) {
@@ -126,12 +144,19 @@ public class EvmRpcAdapter implements ChainAdapter {
                     ? BigInteger.valueOf(command.nonce())
                     : getPendingNonce(signer.getAddress());
             BigInteger valueWei = BigInteger.valueOf(command.amount());
-            BigInteger maxPriorityFeePerGas = command.maxPriorityFeePerGas() != null
-                    ? BigInteger.valueOf(command.maxPriorityFeePerGas())
-                    : DEFAULT_MAX_PRIORITY_FEE_PER_GAS;
-            BigInteger maxFeePerGas = command.maxFeePerGas() != null
-                    ? BigInteger.valueOf(command.maxFeePerGas())
-                    : DEFAULT_MAX_FEE_PER_GAS;
+            // 11-1-3/11-1-4: Use dynamic gas pricing from oracle; fall back to defaults on failure
+            BigInteger maxPriorityFeePerGas;
+            BigInteger maxFeePerGas;
+            if (command.maxPriorityFeePerGas() != null && command.maxFeePerGas() != null) {
+                // Caller-supplied fees (e.g. replace/fee-bump path)
+                maxPriorityFeePerGas = BigInteger.valueOf(command.maxPriorityFeePerGas());
+                maxFeePerGas = BigInteger.valueOf(command.maxFeePerGas());
+            } else {
+                // 11-1-4: Dynamic gas: fetch from oracle (cached, TTL 12s)
+                GasPriceCache prices = fetchGasPrices();
+                maxPriorityFeePerGas = prices.maxPriorityFeePerGas();
+                maxFeePerGas = prices.maxFeePerGas();
+            }
 
             RawTransaction rawTransaction = RawTransaction.createEtherTransaction(
                     configuredChainId,
@@ -221,6 +246,14 @@ public class EvmRpcAdapter implements ChainAdapter {
         }
     }
 
+    /**
+     * 12-1-3: ChainAdapter interface implementation — delegates to getReceipt().
+     */
+    @Override
+    public Optional<TransactionReceipt> getTransactionReceipt(String txHash) {
+        return getReceipt(txHash);
+    }
+
     // 4-2-1: Retry — getReceipt는 재시도 안전(멱등).
     // 4-3: withFallback()으로 provider 폴백 지원.
     @Retry(name = "evmRpcRetry")
@@ -276,6 +309,137 @@ public class EvmRpcAdapter implements ChainAdapter {
         } finally {
             recordRpcCall("getTransaction", success, start);
         }
+    }
+
+    // ─────────────── 11-1: Gas Price Oracle ───────────────
+
+    /**
+     * 11-1-1: eth_getBlockByNumber("latest") 호출로 최신 baseFee 조회.
+     * EIP-1559 블록에서는 baseFeePerGas 필드가 존재한다.
+     * 실패하면 null 반환 — 호출자가 fallback 처리.
+     */
+    @Retry(name = "evmRpcRetry")
+    public BigInteger getLatestBaseFee() {
+        long start = System.nanoTime();
+        boolean success = false;
+        try {
+            BigInteger result = withFallback("getLatestBaseFee", web3j -> {
+                EthBlock response = web3j.ethGetBlockByNumber(
+                        DefaultBlockParameterName.LATEST, false).send();
+                if (response.hasError()) {
+                    throw new IllegalStateException("Failed to fetch latest block: " + response.getError().getMessage());
+                }
+                EthBlock.Block block = response.getBlock();
+                if (block == null || block.getBaseFeePerGas() == null) {
+                    return null;  // pre-EIP-1559 block
+                }
+                return block.getBaseFeePerGas();
+            });
+            success = result != null;
+            return result;
+        } finally {
+            recordRpcCall("getLatestBaseFee", success, start);
+        }
+    }
+
+    /**
+     * 11-1-2: eth_feeHistory 호출로 최근 N블록의 reward percentile 조회.
+     * 반환값: 각 블록의 [percentile]번째 priority fee 배열.
+     * percentile 0~100 사이의 값을 권장한다 (예: 10 = 10th percentile).
+     */
+    @Retry(name = "evmRpcRetry")
+    public List<BigInteger> getFeeHistory(int blocks, double percentile) {
+        long start = System.nanoTime();
+        boolean success = false;
+        try {
+            List<BigInteger> result = withFallback("getFeeHistory", web3j -> {
+                EthFeeHistory response = web3j.ethFeeHistory(
+                        blocks,
+                        DefaultBlockParameterName.LATEST,
+                        Arrays.asList(percentile)).send();
+                if (response.hasError()) {
+                    throw new IllegalStateException("eth_feeHistory failed: " + response.getError().getMessage());
+                }
+                EthFeeHistory.FeeHistory feeHistory = response.getFeeHistory();
+                if (feeHistory == null || feeHistory.getReward() == null || feeHistory.getReward().isEmpty()) {
+                    return List.of();
+                }
+                // Each block's reward array has one entry per requested percentile
+                // getReward() returns List<List<BigInteger>> (already decoded by web3j)
+                return feeHistory.getReward().stream()
+                        .filter(r -> r != null && !r.isEmpty())
+                        .map(r -> r.get(0))  // first (only) percentile entry per block
+                        .map(fee -> fee != null ? fee : BigInteger.ZERO)
+                        .toList();
+            });
+            success = true;
+            return result;
+        } finally {
+            recordRpcCall("getFeeHistory", success, start);
+        }
+    }
+
+    /**
+     * 11-1-4/11-1-5: Dynamic gas price calculation with 12s cache.
+     *   maxPriorityFeePerGas = median(feeHistory 10th percentile rewards)
+     *   maxFeePerGas         = baseFee * 2 + maxPriorityFeePerGas
+     *
+     * On any RPC failure, falls back to DEFAULT constants.
+     */
+    GasPriceCache fetchGasPrices() {
+        GasPriceCache cached = gasPriceCache.get();
+        if (cached != null && (System.nanoTime() - cached.timestampNs()) < GAS_PRICE_CACHE_TTL_NS) {
+            log.debug("event=gas_price_oracle.cache_hit");
+            return cached;
+        }
+        try {
+            BigInteger baseFee = getLatestBaseFee();
+            if (baseFee == null) {
+                log.warn("event=gas_price_oracle.base_fee_null — pre-EIP-1559 block, using defaults");
+                return defaultGasPrices();
+            }
+
+            List<BigInteger> rewards = getFeeHistory(5, 10.0);
+            BigInteger priorityFee;
+            if (rewards.isEmpty()) {
+                priorityFee = DEFAULT_MAX_PRIORITY_FEE_PER_GAS;
+            } else {
+                // Use median of recent rewards
+                List<BigInteger> sorted = rewards.stream().sorted().toList();
+                priorityFee = sorted.get(sorted.size() / 2);
+                // Floor: never below 1 wei
+                if (priorityFee.compareTo(BigInteger.ONE) < 0) {
+                    priorityFee = DEFAULT_MAX_PRIORITY_FEE_PER_GAS;
+                }
+            }
+            // maxFeePerGas = baseFee * 2 + priorityFee (EIP-1559 recommended formula)
+            BigInteger maxFee = baseFee.multiply(BigInteger.TWO).add(priorityFee);
+
+            GasPriceCache fresh = new GasPriceCache(priorityFee, maxFee, System.nanoTime());
+            gasPriceCache.set(fresh);
+            log.info("event=gas_price_oracle.fetched baseFee={} priorityFee={} maxFee={}",
+                    baseFee, priorityFee, maxFee);
+            return fresh;
+        } catch (Exception e) {
+            log.warn("event=gas_price_oracle.fetch_failed error={} — using defaults", e.getMessage());
+            return defaultGasPrices();
+        }
+    }
+
+    private GasPriceCache defaultGasPrices() {
+        return new GasPriceCache(DEFAULT_MAX_PRIORITY_FEE_PER_GAS, DEFAULT_MAX_FEE_PER_GAS, 0L);
+    }
+
+    /**
+     * 11-2-2: feeBumpPercentage 기반 수수료 범프.
+     * EIP-1559 최소 요구사항: +10% (기본값 110%).
+     */
+    public BigInteger bumpFee(BigInteger current) {
+        if (current == null) return DEFAULT_MAX_PRIORITY_FEE_PER_GAS;
+        BigDecimal bumped = new BigDecimal(current)
+                .multiply(BigDecimal.valueOf(feeBumpPercentage))
+                .divide(BigDecimal.valueOf(100));
+        return bumped.toBigInteger();
     }
 
     // ─────────────── 4-1: Circuit Breaker fallback methods ───────────────

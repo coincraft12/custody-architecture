@@ -347,15 +347,15 @@
 ## 11. 🟡 가스 가격 오라클 (Gas Price Oracle) — MEDIUM
 
 ### 11-1. 동적 가스 가격 조회
-- [ ] 11-1-1. `EvmRpcAdapter`에 `getLatestBaseFee()` 메서드 추가 (`eth_getBlockByNumber("latest")` 호출)
-- [ ] 11-1-2. `EvmRpcAdapter`에 `getFeeHistory(blocks, percentile)` 메서드 추가 (`eth_feeHistory` 호출)
-- [ ] 11-1-3. `EvmRpcAdapter.broadcast()`에서 하드코딩된 `DEFAULT_MAX_PRIORITY_FEE`, `DEFAULT_MAX_FEE` 제거
-- [ ] 11-1-4. 새 가스 계산 로직: `maxPriorityFeePerGas = feeHistory(10th percentile)`, `maxFeePerGas = baseFee * 2 + maxPriorityFeePerGas`
-- [ ] 11-1-5. 가스 가격 캐싱: 동일 블록 내 반복 조회 방지 (`Caffeine` 또는 `ConcurrentHashMap` 기반, TTL 12s)
+- [x] 11-1-1. `EvmRpcAdapter`에 `getLatestBaseFee()` 메서드 추가 (`eth_getBlockByNumber("latest")` 호출) ✅
+- [x] 11-1-2. `EvmRpcAdapter`에 `getFeeHistory(blocks, percentile)` 메서드 추가 (`eth_feeHistory` 호출) ✅
+- [x] 11-1-3. `EvmRpcAdapter.broadcast()`에서 하드코딩된 `DEFAULT_MAX_PRIORITY_FEE`, `DEFAULT_MAX_FEE` 제거 ✅
+- [x] 11-1-4. 새 가스 계산 로직: `maxPriorityFeePerGas = feeHistory(10th percentile)`, `maxFeePerGas = baseFee * 2 + maxPriorityFeePerGas` ✅
+- [x] 11-1-5. 가스 가격 캐싱: 동일 블록 내 반복 조회 방지 (`ConcurrentHashMap` + `AtomicReference` 기반, TTL 12s) ✅
 
 ### 11-2. Replace 시 수수료 범프 정책 개선
-- [ ] 11-2-1. 현재 `RetryReplaceService`의 fee bump 비율(+10% 하드코딩 여부 확인) 검토
-- [ ] 11-2-2. `application.yaml`에 `custody.evm.fee-bump-percentage` 설정 추가 (기본값 110%)
+- [x] 11-2-1. 현재 `RetryReplaceService`의 fee bump 비율(+10% 하드코딩 여부 확인) 검토 — `feeBumpPercentage` 설정값으로 교체 ✅
+- [x] 11-2-2. `application.yaml`에 `custody.evm.fee-bump-percentage` 설정 추가 (기본값 110%) ✅
 - [ ] 11-2-3. 네트워크 혼잡도 기반 동적 bump 비율 결정 로직 추가 (선택적)
 
 ---
@@ -363,14 +363,14 @@
 ## 12. 🟡 멀티체인 지원 (Multi-Chain Support) — MEDIUM
 
 ### 12-1. BFT 어댑터 완성
-- [ ] 12-1-1. `BftMockAdapter`에 `getTransactionReceipt(txHash)` 구현 (현재 미구현)
-- [ ] 12-1-2. `BftMockAdapter`에 `getPendingNonce(address)` 구현
-- [ ] 12-1-3. `ChainAdapter` 인터페이스에 `getTransactionReceipt()` 메서드 추가 (현재 EVM-only)
-- [ ] 12-1-4. `ConfirmationTracker`에서 `instanceof EvmRpcAdapter` 체크 제거 → 인터페이스 메서드로 통일
+- [x] 12-1-1. `BftMockAdapter`에 `getTransactionReceipt(txHash)` 구현 (현재 미구현) ✅
+- [x] 12-1-2. `BftMockAdapter`에 `getPendingNonce(address)` 구현 ✅
+- [x] 12-1-3. `ChainAdapter` 인터페이스에 `getTransactionReceipt()` 메서드 추가 (현재 EVM-only) ✅
+- [x] 12-1-4. `ConfirmationTracker`에서 `instanceof EvmRpcAdapter` 체크 제거 → 인터페이스 메서드로 통일 ✅
 - [ ] 12-1-5. BFT 어댑터 통합 테스트 작성
 
 ### 12-2. 체인 설정 다형성
-- [ ] 12-2-1. `ChainType`별 확정(Finalization) 블록 수 설정 분리: `custody.evm.finalization-blocks`, `custody.bft.finalization-blocks`
+- [x] 12-2-1. `ChainType`별 확정(Finalization) 블록 수 설정 분리: `custody.chain-finalization.evm`, `custody.chain-finalization.bft` ✅
 - [ ] 12-2-2. `ChainAdapterRouter`에서 설정 기반 어댑터 선택 로직 확장
 
 ---
@@ -378,11 +378,11 @@
 ## 13. 🟡 API 문서화 (API Documentation) — MEDIUM
 
 ### 13-1. OpenAPI / Swagger 연동
-- [ ] 13-1-1. `springdoc-openapi-starter-webmvc-ui` 의존성 추가 (`build.gradle`)
-- [ ] 13-1-2. `CustodyApplication`에 `@OpenAPIDefinition` 추가 (title, version, description)
-- [ ] 13-1-3. 각 컨트롤러 메서드에 `@Operation`, `@ApiResponse` 어노테이션 추가
-- [ ] 13-1-4. `CreateWithdrawalRequest` 필드에 `@Schema(description=..., example=...)` 추가
-- [ ] 13-1-5. `production` 프로파일에서 Swagger UI 비활성화 옵션 추가
+- [x] 13-1-1. `springdoc-openapi-starter-webmvc-ui` 의존성 추가 (`build.gradle`) ✅
+- [x] 13-1-2. `CustodyApplication`에 `@OpenAPIDefinition` 추가 (title, version, description) ✅
+- [x] 13-1-3. 각 컨트롤러 메서드에 `@Operation`, `@ApiResponse` 어노테이션 추가 (`WithdrawalController`) ✅
+- [x] 13-1-4. `CreateWithdrawalRequest` 필드에 `@Schema(description=..., example=...)` 추가 ✅
+- [x] 13-1-5. `production` 프로파일에서 Swagger UI 비활성화 옵션 추가 (`application-production.yaml`) ✅
 
 ### 13-2. README 보강
 - [ ] 13-2-1. `README.md` 섹션 14(PostgreSQL)에 `docker compose up -d` 이후 실제 연결 검증 순서 상세화
@@ -395,18 +395,18 @@
 ## 14. 🟡 배포 및 운영 자동화 (Deployment & Operations) — MEDIUM
 
 ### 14-1. Docker 이미지 최적화
-- [ ] 14-1-1. `custody/Dockerfile` 작성 (멀티 스테이지 빌드: `./gradlew bootJar` → 최종 JRE 이미지)
-- [ ] 14-1-2. 최종 이미지에 불필요한 레이어 제거 (Gradle 캐시 별도 레이어)
-- [ ] 14-1-3. `docker-compose.yml`에 custody 앱 서비스 추가 (postgres + custody + prometheus + grafana)
-- [ ] 14-1-4. `docker-compose.yml`에 `healthcheck` 설정 추가 (custody: `/actuator/health`, postgres: `pg_isready`)
+- [x] 14-1-1. `custody/Dockerfile` 작성 (멀티 스테이지 빌드: `./gradlew bootJar` → 최종 JRE 이미지) — 기존 완료 ✅
+- [x] 14-1-2. 최종 이미지에 불필요한 레이어 제거 (Gradle 캐시 별도 레이어) — 기존 완료 ✅
+- [x] 14-1-3. `docker-compose.yml`에 custody 앱 서비스 추가 (postgres + custody + prometheus + grafana) — 기존 완료 ✅
+- [x] 14-1-4. `docker-compose.yml`에 `healthcheck` 설정 추가 (custody: `/actuator/health`, postgres: `pg_isready`) — 기존 완료 ✅
 
 ### 14-2. CI/CD 기초
-- [ ] 14-2-1. `.github/workflows/build.yml` 작성: PR 시 `./gradlew test` + `./gradlew build` 실행
-- [ ] 14-2-2. `.github/workflows/build.yml`에 JaCoCo 커버리지 리포트 업로드 추가
-- [ ] 14-2-3. 빌드 성공 시 Docker Hub 또는 GHCR에 이미지 푸시 단계 추가
+- [x] 14-2-1. `.github/workflows/build.yml` 작성: PR 시 `./gradlew test` + `./gradlew build` 실행 ✅
+- [x] 14-2-2. `.github/workflows/build.yml`에 JaCoCo 커버리지 리포트 업로드 추가 ✅
+- [x] 14-2-3. 빌드 성공 시 Docker Hub 또는 GHCR에 이미지 푸시 단계 추가 — `deploy.yml`에 GHCR 이미지 푸시 완료 ✅
 
 ### 14-3. 설정 관리
-- [ ] 14-3-1. `application-production.yaml` 프로파일 파일 작성 (H2 제거, Flyway 활성화, H2 콘솔 비활성화, 구조화 로그 활성화)
+- [x] 14-3-1. `application-production.yaml` 프로파일 파일 작성 (H2 제거, Flyway 활성화, H2 콘솔 비활성화, 구조화 로그 활성화) — 기존 완료 + Swagger 비활성화 추가 ✅
 - [ ] 14-3-2. 환경별 설정 오버라이드 전략 문서화 (`ENV` > `application-{profile}.yaml` > `application.yaml` 우선순위 명시)
 - [ ] 14-3-3. 민감 설정값(`private-key`, `db-password`)을 외부 Secret Store에서 주입하는 방법 문서화
 
@@ -415,15 +415,15 @@
 ## 15. 🟢 장기 개선 과제 (Long-term Improvements) — LOW
 
 ### 15-1. MEV 방어 및 프라이버시
-- [ ] 15-1-1. Flashbots Protect RPC 연동 옵션 검토 (`CUSTODY_EVM_RPC_URL`을 Flashbots endpoint로 교체)
+- [x] 15-1-1. Flashbots Protect RPC 연동 옵션 검토 — `application.yaml` 주석에 Flashbots endpoint 문서화, 환경변수로 교체 가능 ✅
 - [ ] 15-1-2. Private mempool 사용 여부 결정 및 아키텍처 반영
 
 ### 15-2. HSM / Cold Wallet 연동
-- [ ] 15-2-1. `Signer` 인터페이스를 HSM(Hardware Security Module) 구현체로 교체하는 추상화 계획 수립
+- [x] 15-2-1. `Signer` 인터페이스를 HSM(Hardware Security Module) 구현체로 교체하는 추상화 계획 수립 — `Signer.java` Phase 3 계획 주석 + PDS hook 예약 ✅
 - [ ] 15-2-2. AWS CloudHSM 또는 Azure Dedicated HSM 연동 PoC 진행
 
 ### 15-3. 샤딩 및 수평 확장
-- [ ] 15-3-1. `NonceAllocator`를 분산 환경에서 안전하게 사용하기 위한 Redis 기반 분산 락 도입 검토
+- [x] 15-3-1. `NonceAllocator`를 분산 환경에서 안전하게 사용하기 위한 Redis 기반 분산 락 도입 검토 — `application.yaml` 주석 + `NonceAllocator` 내 SELECT FOR UPDATE 전략 문서화 ✅
 - [ ] 15-3-2. `ConfirmationTracker`의 작업 분산: 여러 인스턴스가 동일 TX를 중복 추적하지 않도록 DB 기반 락 설계
 
 ### 15-4. 보안 감사
@@ -444,33 +444,11 @@
 
 ### 16-1. MVP 단계 구조 예약 (코드 없이 스키마/인터페이스만)
 
-- [ ] 16-1-1. `V_pds__add_tenant_pds_records.sql` Flyway 마이그레이션 파일 추가 (빈 테이블 예약)
-  ```sql
-  CREATE TABLE tenant_pds_records (
-    id         UUID PRIMARY KEY,
-    tenant_id  UUID NOT NULL,
-    pds_type   TEXT NOT NULL,  -- SIGNER_KEY | EMERGENCY_ACCESS | OPERATOR_CREDENTIAL
-    pds_data   JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-  );
-  ```
-- [ ] 16-1-2. `policy_audit_logs` 테이블에 `previous_hash TEXT`, `current_hash TEXT` 컬럼 예약 (null 허용, 미사용)
-- [ ] 16-1-3. `SignerConnector` 인터페이스에 PDS 훅 메서드 시그니처 예약 (default 구현 = no-op)
-  ```java
-  default Optional<String> getRecoveryKeyPdsId() { return Optional.empty(); }
-  ```
-- [ ] 16-1-4. `application.yaml`에 pds feature flag 섹션 추가 (전부 false로 초기화)
-  ```yaml
-  pds:
-    enabled: false
-    endpoint: http://pds-core:3100
-    features:
-      signer-key-pds: false
-      policy-audit-chain: false
-      emergency-access: false
-  ```
-- [ ] 16-1-5. `PdsProperties` `@ConfigurationProperties` 클래스 작성 (빈 껍데기, 이후 확장)
+- [x] 16-1-1. `V5__pds_structure_reservation.sql` Flyway 마이그레이션 파일 추가 (`tenant_pds_records` 테이블 예약) ✅
+- [x] 16-1-2. `policy_audit_logs` 테이블에 `previous_hash TEXT`, `current_hash TEXT` 컬럼 예약 (null 허용, 미사용) ✅
+- [x] 16-1-3. `Signer` 인터페이스에 PDS 훅 메서드 시그니처 예약 (default 구현 = no-op) ✅
+- [x] 16-1-4. `application.yaml`에 pds feature flag 섹션 추가 (전부 false로 초기화) ✅
+- [x] 16-1-5. `PdsProperties` `@ConfigurationProperties` 클래스 작성 (`domain/pds/PdsProperties.java`) ✅
 
 ### 16-2. Phase 2: Signer 복구 키 PDS화 (특허 B-2 적용)
 

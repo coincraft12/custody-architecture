@@ -65,7 +65,8 @@ class RetryReplaceServiceTest {
                 router,
                 fakeChain,
                 nonceAllocator,
-                new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                110  // feeBumpPercentage (11-2-2 default)
         );
     }
 
