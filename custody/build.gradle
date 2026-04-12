@@ -2,6 +2,7 @@ plugins {
 	id 'java'
 	id 'org.springframework.boot' version '3.5.0'
 	id 'io.spring.dependency-management' version '1.1.7'
+	id 'jacoco'
 }
 
 group = 'lab'
@@ -46,10 +47,50 @@ dependencies {
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
+    // 9-2-6: Testcontainers — PostgreSQL 통합 테스트용
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
 }
 
 tasks.named('test') {
 	useJUnitPlatform()
+	finalizedBy jacocoTestReport
+}
+
+// 9-4-1: JaCoCo 설정 — 라인 커버리지 60% 이상 목표
+jacoco {
+	toolVersion = "0.8.11"
+}
+
+jacocoTestReport {
+	dependsOn test
+	reports {
+		xml.required = true
+		html.required = true
+		csv.required = false
+	}
+	// 테스트 불필요 클래스 제외 (도메인 enum, config, generated)
+	afterEvaluate {
+		classDirectories.setFrom(files(classDirectories.files.collect {
+			fileTree(dir: it, exclude: [
+				'**/CustodyApplication.class',
+				'**/domain/**/*Status.class',
+				'**/domain/**/*Type.class',
+				'**/sim/**',
+			])
+		}))
+	}
+}
+
+jacocoTestCoverageVerification {
+	violationRules {
+		rule {
+			limit {
+				minimum = 0.60
+			}
+		}
+	}
 }
 
 // 3-3-4: /actuator/info에 빌드 버전·시간 정보 주입

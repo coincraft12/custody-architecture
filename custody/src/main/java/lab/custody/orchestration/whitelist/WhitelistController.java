@@ -1,6 +1,7 @@
 package lab.custody.orchestration.whitelist;
 
 import lab.custody.domain.whitelist.WhitelistAddress;
+import lab.custody.domain.whitelist.WhitelistAuditLog;
 import lab.custody.domain.whitelist.WhitelistStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -71,5 +72,14 @@ public class WhitelistController {
     @GetMapping("/{id}")
     public ResponseEntity<WhitelistAddress> get(@PathVariable UUID id) {
         return ResponseEntity.ok(whitelistService.get(id));
+    }
+
+    /**
+     * 8-3-4: 감사 이력 조회 — 특정 화이트리스트 항목의 상태 변경 이력 (최신 순).
+     */
+    @GetMapping("/{id}/audit")
+    public ResponseEntity<List<WhitelistAuditLog>> getAuditLog(@PathVariable UUID id) {
+        log.info("event=whitelist.controller.audit id={}", id);
+        return ResponseEntity.ok(whitelistService.getAuditLog(id));
     }
 }

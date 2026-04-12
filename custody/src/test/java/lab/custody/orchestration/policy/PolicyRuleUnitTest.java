@@ -1,5 +1,6 @@
 package lab.custody.orchestration.policy;
 
+import lab.custody.domain.policy.PolicyChangeRequestRepository;
 import lab.custody.domain.whitelist.WhitelistAddressRepository;
 import lab.custody.domain.whitelist.WhitelistStatus;
 import lab.custody.domain.withdrawal.ChainType;
@@ -121,11 +122,14 @@ class PolicyRuleUnitTest {
 
     // ── PolicyEngine ────────────────────────────────────────────────────────
 
+    @Mock
+    private PolicyChangeRequestRepository changeRequestRepository;
+
     @Test
     void policyEngine_firstRejectingRule_shortCircuits() {
         PolicyRule alwaysReject = r -> PolicyDecision.reject("first-reject");
         PolicyRule shouldNotRun = mock(PolicyRule.class);
-        PolicyEngine engine = new PolicyEngine(List.of(alwaysReject, shouldNotRun));
+        PolicyEngine engine = new PolicyEngine(List.of(alwaysReject, shouldNotRun), changeRequestRepository);
 
         PolicyDecision decision = engine.evaluate(req("1"));
 
@@ -138,7 +142,7 @@ class PolicyRuleUnitTest {
     void policyEngine_allAllow_returnsAllow() {
         PolicyRule rule1 = r -> PolicyDecision.allow();
         PolicyRule rule2 = r -> PolicyDecision.allow();
-        PolicyEngine engine = new PolicyEngine(List.of(rule1, rule2));
+        PolicyEngine engine = new PolicyEngine(List.of(rule1, rule2), changeRequestRepository);
 
         PolicyDecision decision = engine.evaluate(req("1"));
 
@@ -147,7 +151,7 @@ class PolicyRuleUnitTest {
 
     @Test
     void policyEngine_noRules_returnsAllow() {
-        PolicyEngine engine = new PolicyEngine(List.of());
+        PolicyEngine engine = new PolicyEngine(List.of(), changeRequestRepository);
 
         PolicyDecision decision = engine.evaluate(req("1"));
 
@@ -158,7 +162,7 @@ class PolicyRuleUnitTest {
     void policyEngine_secondRuleRejects_returnsSecondReason() {
         PolicyRule alwaysAllow = r -> PolicyDecision.allow();
         PolicyRule alwaysReject = r -> PolicyDecision.reject("second-reject");
-        PolicyEngine engine = new PolicyEngine(List.of(alwaysAllow, alwaysReject));
+        PolicyEngine engine = new PolicyEngine(List.of(alwaysAllow, alwaysReject), changeRequestRepository);
 
         PolicyDecision decision = engine.evaluate(req("1"));
 

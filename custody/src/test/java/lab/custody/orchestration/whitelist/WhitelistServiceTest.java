@@ -2,6 +2,8 @@ package lab.custody.orchestration.whitelist;
 
 import lab.custody.domain.whitelist.WhitelistAddress;
 import lab.custody.domain.whitelist.WhitelistAddressRepository;
+import lab.custody.domain.whitelist.WhitelistAuditLog;
+import lab.custody.domain.whitelist.WhitelistAuditLogRepository;
 import lab.custody.domain.whitelist.WhitelistStatus;
 import lab.custody.domain.withdrawal.ChainType;
 import lab.custody.orchestration.InvalidRequestException;
@@ -32,11 +34,14 @@ class WhitelistServiceTest {
     @Mock
     private WhitelistAddressRepository whitelistRepository;
 
+    @Mock
+    private WhitelistAuditLogRepository auditLogRepository;
+
     private WhitelistService whitelistService;
 
     @BeforeEach
     void setUp() {
-        whitelistService = new WhitelistService(whitelistRepository);
+        whitelistService = new WhitelistService(whitelistRepository, auditLogRepository);
         ReflectionTestUtils.setField(whitelistService, "defaultHoldHours", 48L);
         ReflectionTestUtils.setField(whitelistService, "staticWhitelistConfig", "");
     }
@@ -94,6 +99,7 @@ class WhitelistServiceTest {
         when(whitelistRepository.findByStatusAndActiveAfterLessThanEqual(eq(WhitelistStatus.HOLDING), any(Instant.class)))
                 .thenReturn(List.of(ready));
         when(whitelistRepository.save(any(WhitelistAddress.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(auditLogRepository.save(any(WhitelistAuditLog.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         whitelistService.promoteHoldingToActive();
 

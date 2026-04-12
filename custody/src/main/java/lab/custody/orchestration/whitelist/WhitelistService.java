@@ -3,6 +3,8 @@ package lab.custody.orchestration.whitelist;
 import jakarta.annotation.PostConstruct;
 import lab.custody.domain.whitelist.WhitelistAddress;
 import lab.custody.domain.whitelist.WhitelistAddressRepository;
+import lab.custody.domain.whitelist.WhitelistAuditLog;
+import lab.custody.domain.whitelist.WhitelistAuditLogRepository;
 import lab.custody.domain.whitelist.WhitelistStatus;
 import lab.custody.domain.withdrawal.ChainType;
 import lab.custody.orchestration.InvalidRequestException;
@@ -27,6 +29,7 @@ import java.util.UUID;
 public class WhitelistService {
 
     private final WhitelistAddressRepository whitelistRepository;
+    private final WhitelistAuditLogRepository auditLogRepository;
 
     @Value("${custody.whitelist.default-hold-hours:48}")
     private long defaultHoldHours;
@@ -68,12 +71,18 @@ public class WhitelistService {
     @Transactional
     public WhitelistAddress approve(UUID id, String approvedBy) {
         WhitelistAddress entry = load(id);
+        WhitelistStatus previousStatus = entry.getStatus();
         try {
             entry.approve(approvedBy != null ? approvedBy : "unknown");
         } catch (IllegalStateException e) {
             throw new InvalidRequestException(e.getMessage());
         }
         WhitelistAddress saved = whitelistRepository.save(entry);
+        // 8-3-3: 상태 전이 감사 로그 기록
+        auditLogRepository.save(WhitelistAuditLog.record(
+                saved.getId(), "APPROVED",
+                approvedBy != null ? approvedBy : "unknown",
+                previousStatus, saved.getStatus()));
         log.info("event=whitelist.approve id={} address={} approvedBy={} activeAfter={}",
                 saved.getId(), saved.getAddress(), saved.getApprovedBy(), saved.getActiveAfter());
         return saved;
@@ -82,12 +91,18 @@ public class WhitelistService {
     @Transactional
     public WhitelistAddress revoke(UUID id, String revokedBy) {
         WhitelistAddress entry = load(id);
+        WhitelistStatus previousStatus = entry.getStatus();
         try {
             entry.revoke(revokedBy != null ? revokedBy : "unknown");
         } catch (IllegalStateException e) {
             throw new InvalidRequestException(e.getMessage());
         }
         WhitelistAddress saved = whitelistRepository.save(entry);
+        // 8-3-3: 상태 전이 감사 로그 기록
+        auditLogRepository.save(WhitelistAuditLog.record(
+                saved.getId(), "REVOKED",
+                revokedBy != null ? revokedBy : "unknown",
+                previousStatus, saved.getStatus()));
         log.info("event=whitelist.revoke id={} address={} revokedBy={}",
                 saved.getId(), saved.getAddress(), saved.getRevokedBy());
         return saved;
@@ -104,6 +119,14 @@ public class WhitelistService {
             return whitelistRepository.findAllByOrderByRegisteredAtDesc();
         }
         return whitelistRepository.findByStatus(status);
+    }
+
+    // 8-3-4: 화이트리스트 항목의 감사 이력 조회 (최신 순)
+    @Transactional(readOnly = true)
+    public List<WhitelistAuditLog> getAuditLog(UUID id) {
+        // 항목 존재 확인 (없으면 InvalidRequestException)
+        load(id);
+        return auditLogRepository.findByWhitelistAddressIdOrderByCreatedAtDesc(id);
     }
 
     // ─────────────────────────── scheduler ───────────────────────────
@@ -128,8 +151,13 @@ public class WhitelistService {
             log.info("event=whitelist.scheduler.promote scheduler=WhitelistScheduler promoted={}", ready.size());
             for (WhitelistAddress entry : ready) {
                 try {
+                    WhitelistStatus previousStatus = entry.getStatus();
                     entry.activate();
                     whitelistRepository.save(entry);
+                    // 8-3-3: 스케줄러에 의한 ACTIVATED 감사 로그
+                    auditLogRepository.save(WhitelistAuditLog.record(
+                            entry.getId(), "ACTIVATED", "system:scheduler",
+                            previousStatus, entry.getStatus()));
                     log.info("event=whitelist.activated scheduler=WhitelistScheduler id={} address={} chainType={}",
                             entry.getId(), entry.getAddress(), entry.getChainType());
                 } catch (IllegalStateException e) {
