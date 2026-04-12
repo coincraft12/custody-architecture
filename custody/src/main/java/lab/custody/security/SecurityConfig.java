@@ -50,6 +50,9 @@ public class SecurityConfig {
                         // 화이트리스트 승인·취소 — APPROVER 이상
                         .requestMatchers(HttpMethod.POST, "/whitelist/*/approve").hasRole("APPROVER")
                         .requestMatchers(HttpMethod.POST, "/whitelist/*/revoke").hasRole("APPROVER")
+                        // 출금 승인·거부 — APPROVER 이상 (10-2-3)
+                        .requestMatchers(HttpMethod.POST, "/withdrawals/*/approve").hasRole("APPROVER")
+                        .requestMatchers(HttpMethod.POST, "/withdrawals/*/reject-approval").hasRole("APPROVER")
                         // 출금 생성 — OPERATOR 이상
                         .requestMatchers(HttpMethod.POST, "/withdrawals").hasRole("OPERATOR")
                         // 나머지 모든 요청 — 인증 필요

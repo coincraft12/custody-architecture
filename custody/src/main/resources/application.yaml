@@ -108,6 +108,16 @@ custody:
     enabled: ${CUSTODY_RATE_LIMIT_ENABLED:true}
     withdrawals-per-second: ${CUSTODY_RATE_LIMIT_WITHDRAWALS_PER_SECOND:10}
     whitelist-per-second: ${CUSTODY_RATE_LIMIT_WHITELIST_PER_SECOND:20}
+  # 10-2-1: 승인 워크플로 설정
+  approval:
+    # false(기본): 자동 승인 (기존 동작 유지). true: 금액 기반 승인 워크플로 활성화
+    enabled: ${CUSTODY_APPROVAL_ENABLED:false}
+    # 이 금액(ETH) 미만: 자동 승인
+    low-risk-threshold-eth: ${CUSTODY_APPROVAL_LOW_RISK_THRESHOLD_ETH:0.5}
+    # 이 금액(ETH) 이상: 4-eyes (2인 승인)
+    high-risk-threshold-eth: ${CUSTODY_APPROVAL_HIGH_RISK_THRESHOLD_ETH:1.0}
+    # 승인 태스크 만료 시간 (시간)
+    expiry-hours: ${CUSTODY_APPROVAL_EXPIRY_HOURS:24}
   evm:
     rpc-url: ${CUSTODY_EVM_RPC_URL:https://ethereum-sepolia-rpc.publicnode.com}
     # 4-3-1: 폴백 RPC URL 목록 (쉼표 구분, 빈 값이면 단일 프로바이더)

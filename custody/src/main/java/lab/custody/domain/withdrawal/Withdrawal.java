@@ -51,7 +51,9 @@ public class Withdrawal {
     private ChainType chainType;
 
     public void transitionTo(WithdrawalStatus next) {
-        if (next.ordinal() < this.status.ordinal()) {
+        // W0_POLICY_REJECTED는 어떤 상태에서든 전이 가능 (승인 거부, 만료 등)
+        if (next != WithdrawalStatus.W0_POLICY_REJECTED
+                && next.ordinal() < this.status.ordinal()) {
             throw new IllegalStateException("invalid withdrawal status transition: " + this.status + " -> " + next);
         }
         this.status = next;

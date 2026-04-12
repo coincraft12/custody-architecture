@@ -328,19 +328,19 @@
 ## 10. 🟡 승인 워크플로 (Approval Workflow) — MEDIUM
 
 ### 10-1. ApprovalService 실제 구현
-- [ ] 10-1-1. `ApprovalTask` JPA 엔티티 작성 (`id`, `withdrawalId`, `requiredApprovals`, `approvedCount`, `status`, `riskTier`)
-- [ ] 10-1-2. `ApprovalDecision` JPA 엔티티 작성 (`id`, `taskId`, `approverId`, `decision`, `reason`, `createdAt`)
-- [ ] 10-1-3. `ApprovalTaskRepository`, `ApprovalDecisionRepository` 작성
-- [ ] 10-1-4. `ApprovalService.createTask(withdrawal)` 구현: 출금 금액/위험 등급 기반으로 `requiredApprovals` 결정
-- [ ] 10-1-5. `ApprovalService.approve(taskId, approverId, reason)` 구현: `approvedCount += 1`, 충족 시 `APPROVED` 전이
-- [ ] 10-1-6. `ApprovalService.reject(taskId, approverId, reason)` 구현: `REJECTED` 전이 → W0_POLICY_REJECTED
-- [ ] 10-1-7. `WithdrawalService`에서 W2_APPROVAL_PENDING 상태 실제 사용: 고금액 출금 시 승인 대기 상태로 저장
+- [x] 10-1-1. `ApprovalTask` JPA 엔티티 작성 — 섹션 0-1-3 완료 ✅
+- [x] 10-1-2. `ApprovalDecision` JPA 엔티티 작성 — 섹션 0-1-4 완료 ✅
+- [x] 10-1-3. `ApprovalTaskRepository`, `ApprovalDecisionRepository` 작성 — 섹션 0-2-3 완료 ✅
+- [x] 10-1-4. `ApprovalService.requestApproval(withdrawal)`: 금액 기반 requiredApprovals 결정 + 태스크 생성 ✅
+- [x] 10-1-5. `ApprovalService.approve(taskId, approverId, reason)`: approvedCount += 1, 충족 시 APPROVED 전이 ✅
+- [x] 10-1-6. `ApprovalService.reject(taskId, approverId, reason)`: REJECTED 전이 → W0_POLICY_REJECTED ✅
+- [x] 10-1-7. `WithdrawalService`에서 W2_APPROVAL_PENDING 실제 사용: requestApproval()=false 시 승인 대기 반환 ✅
 
 ### 10-2. 4-Eyes (2인 이상 승인) 정책
-- [ ] 10-2-1. `application.yaml`에 `custody.approval.high-risk-threshold` 설정 추가 (예: 1.0 ETH 이상이면 2인 승인)
-- [ ] 10-2-2. `ApprovalService`에서 금액 기준으로 `requiredApprovals` 동적 결정 로직 구현
-- [ ] 10-2-3. `POST /withdrawals/{id}/approve` API 엔드포인트 추가 (APPROVER 역할 필요)
-- [ ] 10-2-4. 4-eyes 통합 테스트: 첫 번째 승인 후에도 W2_APPROVAL_PENDING 유지, 두 번째 승인 후 W3 전이 확인
+- [x] 10-2-1. `application.yaml`에 `custody.approval.*` 설정 추가 (low/high-risk-threshold-eth, expiry-hours, enabled) ✅
+- [x] 10-2-2. `ApprovalService.computeRequiredApprovals()`: 금액 기반 동적 결정 (0/1/2인) ✅
+- [x] 10-2-3. `POST /withdrawals/{id}/approve`, `POST /withdrawals/{id}/reject-approval` API 추가 (`ApprovalController`) ✅
+- [x] 10-2-4. 4-eyes 통합 테스트 (`ApprovalWorkflowIntegrationTest` 5개 테스트) ✅
 
 ---
 

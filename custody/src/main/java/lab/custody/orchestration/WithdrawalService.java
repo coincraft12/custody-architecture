@@ -179,8 +179,10 @@ public class WithdrawalService {
 
         boolean approved = approvalService == null || approvalService.requestApproval(saved);
         if (!approved) {
-            saved.transitionTo(WithdrawalStatus.W0_POLICY_REJECTED);
-            log.info("event=withdrawal_service.approval.rejected withdrawalId={} status={}", saved.getId(), saved.getStatus());
+            // 10-1-7: requestApproval()이 false를 반환한 경우:
+            // ApprovalService가 이미 출금을 W2_APPROVAL_PENDING으로 전이하고 승인 태스크를 생성했다.
+            // 이 출금은 승인 워크플로 완료 후 별도 API(/withdrawals/{id}/approve)를 통해 W3_APPROVED로 전이된다.
+            log.info("event=withdrawal_service.approval.pending withdrawalId={} status={}", saved.getId(), saved.getStatus());
             if (ledgerService != null) {
                 return ledgerService.saveWithdrawal(saved);
             }
