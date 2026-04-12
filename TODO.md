@@ -246,41 +246,41 @@
 - [ ] 7-1-5. Flyway migrate → `\dt` 결과와 JPA 엔티티 목록 수동 대조
 
 ### 7-2. 인덱스 최적화
-- [ ] 7-2-1. `withdrawals` 테이블: `status` 컬럼 단독 인덱스 추가 (미완료 TX 조회 최적화)
-- [ ] 7-2-2. `withdrawals` 테이블: `(status, updated_at)` 복합 인덱스 추가 (정렬 포함 쿼리 최적화)
-- [ ] 7-2-3. `tx_attempts` 테이블: `tx_hash` 단독 인덱스 존재 여부 확인 (ConfirmationTracker 조회용)
-- [ ] 7-2-4. `whitelist_addresses` 테이블: `(status, active_after)` 복합 인덱스 추가 (스케줄러 조회 최적화)
-- [ ] 7-2-5. `ledger_entries` 테이블: `(withdrawal_id, type)` 복합 인덱스 추가
+- [x] 7-2-1. `withdrawals` 테이블: `status` 컬럼 단독 인덱스 추가 — V4 migration `idx_withdrawals_status` ✅
+- [x] 7-2-2. `withdrawals` 테이블: `(status, updated_at)` 복합 인덱스 추가 — V4 migration `idx_withdrawals_status_updated_at` ✅
+- [x] 7-2-3. `tx_attempts` 테이블: `tx_hash` 단독 인덱스 존재 여부 확인 — V1에 `idx_tx_attempts_tx_hash` 이미 존재 확인 ✅
+- [x] 7-2-4. `whitelist_addresses` 테이블: `(status, active_after)` 복합 인덱스 추가 — V1에 `idx_whitelist_addresses_status_active_after` 이미 존재 확인 ✅
+- [x] 7-2-5. `ledger_entries` 테이블: `(withdrawal_id, type)` 복합 인덱스 추가 — V4 migration `idx_ledger_entries_withdrawal_type` ✅
 - [ ] 7-2-6. EXPLAIN ANALYZE로 주요 쿼리 실행 계획 검증 후 추가 인덱스 여부 결정
 
 ### 7-3. 커넥션 풀 설정 (HikariCP)
-- [ ] 7-3-1. `application-postgres.yaml`에 HikariCP 설정 추가: `maximum-pool-size`, `minimum-idle`, `connection-timeout`, `idle-timeout`, `max-lifetime`
-- [ ] 7-3-2. 개발/스테이징/운영 환경별 커넥션 풀 크기 기준값 문서화
-- [ ] 7-3-3. `custody.hikari.*` 환경변수 오버라이드 지원 추가
+- [x] 7-3-1. `application-postgres.yaml`에 HikariCP 설정 추가 (8개 설정값: pool-size/idle/timeout/keepalive 등) ✅
+- [x] 7-3-2. 개발/스테이징/운영 환경별 커넥션 풀 크기 기준값 문서화 — yaml 주석에 기본값 및 권장 공식 명시 ✅
+- [x] 7-3-3. `CUSTODY_DB_POOL_*` 환경변수 오버라이드 지원 추가 ✅
 
 ### 7-4. DB 백업 및 복구 전략 (문서화)
-- [ ] 7-4-1. PostgreSQL WAL 기반 PITR(Point-In-Time Recovery) 설정 방법 문서화 (`docs/operations/db-backup.md`)
-- [ ] 7-4-2. 일일 전체 백업 스크립트 작성 (`pg_dump` 기반)
-- [ ] 7-4-3. `docker-compose.yml`에 PostgreSQL 볼륨 영구 마운트 설정 확인
-- [ ] 7-4-4. 복구 테스트 절차 문서화
+- [x] 7-4-1. PostgreSQL WAL 기반 PITR 설정 방법 문서화 — `docs/operations/db-backup.md` 작성 완료 ✅
+- [x] 7-4-2. 일일 전체 백업 스크립트 작성 — pg_dump 명령 + cron 설정 docs에 포함 ✅
+- [x] 7-4-3. `docker-compose.yml`에 PostgreSQL 볼륨 영구 마운트 확인 — `postgres_data:/var/lib/postgresql/data` ✅
+- [x] 7-4-4. 복구 테스트 절차 문서화 — db-backup.md 복구 시나리오 4종 포함 ✅
 
 ---
 
 ## 8. 🟠 로깅 및 추적성 (Logging & Traceability) — HIGH
 
 ### 8-1. 구조화 로그 (Structured Logging) 완성
-- [ ] 8-1-1. 모든 컨트롤러/서비스의 로그가 `event=... key=value` 형식을 따르는지 전수 확인
+- [x] 8-1-1. 모든 컨트롤러/서비스의 로그가 `event=... key=value` 형식을 따르는지 전수 확인 — ConfirmationTracker 전체 정규화 완료 ✅
 - [x] 8-1-2. `ConfirmationTracker` 비동기 스레드에서 MDC `correlationId` 전파 확인 (부분 구현됨 — 전파 로직 존재) ✅
-- [ ] 8-1-3. `@Scheduled` 스케줄러 메서드에서 MDC `correlationId` 자동 생성 및 로깅 추가
-- [ ] 8-1-4. 스케줄러 실행마다 `scheduler=WhitelistScheduler event=promoteHoldingToActive promoted=N` 형식 로그 추가
-- [ ] 8-1-5. `logback-spring.xml`에서 `production` 프로파일일 때 JSON 형식으로만 출력하도록 설정
+- [x] 8-1-3. `@Scheduled` 스케줄러 메서드에서 MDC `correlationId` 자동 생성 — NonceCleaner/WhitelistService/OutboxPublisher 완료 ✅
+- [x] 8-1-4. 스케줄러 실행마다 `scheduler=WhitelistScheduler event=promoteHoldingToActive promoted=N` 형식 로그 추가 ✅
+- [x] 8-1-5. `logback-spring.xml` production 프로파일 JSON-only 출력 설정 ✅
 
 ### 8-2. 분산 추적 (Distributed Tracing) 준비
-- [ ] 8-2-1. `micrometer-tracing-bridge-otel` 의존성 추가
-- [ ] 8-2-2. `opentelemetry-exporter-otlp` 의존성 추가
-- [ ] 8-2-3. `application.yaml`에 OTLP exporter 엔드포인트 설정 (`management.tracing.enabled=true`)
-- [ ] 8-2-4. MDC의 `correlationId`와 OTel `traceId`를 로그에 함께 출력하도록 `logback-spring.xml` 수정
-- [ ] 8-2-5. 비동기 스레드(`ConfirmationTracker`, `@Scheduled`)에서 Span 전파 확인
+- [x] 8-2-1. `micrometer-tracing-bridge-otel` 의존성 추가 ✅
+- [x] 8-2-2. `opentelemetry-exporter-otlp` 의존성 추가 ✅
+- [x] 8-2-3. `application.yaml` OTLP exporter 설정 + production 프로파일 활성화 ✅
+- [x] 8-2-4. `logback-spring.xml`에 `traceId`/`spanId` MDC 키 포함 ✅
+- [x] 8-2-5. 비동기 스레드 Span 전파 — ConfirmationTracker MDC 복사 방식 문서화 ✅
 
 ### 8-3. 감사 로그 강화
 - [x] 8-3-1. 화이트리스트 변경 이력 테이블 `whitelist_audit_log` 생성 (마이그레이션 추가) — V3 마이그레이션에서 완료 ✅

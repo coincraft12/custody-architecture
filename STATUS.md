@@ -183,10 +183,25 @@
 - 보안 강화 플래닝 (15) — Flashbots/Redis 분산락 주석, Signer PDS 훅 완료
 - PDS 통합 구조 예약 (16) — tenant_pds_records 테이블, feature flags, PdsProperties 완료
 
-## 다음 작업 항목
-1. 🟡 README 환경변수 목록 업데이트 + 운영 플레이북 문서화 (13-2, 14-3-2/3)
-2. 🟢 Phase 2+ PDS 통합 (파일럿 고객 확보 후) (16-2+)
-3. 🟢 HSM/KMS Signer PoC (15-2-2+)
+## 다음 작업 항목 (2026-04-13 기준 실제 미구현)
+
+### 🟡 단기 (운영 전 권장)
+1. **7-1**: Flyway 마이그레이션 ↔ JPA 엔티티 전수 대조 (5개 — 수동 DB 확인)
+2. **7-2-6**: EXPLAIN ANALYZE 주요 쿼리 실행 계획 검증
+3. **9-4-2**: `@SpringBootTest` → `@DataJpaTest`/`@WebMvcTest` 분리 (테스트 속도)
+4. **12-1-5**: BFT 어댑터 통합 테스트 작성
+5. **12-2-2**: `ChainAdapterRouter` 설정 기반 어댑터 선택 확장
+6. **13-2**: README 환경변수 업데이트 + 아키텍처 다이어그램 + 운영 플레이북 (4개)
+7. **14-3-2/3**: 환경별 설정 오버라이드 전략 + 시크릿 주입 문서화
+
+### 🔵 선택적 개선
+8. **5-4**: Mock 자동 확인 시나리오 (auto-confirm-delay-ms) — 통합 테스트 편의
+9. **11-2-3**: 네트워크 혼잡도 기반 동적 fee bump 비율 (선택적)
+
+### 🟢 장기 (Phase 4+)
+10. **16-2~16-4**: PDS 통합 (파일럿 고객 확보 후)
+11. **15-2-2**: HSM/KMS Signer PoC
+12. **15-4**: 제3자 보안 감사, OWASP 체크리스트, Dependabot
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)
