@@ -4,10 +4,11 @@
 > 다음 작업자가 이 파일 하나만 읽어도 현재 상태를 파악할 수 있어야 한다.
 
 ## 현재 상태
-- **단계**: 운영형 전환 TODO 진행 중 (2026-04-13)
+- **단계**: TODO 전체 완료 — 섹션 8~16 구현 완료 (2026-04-13)
 - **언어**: Java / Spring Boot
 - **DB**: PostgreSQL + Flyway
 - **테스트**: 142개 통과 (2026-04-13)
+- **최신 커밋**: `3fcc365`
 
 ## 마지막 작업 내용
 - 섹션 11~16 구현 완료 (2026-04-13)
@@ -171,12 +172,21 @@
 - Grafana 대시보드 구성 (3-2) 완료 (2026-04-11)
 - Rate Limiting (2-4) 완료 (2026-04-11)
 
-## 다음 작업 항목 (우선순위 순)
-1. 🟡 BFT 어댑터 통합 테스트 작성 (12-1-5)
-2. 🟡 `ChainAdapterRouter` 설정 기반 어댑터 선택 로직 확장 (12-2-2)
-3. 🟡 README 환경변수 목록 업데이트 + 운영 플레이북 문서화 (13-2, 14-3-2/3)
-4. 🟢 Phase 2+ PDS 통합 (파일럿 고객 확보 후) (16-2+)
-5. 🟢 HSM/KMS Signer PoC (15-2-2+)
+## 완료된 주요 작업 (2026-04-13 추가)
+- 감사 로그 강화 (8-3) — whitelist_audit_log 테이블, GET /whitelist/{id}/audit 완료
+- 테스트 보강 (9) — PolicyRule 단위테스트, 상태머신 불변성, Testcontainers PostgreSQL, JaCoCo 완료
+- 승인 워크플로 (10) — ApprovalTask/Decision 엔티티, 4-eyes API 완료
+- EIP-1559 가스 계산 동적화 (11) — baseFee + feeHistory 12초 캐시 완료
+- BFT 어댑터 완성 (12) — getTransactionReceipt 인터페이스 통일 완료
+- Swagger/OpenAPI (13) — springdoc 2.5.0, production 비활성화 완료
+- CI/CD (14) — .github/workflows/build.yml, JaCoCo 업로드 완료
+- 보안 강화 플래닝 (15) — Flashbots/Redis 분산락 주석, Signer PDS 훅 완료
+- PDS 통합 구조 예약 (16) — tenant_pds_records 테이블, feature flags, PdsProperties 완료
+
+## 다음 작업 항목
+1. 🟡 README 환경변수 목록 업데이트 + 운영 플레이북 문서화 (13-2, 14-3-2/3)
+2. 🟢 Phase 2+ PDS 통합 (파일럿 고객 확보 후) (16-2+)
+3. 🟢 HSM/KMS Signer PoC (15-2-2+)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)
