@@ -2,7 +2,7 @@ package lab.custody.orchestration;
 
 import lab.custody.orchestration.CreateWithdrawalRequest;
 
-import java.math.BigDecimal;
+import java.math.BigInteger;
 
 /**
  * 9-4-3: 공통 테스트 픽스처 클래스.
@@ -42,7 +42,7 @@ public final class TestFixtures {
      */
     public static CreateWithdrawalRequest evmRequest(String toAddress, String amount) {
         return new CreateWithdrawalRequest(
-                "evm", ADDR_FROM, toAddress, "USDC", new BigDecimal(amount));
+                "evm", ADDR_FROM, toAddress, "USDC", new BigInteger(amount));
     }
 
     /**
@@ -57,7 +57,7 @@ public final class TestFixtures {
      */
     public static CreateWithdrawalRequest evmRequestFrom(String fromAddress, String toAddress, String amount) {
         return new CreateWithdrawalRequest(
-                "evm", fromAddress, toAddress, "USDC", new BigDecimal(amount));
+                "evm", fromAddress, toAddress, "USDC", new BigInteger(amount));
     }
 
     /**
@@ -65,7 +65,7 @@ public final class TestFixtures {
      */
     public static CreateWithdrawalRequest bftRequest(String toAddress, String amount) {
         return new CreateWithdrawalRequest(
-                "bft", ADDR_FROM, toAddress, "USDC", new BigDecimal(amount));
+                "bft", ADDR_FROM, toAddress, "USDC", new BigInteger(amount));
     }
 
     /**

@@ -74,10 +74,10 @@ class WithdrawalServiceIdempotencyTest {
 
     @Test
     void sameIdempotencyKey_doesNotRebroadcast() {
-        CreateWithdrawalRequest req = new CreateWithdrawalRequest("evm", "0xfrom", "0xto", "ETH", new java.math.BigDecimal("1"));
-        // 1 ETH in wei
-        long oneEthWei = 1000000000000000000L;
-        Withdrawal w = Withdrawal.requested("idem-1", ChainType.EVM, "0xfrom", "0xto", "ETH", oneEthWei);
+        CreateWithdrawalRequest req = new CreateWithdrawalRequest("evm", "0xfrom", "0xto", "ETH", new java.math.BigInteger("1"));
+        // amount = 1 (smallest indivisible unit)
+        long amount = 1L;
+        Withdrawal w = Withdrawal.requested("idem-1", ChainType.EVM, "0xfrom", "0xto", "ETH", amount);
 
         when(withdrawalRepository.findByIdempotencyKey("idem-1")).thenReturn(Optional.empty(), Optional.of(w));
         when(withdrawalRepository.save(any())).thenReturn(w);
@@ -100,8 +100,8 @@ class WithdrawalServiceIdempotencyTest {
 
     @Test
     void sameIdempotencyKey_parallelRequests_onlyBroadcastOnce() throws Exception {
-        CreateWithdrawalRequest req = new CreateWithdrawalRequest("evm", "0xfrom", "0xto", "ETH", new java.math.BigDecimal("1"));
-        long oneEthWei = 1000000000000000000L;
+        CreateWithdrawalRequest req = new CreateWithdrawalRequest("evm", "0xfrom", "0xto", "ETH", new java.math.BigInteger("1"));
+        long amount = 1L;
         AtomicReference<Withdrawal> storedWithdrawal = new AtomicReference<>();
 
         when(withdrawalRepository.findByIdempotencyKey("idem-race-1"))
@@ -159,7 +159,7 @@ class WithdrawalServiceIdempotencyTest {
 
             assertThat(results).hasSize(parallelCalls);
             assertThat(results).extracting(Withdrawal::getId).containsOnly(storedWithdrawal.get().getId());
-            assertThat(results).extracting(Withdrawal::getAmount).containsOnly(oneEthWei);
+            assertThat(results).extracting(Withdrawal::getAmount).containsOnly(amount);
             verify(adapter, times(1)).broadcast(any(ChainAdapter.BroadcastCommand.class));
             verify(attemptService, times(1)).createAttempt(any(), any(), anyLong());
         } finally {

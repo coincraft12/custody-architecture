@@ -7,7 +7,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
-import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.Locale;
 
 // 13-1-4: @Schema for Swagger UI documentation
@@ -32,10 +32,10 @@ public record CreateWithdrawalRequest(
         @Size(max = 20, message = "asset must be 20 characters or less")
         String asset,
 
-        @Schema(description = "Amount in ETH (positive decimal)", example = "0.1")
+        @Schema(description = "Amount in smallest indivisible unit of the asset (wei for ETH, 6-decimal units for USDC, etc.)", example = "1000000")
         @NotNull(message = "amount is required")
         @Positive(message = "amount must be greater than 0")
-        BigDecimal amount
+        BigInteger amount
 ) {
     public CreateWithdrawalRequest {
         fromAddress = normalizeRequiredAddress(fromAddress, "fromAddress");

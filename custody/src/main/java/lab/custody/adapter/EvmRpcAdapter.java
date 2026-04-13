@@ -5,8 +5,10 @@ import io.github.resilience4j.retry.annotation.Retry;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import lab.custody.domain.asset.AssetRegistryService;
 import lab.custody.domain.withdrawal.ChainType;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -59,6 +61,11 @@ public class EvmRpcAdapter implements ChainAdapter {
     private final Signer signer;
     private final MeterRegistry meterRegistry;
     private final int feeBumpPercentage;
+
+    // 18-2: AssetRegistryService — optional, injected post-construction.
+    // required=false so ETH transfers work even without Asset Registry in context.
+    @Autowired(required = false)
+    private AssetRegistryService assetRegistryService;
 
     public EvmRpcAdapter(
             EvmRpcProviderPool providerPool,
@@ -480,9 +487,16 @@ public class EvmRpcAdapter implements ChainAdapter {
     }
 
     /**
-     * 17-5: prepareSend() — build and sign an EIP-1559 ETH transfer.
-     * Uses the existing signing path to preserve all gas / nonce logic.
-     * ERC-20 support deferred to Section 18.
+     * 17-5 / 18-2: prepareSend() — build and sign an EIP-1559 transaction.
+     * Supports both native ETH transfers and ERC-20 token transfers.
+     *
+     * <p>Asset resolution logic:
+     * <ul>
+     *   <li>If {@link AssetRegistryService} is not available → always ETH (native) fallback.</li>
+     *   <li>If asset is native → {@code RawTransaction.createEtherTransaction()} with ETH value.</li>
+     *   <li>If asset is ERC-20 → {@code RawTransaction.createTransaction()} with to=contract,
+     *       value=0, data=ABI-encoded transfer(address,uint256).</li>
+     * </ul>
      */
     @Override
     public PreparedTx prepareSend(SendRequest request) {
@@ -495,15 +509,40 @@ public class EvmRpcAdapter implements ChainAdapter {
         BigInteger nonce = getPendingNonce(request.fromAddress());
         GasPriceCache prices = fetchGasPrices();
 
-        RawTransaction rawTx = RawTransaction.createEtherTransaction(
-                configuredChainId,
-                nonce,
-                GAS_LIMIT,
-                request.toAddress(),
-                request.amountRaw(),
-                prices.maxPriorityFeePerGas(),
-                prices.maxFeePerGas()
-        );
+        String chainTypeName = request.chainType().name();
+        String asset = request.asset();
+        boolean isNative = resolveIsNative(chainTypeName, asset);
+        long gasLimit = resolveGasLimit(chainTypeName, asset);
+
+        RawTransaction rawTx;
+        if (isNative) {
+            // ETH (or other native coin) transfer
+            rawTx = RawTransaction.createEtherTransaction(
+                    configuredChainId,
+                    nonce,
+                    BigInteger.valueOf(gasLimit),
+                    request.toAddress(),
+                    request.amountRaw(),
+                    prices.maxPriorityFeePerGas(),
+                    prices.maxFeePerGas()
+            );
+        } else {
+            // ERC-20 token transfer: to = contract address, value = 0, data = ABI calldata
+            String contractAddress = resolveContractAddress(chainTypeName, asset);
+            String data = Erc20TransferEncoder.encode(request.toAddress(), request.amountRaw());
+            rawTx = RawTransaction.createTransaction(
+                    configuredChainId,
+                    nonce,
+                    BigInteger.valueOf(gasLimit),
+                    contractAddress,        // to = ERC-20 contract, NOT the recipient
+                    BigInteger.ZERO,        // value = 0 (token transfer carries no ETH)
+                    data,                   // ABI-encoded transfer(address,uint256) calldata
+                    prices.maxPriorityFeePerGas(),
+                    prices.maxFeePerGas()
+            );
+            log.debug("event=erc20.prepare asset={} contract={} recipient={} amount={}",
+                    asset, contractAddress, request.toAddress(), request.amountRaw());
+        }
 
         // Preserve exact same signing output as legacy broadcast(BroadcastCommand)
         String signedHex = signer.sign(rawTx, configuredChainId);
@@ -514,6 +553,44 @@ public class EvmRpcAdapter implements ChainAdapter {
                 prices.maxFeePerGas(),
                 prices.maxPriorityFeePerGas()
         );
+    }
+
+    // ─────────────── 18-2: Asset resolution helpers ───────────────
+
+    /**
+     * Resolve whether the given asset is a native coin (ETH) or an ERC-20 token.
+     * Falls back to {@code true} (native) when AssetRegistryService is unavailable.
+     */
+    private boolean resolveIsNative(String chainType, String asset) {
+        if (assetRegistryService == null) return true; // fallback: treat as native
+        try {
+            return assetRegistryService.getAsset(chainType, asset).isNative();
+        } catch (Exception e) {
+            log.warn("event=erc20.asset_lookup_failed asset={} chain={} error={}",
+                    asset, chainType, e.getMessage());
+            return "ETH".equalsIgnoreCase(asset); // unknown asset: assume native only if "ETH"
+        }
+    }
+
+    /**
+     * Resolve the gas limit for the given asset.
+     * Falls back to 21_000 (ETH transfer default) when AssetRegistryService is unavailable.
+     */
+    private long resolveGasLimit(String chainType, String asset) {
+        if (assetRegistryService == null) return 21_000L;
+        try {
+            return assetRegistryService.getAsset(chainType, asset).getDefaultGasLimit();
+        } catch (Exception e) {
+            return 21_000L;
+        }
+    }
+
+    /**
+     * Resolve the ERC-20 contract address for the given asset.
+     * Throws if the asset is not found (should only be called after {@link #resolveIsNative} returns false).
+     */
+    private String resolveContractAddress(String chainType, String asset) {
+        return assetRegistryService.getAsset(chainType, asset).getContractAddress();
     }
 
     /**

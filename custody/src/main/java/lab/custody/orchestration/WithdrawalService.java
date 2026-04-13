@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.Timer;
 import lab.custody.adapter.BroadcastRejectedException;
 import lab.custody.adapter.ChainAdapter;
 import lab.custody.adapter.ChainAdapterRouter;
+import lab.custody.domain.asset.AssetRegistryService;
 import lab.custody.domain.ledger.LedgerEntry;
 import lab.custody.domain.outbox.OutboxEvent;
 import lab.custody.domain.outbox.OutboxEventRepository;
@@ -28,7 +29,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.List;
 import java.util.Locale;
@@ -88,6 +88,10 @@ public class WithdrawalService {
                 .register(meterRegistry);
     }
 
+    // 18-5: Asset Registry validation — optional so mock-mode tests still work without a DB.
+    @Autowired(required = false)
+    private AssetRegistryService assetRegistryService;
+
     @Autowired(required = false)
     private ApprovalService approvalService;
 
@@ -138,7 +142,15 @@ public class WithdrawalService {
     }
 
     private Withdrawal doCreateAndBroadcast(String idempotencyKey, ChainType chainType, CreateWithdrawalRequest req) {
-        long amountWei = ethToWei(req.amount());
+        // 18-5: Validate asset is supported before creating withdrawal.
+        // AssetRegistryService is optional — absent in mock/unit-test contexts.
+        if (assetRegistryService != null) {
+            assetRegistryService.getAsset(chainType.name(), req.asset()); // throws AssetNotSupportedException if not found
+        }
+
+        // 18-3: amount is already in the smallest indivisible unit (wei / USDC-units / etc.)
+        // No conversion needed — caller is responsible for supplying the correct unit.
+        long amountRaw = parseAmount(req.amount());
 
         Withdrawal saved = withdrawalRepository.save(Withdrawal.requested(
                 idempotencyKey,
@@ -146,7 +158,7 @@ public class WithdrawalService {
                 req.fromAddress(),
                 req.toAddress(),
                 req.asset(),
-                amountWei
+                amountRaw
         ));
         log.info("event=withdrawal_service.create.persisted withdrawalId={} status={}", saved.getId(), saved.getStatus());
         createdCounter.increment();
@@ -325,13 +337,14 @@ public class WithdrawalService {
     }
 
     private Withdrawal validateIdempotentRequest(Withdrawal existing, ChainType chainType, CreateWithdrawalRequest req) {
-        long reqWei = ethToWei(req.amount());
+        // 18-3: amount is in smallest indivisible unit — compare directly
+        long reqAmount = parseAmount(req.amount());
 
         boolean matches = existing.getChainType() == chainType
                 && existing.getFromAddress().equals(req.fromAddress())
                 && existing.getToAddress().equals(req.toAddress())
                 && existing.getAsset().equals(req.asset())
-                && existing.getAmount() == reqWei;
+                && existing.getAmount() == reqAmount;
 
         if (!matches) {
             log.warn(
@@ -377,16 +390,18 @@ public class WithdrawalService {
         }
     }
 
-    private long ethToWei(BigDecimal eth) {
-        if (eth == null) {
+    /**
+     * 18-3: Parse amount from BigInteger (already in smallest indivisible unit) to a long.
+     * Uses longValueExact() to guard against overflow on excessively large values.
+     */
+    private long parseAmount(BigInteger amount) {
+        if (amount == null) {
             throw new InvalidRequestException("amount is required");
         }
         try {
-            BigDecimal multiplier = new BigDecimal("1000000000000000000");
-            BigInteger wei = eth.multiply(multiplier).toBigIntegerExact();
-            return wei.longValueExact();
-        } catch (ArithmeticException | NumberFormatException e) {
-            throw new InvalidRequestException("invalid amount: must be a decimal with up to 18 fractional digits representing ETH");
+            return amount.longValueExact();
+        } catch (ArithmeticException e) {
+            throw new InvalidRequestException("invalid amount: value exceeds supported range");
         }
     }
 }
