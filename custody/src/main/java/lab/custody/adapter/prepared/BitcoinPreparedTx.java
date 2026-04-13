@@ -1,15 +1,18 @@
 package lab.custody.adapter.prepared;
 
+import java.util.List;
+
 /**
- * 17-1: Bitcoin prepared transaction stub.
+ * 19-1: Bitcoin prepared transaction — UTXO model.
  *
- * <p>{@code signedRawTx} is the fully-signed raw transaction bytes ready to broadcast.
- * {@code changeAddress} is the change output address.
+ * <p>{@code rawHex} is the fully-signed raw transaction hex ready to broadcast via
+ * {@code sendrawtransaction}.
+ * {@code lockedUtxoKeys} contains "txid:vout" strings for UTXO lock release on failure.
  * {@code feeSat} is the total miner fee in satoshis.
  */
 public record BitcoinPreparedTx(
-        byte[] signedRawTx,
-        String changeAddress,
+        String rawHex,
+        List<String> lockedUtxoKeys,
         long feeSat
 ) implements PreparedTx {
 }

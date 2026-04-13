@@ -143,6 +143,15 @@ custody:
   # 통합 테스트 자동화에 유용하며, 운영 환경에서는 반드시 0으로 유지해야 한다.
   mock:
     auto-confirm-delay-ms: ${CUSTODY_MOCK_AUTO_CONFIRM_DELAY_MS:0}
+  bitcoin:
+    enabled: ${CUSTODY_BITCOIN_ENABLED:false}
+    network: ${CUSTODY_BITCOIN_NETWORK:regtest}
+    rpc-url: ${CUSTODY_BITCOIN_RPC_URL:http://localhost:18443}
+    rpc-user: ${CUSTODY_BITCOIN_RPC_USER:bitcoin}
+    rpc-password: ${CUSTODY_BITCOIN_RPC_PASSWORD:bitcoin}
+    utxo-lock-minutes: ${CUSTODY_BITCOIN_UTXO_LOCK_MINUTES:10}
+    # private-key: set via CUSTODY_BITCOIN_PRIVATE_KEY env var (WIF format)
+    private-key: ${CUSTODY_BITCOIN_PRIVATE_KEY:}
   evm:
     rpc-url: ${CUSTODY_EVM_RPC_URL:https://ethereum-sepolia-rpc.publicnode.com}
     # 4-3-1: 폴백 RPC URL 목록 (쉼표 구분, 빈 값이면 단일 프로바이더)
