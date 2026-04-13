@@ -66,7 +66,7 @@ class MockAutoConfirmIntegrationTest {
                                   "fromAddress": "0x90f79bf6eb2c4f870365e785982e1f101e93b906",
                                   "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
-                                  "amount": 0.001
+                                  "amount": 1000000000000000
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -143,7 +143,7 @@ class MockAutoConfirmIntegrationTest {
                                   "fromAddress": "0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",
                                   "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
-                                  "amount": 0.001
+                                  "amount": 1000000000000000
                                 }
                                 """))
                 .andExpect(status().isOk())

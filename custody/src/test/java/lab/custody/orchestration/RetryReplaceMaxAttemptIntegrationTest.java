@@ -46,7 +46,7 @@ class RetryReplaceMaxAttemptIntegrationTest {
                                   "fromAddress": "0xbcd4042de499d14e55001ccbb24a551f3b954096",
                                   "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
-                                  "amount": 0.0001
+                                  "amount": 100000000000000
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -85,7 +85,7 @@ class RetryReplaceMaxAttemptIntegrationTest {
                                   "fromAddress": "0x71be63f3384f5fb98995aa9b7a22c58fc65ab84c",
                                   "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
-                                  "amount": 0.0001
+                                  "amount": 100000000000000
                                 }
                                 """))
                 .andExpect(status().isOk())

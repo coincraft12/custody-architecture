@@ -226,7 +226,7 @@ class WhitelistWorkflowIntegrationTest {
                   "fromAddress": "0xfabb0ac9d68b0b445fb7357272ff202c5651694a",
                   "toAddress": "%s",
                   "asset": "ETH",
-                  "amount": 0.0001
+                  "amount": 100000000000000
                 }
                 """.formatted(toAddress);
     }

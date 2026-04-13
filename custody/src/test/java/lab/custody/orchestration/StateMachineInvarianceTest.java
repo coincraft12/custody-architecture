@@ -99,7 +99,7 @@ class StateMachineInvarianceTest {
                                   "fromAddress": "%s",
                                   "toAddress": "%s",
                                   "asset": "ETH",
-                                  "amount": 0.0001
+                                  "amount": 100000000000000
                                 }
                                 """.formatted(FROM, TO)))
                 .andExpect(status().isOk())

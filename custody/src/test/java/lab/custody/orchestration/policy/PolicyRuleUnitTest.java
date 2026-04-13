@@ -11,7 +11,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,7 +43,7 @@ class PolicyRuleUnitTest {
 
     @Test
     void amountLimit_amountExceedsMax_rejectsWithReason() {
-        AmountLimitPolicyRule rule = new AmountLimitPolicyRule(new BigDecimal("100"));
+        AmountLimitPolicyRule rule = new AmountLimitPolicyRule(new BigInteger("100"));
         CreateWithdrawalRequest req = req("101");
 
         PolicyDecision decision = rule.evaluate(req);
@@ -56,7 +56,7 @@ class PolicyRuleUnitTest {
 
     @Test
     void amountLimit_amountEqualsMax_allows() {
-        AmountLimitPolicyRule rule = new AmountLimitPolicyRule(new BigDecimal("100"));
+        AmountLimitPolicyRule rule = new AmountLimitPolicyRule(new BigInteger("100"));
         CreateWithdrawalRequest req = req("100");
 
         PolicyDecision decision = rule.evaluate(req);
@@ -66,8 +66,9 @@ class PolicyRuleUnitTest {
 
     @Test
     void amountLimit_amountBelowMax_allows() {
-        AmountLimitPolicyRule rule = new AmountLimitPolicyRule(new BigDecimal("100"));
-        CreateWithdrawalRequest req = req("0.0001");
+        AmountLimitPolicyRule rule = new AmountLimitPolicyRule(new BigInteger("100"));
+        // amount in smallest indivisible unit: 1 (e.g. 1 wei or 1 USDC micro-unit)
+        CreateWithdrawalRequest req = req("1");
 
         PolicyDecision decision = rule.evaluate(req);
 
@@ -114,7 +115,7 @@ class PolicyRuleUnitTest {
                 .thenReturn(true);
 
         CreateWithdrawalRequest req = new CreateWithdrawalRequest(
-                "evm", "0xfrom", "  0XTO  ", "ETH", new BigDecimal("1"));
+                "evm", "0xfrom", "  0XTO  ", "ETH", new BigInteger("1"));
         PolicyDecision decision = whitelistRule.evaluate(req);
 
         assertThat(decision.allowed()).isTrue();
@@ -173,6 +174,6 @@ class PolicyRuleUnitTest {
     // ─── helper ─────────────────────────────────────────────────────────────
 
     private CreateWithdrawalRequest req(String amount) {
-        return new CreateWithdrawalRequest("evm", "0xfrom", "0xto", "ETH", new BigDecimal(amount));
+        return new CreateWithdrawalRequest("evm", "0xfrom", "0xto", "ETH", new BigInteger(amount));
     }
 }

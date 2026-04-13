@@ -10,7 +10,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.math.BigDecimal;
+import java.math.BigInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -122,6 +122,6 @@ class ToAddressWhitelistPolicyRuleTest {
                 ? "0x0000000000000000000000000000000000000000"
                 : toAddress;
         return new CreateWithdrawalRequest("evm", "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
-                addr, "ETH", new BigDecimal("1"));
+                addr, "ETH", new BigInteger("1"));
     }
 }

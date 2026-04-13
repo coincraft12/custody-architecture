@@ -59,7 +59,7 @@ class ApprovalWorkflowIntegrationTest {
                                   "fromAddress": "%s",
                                   "toAddress": "%s",
                                   "asset": "ETH",
-                                  "amount": 0.1
+                                  "amount": 100000000000000000
                                 }
                                 """.formatted(FROM, TO)))
                 .andExpect(status().isOk())
@@ -82,7 +82,7 @@ class ApprovalWorkflowIntegrationTest {
                                   "fromAddress": "%s",
                                   "toAddress": "%s",
                                   "asset": "ETH",
-                                  "amount": 0.6
+                                  "amount": 600000000000000000
                                 }
                                 """.formatted(FROM, TO)))
                 .andExpect(status().isOk())
@@ -130,7 +130,7 @@ class ApprovalWorkflowIntegrationTest {
                                   "fromAddress": "%s",
                                   "toAddress": "%s",
                                   "asset": "ETH",
-                                  "amount": 2.0
+                                  "amount": 2000000000000000000
                                 }
                                 """.formatted(FROM, TO)))
                 .andExpect(status().isOk())
@@ -188,7 +188,7 @@ class ApprovalWorkflowIntegrationTest {
                                   "fromAddress": "%s",
                                   "toAddress": "%s",
                                   "asset": "ETH",
-                                  "amount": 2.0
+                                  "amount": 2000000000000000000
                                 }
                                 """.formatted(FROM, TO)))
                 .andExpect(status().isOk())
@@ -225,7 +225,7 @@ class ApprovalWorkflowIntegrationTest {
                                   "fromAddress": "%s",
                                   "toAddress": "%s",
                                   "asset": "ETH",
-                                  "amount": 2.0
+                                  "amount": 2000000000000000000
                                 }
                                 """.formatted(FROM, TO)))
                 .andExpect(status().isOk())

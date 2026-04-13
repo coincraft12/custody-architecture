@@ -268,7 +268,7 @@ class LabScenariosIntegrationTest {
                                   "fromAddress": "0xa0ee7a142d267c1f36714e4a8f75612f20a79720",
                                   "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
-                                  "amount": 0.0001
+                                  "amount": 100000000000000
                                 }
                                 """))
                 .andExpect(status().isOk())

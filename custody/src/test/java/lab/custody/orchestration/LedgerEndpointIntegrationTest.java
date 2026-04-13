@@ -45,7 +45,7 @@ class LedgerEndpointIntegrationTest {
                                   "fromAddress": "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
                                   "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
-                                  "amount": 0.0001
+                                  "amount": 100000000000000
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -73,7 +73,7 @@ class LedgerEndpointIntegrationTest {
                                   "fromAddress": "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",
                                   "toAddress": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
                                   "asset": "ETH",
-                                  "amount": 0.0001
+                                  "amount": 100000000000000
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -111,7 +111,7 @@ class LedgerEndpointIntegrationTest {
                                   "fromAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
                                   "toAddress": "0xffffffffffffffffffffffffffffffffffffffff",
                                   "asset": "ETH",
-                                  "amount": 0.0001
+                                  "amount": 100000000000000
                                 }
                                 """))
                 .andExpect(status().isOk())
