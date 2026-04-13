@@ -1,0 +1,49 @@
+# 15-4-3: Dependabot 자동 의존성 취약점 스캔 설정
+# Gradle 의존성 + GitHub Actions 주간 스캔
+version: 2
+
+updates:
+  # Gradle 의존성 — 주간 스캔 (매주 월요일 09:00 KST = 00:00 UTC)
+  - package-ecosystem: "gradle"
+    directory: "/custody"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "00:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "security"
+    reviewers:
+      - "coincraft12"
+    # 주요 보안 업데이트는 자동 병합 허용 (마이너/패치 버전)
+    groups:
+      spring-boot:
+        patterns:
+          - "org.springframework.boot:*"
+          - "org.springframework:*"
+          - "org.springframework.security:*"
+      web3j:
+        patterns:
+          - "org.web3j:*"
+      resilience4j:
+        patterns:
+          - "io.github.resilience4j:*"
+      micrometer:
+        patterns:
+          - "io.micrometer:*"
+          - "io.opentelemetry:*"
+
+  # GitHub Actions 워크플로 의존성 — 주간 스캔
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "00:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"

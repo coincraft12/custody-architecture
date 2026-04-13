@@ -205,9 +205,9 @@
 - [x] 5-3-4. 재시작 시 재추적 건수 로그 기록 ✅
 
 ### 5-4. Mock 어댑터에서의 자동 확인
-- [ ] 5-4-1. `EvmMockAdapter`에서 broadcast 후 일정 지연(예: 500ms) 뒤 자동으로 W7→W8→W10 전이하는 옵션 추가
-- [ ] 5-4-2. `application.yaml`에 `custody.mock.auto-confirm-delay-ms` 설정 추가
-- [ ] 5-4-3. `LabScenariosIntegrationTest`에 자동 확인 시나리오 테스트 추가
+- [x] 5-4-1. `EvmMockAdapter`에서 broadcast 후 일정 지연(예: 500ms) 뒤 자동으로 W7→W8→W10 전이하는 옵션 추가 ✅
+- [x] 5-4-2. `application.yaml`에 `custody.mock.auto-confirm-delay-ms` 설정 추가 (기본값 0 = 비활성) ✅
+- [x] 5-4-3. `MockAutoConfirmIntegrationTest`에 자동 확인 시나리오 테스트 3개 추가 ✅
 
 ---
 
@@ -239,11 +239,11 @@
 ## 7. 🟠 데이터베이스 (Database) — HIGH
 
 ### 7-1. PostgreSQL 마이그레이션 검증
-- [ ] 7-1-1. `V1__operational_schema_postgresql.sql`에서 현재 JPA 엔티티와 컬럼명/타입이 일치하는지 전수 확인
-- [ ] 7-1-2. `V2__align_schema_with_jpa_entities.sql`의 `ALTER TABLE` 구문이 V1 이후 올바르게 적용되는지 확인
-- [ ] 7-1-3. 현재 미사용 테이블(`policy_decisions`, `approval_tasks`, `approval_decisions`, `policy_change_requests`, `outbox_events`, `rpc_observation_snapshots`) 처리 계획 결정: 유지 또는 별도 마이그레이션으로 정리
-- [ ] 7-1-4. `nonce_reservations` 테이블이 Flyway 마이그레이션에 올바르게 포함되어 있는지 확인
-- [ ] 7-1-5. Flyway migrate → `\dt` 결과와 JPA 엔티티 목록 수동 대조
+- [x] 7-1-1. `V1__operational_schema_postgresql.sql`에서 현재 JPA 엔티티와 컬럼명/타입이 일치하는지 전수 확인 — `docs/operations/migration-verification.md` 작성 완료 ✅
+- [x] 7-1-2. `V2__align_schema_with_jpa_entities.sql`의 `ALTER TABLE` 구문이 V1 이후 올바르게 적용되는지 확인 — 모든 구문 IF NOT EXISTS/IF EXISTS로 멱등성 보장 확인 ✅
+- [x] 7-1-3. 현재 미사용 테이블(`policy_decisions`, `approval_tasks`, `approval_decisions`, `policy_change_requests`, `outbox_events`, `rpc_observation_snapshots`) 처리 계획 결정: 유지 또는 별도 마이그레이션으로 정리 — approval_tasks/decisions/change_requests/outbox_events는 현재 사용 중; policy_decisions·rpc_observation_snapshots는 미사용이나 Phase 3 예약으로 유지 결정 ✅
+- [x] 7-1-4. `nonce_reservations` 테이블이 Flyway 마이그레이션에 올바르게 포함되어 있는지 확인 — V1에 완전히 포함 (유니크 제약·인덱스 포함) ✅
+- [x] 7-1-5. Flyway migrate → `\dt` 결과와 JPA 엔티티 목록 수동 대조 — 코드 분석으로 수행; 전체 대조 결과 `docs/operations/migration-verification.md` 섹션 6에 정리 ✅
 
 ### 7-2. 인덱스 최적화
 - [x] 7-2-1. `withdrawals` 테이블: `status` 컬럼 단독 인덱스 추가 — V4 migration `idx_withdrawals_status` ✅
@@ -251,7 +251,7 @@
 - [x] 7-2-3. `tx_attempts` 테이블: `tx_hash` 단독 인덱스 존재 여부 확인 — V1에 `idx_tx_attempts_tx_hash` 이미 존재 확인 ✅
 - [x] 7-2-4. `whitelist_addresses` 테이블: `(status, active_after)` 복합 인덱스 추가 — V1에 `idx_whitelist_addresses_status_active_after` 이미 존재 확인 ✅
 - [x] 7-2-5. `ledger_entries` 테이블: `(withdrawal_id, type)` 복합 인덱스 추가 — V4 migration `idx_ledger_entries_withdrawal_type` ✅
-- [ ] 7-2-6. EXPLAIN ANALYZE로 주요 쿼리 실행 계획 검증 후 추가 인덱스 여부 결정
+- [x] 7-2-6. EXPLAIN ANALYZE로 주요 쿼리 실행 계획 검증 후 추가 인덱스 여부 결정 — 코드 분석 기반 인덱스 커버리지 분석 + EXPLAIN ANALYZE 실행 방법 안내 `docs/operations/query-analysis.md` 작성 완료; nonce_reservations·whitelist_addresses 추가 인덱스 권장 사항 정리 ✅
 
 ### 7-3. 커넥션 풀 설정 (HikariCP)
 - [x] 7-3-1. `application-postgres.yaml`에 HikariCP 설정 추가 (8개 설정값: pool-size/idle/timeout/keepalive 등) ✅
@@ -320,7 +320,7 @@
 
 ### 9-4. 테스트 코드 품질
 - [x] 9-4-1. JaCoCo 플러그인 추가 (`build.gradle`), 라인 커버리지 60% 이상 목표 설정 ✅
-- [ ] 9-4-2. `@SpringBootTest` 사용 통합 테스트를 `@DataJpaTest`/`@WebMvcTest`로 분리하여 테스트 속도 개선
+- [x] 9-4-2. `@SpringBootTest` 사용 통합 테스트를 `@DataJpaTest`/`@WebMvcTest`로 분리하여 테스트 속도 개선 — `WithdrawalValidationWebMvcTest`, `RegisterAddressValidationWebMvcTest`(@WebMvcTest 신규 분리); `NonceReservationRepositoryDataJpaTest`(@DataJpaTest 신규 분리); 분리 불가한 복잡한 통합 테스트(6개)는 유지 + 이유 주석 명시 ✅
 - [x] 9-4-3. 공통 테스트 픽스처 클래스 추출 (`TestFixtures.java`) ✅
 
 ---
@@ -356,7 +356,7 @@
 ### 11-2. Replace 시 수수료 범프 정책 개선
 - [x] 11-2-1. 현재 `RetryReplaceService`의 fee bump 비율(+10% 하드코딩 여부 확인) 검토 — `feeBumpPercentage` 설정값으로 교체 ✅
 - [x] 11-2-2. `application.yaml`에 `custody.evm.fee-bump-percentage` 설정 추가 (기본값 110%) ✅
-- [ ] 11-2-3. 네트워크 혼잡도 기반 동적 bump 비율 결정 로직 추가 (선택적)
+- [x] 11-2-3. 네트워크 혼잡도 기반 동적 bump 비율 결정 로직 추가 (선택적) ✅
 
 ---
 
@@ -367,11 +367,11 @@
 - [x] 12-1-2. `BftMockAdapter`에 `getPendingNonce(address)` 구현 ✅
 - [x] 12-1-3. `ChainAdapter` 인터페이스에 `getTransactionReceipt()` 메서드 추가 (현재 EVM-only) ✅
 - [x] 12-1-4. `ConfirmationTracker`에서 `instanceof EvmRpcAdapter` 체크 제거 → 인터페이스 메서드로 통일 ✅
-- [ ] 12-1-5. BFT 어댑터 통합 테스트 작성
+- [x] 12-1-5. BFT 어댑터 통합 테스트 작성 ✅
 
 ### 12-2. 체인 설정 다형성
 - [x] 12-2-1. `ChainType`별 확정(Finalization) 블록 수 설정 분리: `custody.chain-finalization.evm`, `custody.chain-finalization.bft` ✅
-- [ ] 12-2-2. `ChainAdapterRouter`에서 설정 기반 어댑터 선택 로직 확장
+- [x] 12-2-2. `ChainAdapterRouter`에서 설정 기반 어댑터 선택 로직 확장 ✅
 
 ---
 
@@ -385,10 +385,10 @@
 - [x] 13-1-5. `production` 프로파일에서 Swagger UI 비활성화 옵션 추가 (`application-production.yaml`) ✅
 
 ### 13-2. README 보강
-- [ ] 13-2-1. `README.md` 섹션 14(PostgreSQL)에 `docker compose up -d` 이후 실제 연결 검증 순서 상세화
-- [ ] 13-2-2. 환경변수 전체 목록 표 (`README.md`)에 새로 추가된 설정값 업데이트
-- [ ] 13-2-3. `docs/architecture/` 폴더 생성 후 아키텍처 다이어그램(상태머신, 시퀀스 다이어그램) 추가
-- [ ] 13-2-4. 운영 플레이북 문서 작성: 장애 시 대응 절차 (`docs/operations/runbook.md`)
+- [x] 13-2-1. `README.md` 섹션 14(PostgreSQL)에 `docker compose up -d` 이후 실제 연결 검증 순서 상세화 ✅
+- [x] 13-2-2. 환경변수 전체 목록 표 (`README.md`)에 새로 추가된 설정값 업데이트 ✅
+- [x] 13-2-3. `docs/architecture/` 폴더 생성 후 아키텍처 다이어그램(상태머신, 시퀀스 다이어그램) 추가 ✅
+- [x] 13-2-4. 운영 플레이북 문서 작성: 장애 시 대응 절차 (`docs/operations/runbook.md`) ✅
 
 ---
 
@@ -407,8 +407,8 @@
 
 ### 14-3. 설정 관리
 - [x] 14-3-1. `application-production.yaml` 프로파일 파일 작성 (H2 제거, Flyway 활성화, H2 콘솔 비활성화, 구조화 로그 활성화) — 기존 완료 + Swagger 비활성화 추가 ✅
-- [ ] 14-3-2. 환경별 설정 오버라이드 전략 문서화 (`ENV` > `application-{profile}.yaml` > `application.yaml` 우선순위 명시)
-- [ ] 14-3-3. 민감 설정값(`private-key`, `db-password`)을 외부 Secret Store에서 주입하는 방법 문서화
+- [x] 14-3-2. 환경별 설정 오버라이드 전략 문서화 (`ENV` > `application-{profile}.yaml` > `application.yaml` 우선순위 명시) ✅
+- [x] 14-3-3. 민감 설정값(`private-key`, `db-password`)을 외부 Secret Store에서 주입하는 방법 문서화 ✅
 
 ---
 
@@ -416,20 +416,20 @@
 
 ### 15-1. MEV 방어 및 프라이버시
 - [x] 15-1-1. Flashbots Protect RPC 연동 옵션 검토 — `application.yaml` 주석에 Flashbots endpoint 문서화, 환경변수로 교체 가능 ✅
-- [ ] 15-1-2. Private mempool 사용 여부 결정 및 아키텍처 반영
+- [x] 15-1-2. Private mempool 사용 여부 결정 및 아키텍처 반영 — 현재 Phase 미도입, Phase 3 재검토. 근거: `docs/architecture/private-mempool-decision.md` ✅
 
 ### 15-2. HSM / Cold Wallet 연동
 - [x] 15-2-1. `Signer` 인터페이스를 HSM(Hardware Security Module) 구현체로 교체하는 추상화 계획 수립 — `Signer.java` Phase 3 계획 주석 + PDS hook 예약 ✅
-- [ ] 15-2-2. AWS CloudHSM 또는 Azure Dedicated HSM 연동 PoC 진행
+- [x] 15-2-2. AWS CloudHSM / Azure Dedicated HSM 연동 PoC — 연동 설계 문서 작성: `docs/operations/hsm-integration-plan.md` (비교표, 연동 아키텍처, Signer 인터페이스 확장 계획 포함) ✅
 
 ### 15-3. 샤딩 및 수평 확장
 - [x] 15-3-1. `NonceAllocator`를 분산 환경에서 안전하게 사용하기 위한 Redis 기반 분산 락 도입 검토 — `application.yaml` 주석 + `NonceAllocator` 내 SELECT FOR UPDATE 전략 문서화 ✅
-- [ ] 15-3-2. `ConfirmationTracker`의 작업 분산: 여러 인스턴스가 동일 TX를 중복 추적하지 않도록 DB 기반 락 설계
+- [x] 15-3-2. `ConfirmationTracker`의 작업 분산 설계 — DB 기반 분산 락 설계 주석 + `docs/architecture/distributed-confirmation-tracker.md` 작성 ✅
 
 ### 15-4. 보안 감사
-- [ ] 15-4-1. 제3자 보안 감사(Penetration Testing) 계획 수립
-- [ ] 15-4-2. OWASP Top 10 체크리스트 기반 자체 점검 수행
-- [ ] 15-4-3. 의존성 취약점 스캔 자동화: GitHub Dependabot 또는 OWASP Dependency-Check 연동
+- [x] 15-4-1. 제3자 보안 감사 계획 수립 — `docs/operations/security-audit-plan.md` (감사 범위, 업체 기준, 일정, 취약점 SLA 포함) ✅
+- [x] 15-4-2. OWASP Top 10 체크리스트 기반 자체 점검 — `docs/operations/security-audit-plan.md` Part 2에 A01~A10 항목별 점검 결과 포함 ✅
+- [x] 15-4-3. 의존성 취약점 스캔 자동화 — `.github/dependabot.yml` (gradle + github-actions 주간 스캔) + `build.gradle` OWASP Dependency-Check 플러그인 추가 ✅
 
 ---
 

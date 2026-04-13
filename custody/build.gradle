@@ -3,6 +3,10 @@ plugins {
 	id 'org.springframework.boot' version '3.5.0'
 	id 'io.spring.dependency-management' version '1.1.7'
 	id 'jacoco'
+	// 15-4-3: OWASP Dependency-Check — 의존성 취약점 자동 스캔
+	// 실행: ./gradlew dependencyCheckAnalyze
+	// 보고서: build/reports/dependency-check-report.html
+	id 'org.owasp.dependencycheck' version '10.0.4'
 }
 
 group = 'lab'
@@ -53,6 +57,8 @@ dependencies {
     testImplementation 'org.testcontainers:junit-jupiter'
     testImplementation 'org.testcontainers:postgresql'
     testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    // 5-4-3: Awaitility — 비동기 자동 확인 테스트용 (Spring Boot BOM 관리)
+    testImplementation 'org.awaitility:awaitility'
 }
 
 tasks.named('test') {
@@ -104,4 +110,26 @@ tasks.named('clean') {
     doFirst {
         delete 'logs'
     }
+}
+
+// 15-4-3: OWASP Dependency-Check 설정
+// NVD API key: https://nvd.nist.gov/developers/request-an-api-key
+// 환경변수 CUSTODY_NVD_API_KEY 설정 후 분석 속도 향상
+dependencyCheck {
+    // CVSS 점수 7.0 이상 발견 시 빌드 실패 (HIGH 이상)
+    failBuildOnCVSS = 7.0
+    suppressionFiles = ['dependency-check-suppressions.xml']
+    nvd {
+        apiKey = System.getenv('CUSTODY_NVD_API_KEY') ?: ''
+    }
+    analyzers {
+        // 불필요한 분석기 비활성화 (속도 향상)
+        assemblyEnabled = false
+        nuspecEnabled = false
+        nugetconfEnabled = false
+    }
+    formats = ['HTML', 'JSON']
+    outputDirectory = "${buildDir}/reports"
+    // CI에서는 --continue 옵션으로 실패 허용 가능
+    // ./gradlew dependencyCheckAnalyze --continue
 }

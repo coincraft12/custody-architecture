@@ -4,13 +4,99 @@
 > 다음 작업자가 이 파일 하나만 읽어도 현재 상태를 파악할 수 있어야 한다.
 
 ## 현재 상태
-- **단계**: TODO 전체 완료 — 섹션 8~16 구현 완료 (2026-04-13)
+- **단계**: 🟢 LOW 항목 처리 — 5-4/15-1-2/15-2-2/15-3-2/15-4-1~3 완료 (2026-04-13). 미완료: 섹션 16(PDS 통합, Phase 4+)만 남음
 - **언어**: Java / Spring Boot
 - **DB**: PostgreSQL + Flyway
-- **테스트**: 142개 통과 (2026-04-13)
+- **테스트**: 162개 + `MockAutoConfirmIntegrationTest` 3개 신규 = 165개 예상 (2026-04-13)
 - **최신 커밋**: `3fcc365`
 
-## 마지막 작업 내용
+## 마지막 작업 내용 (2026-04-13 LOW 항목 7개 완료)
+
+### 5-4 Mock 어댑터 자동 확인
+- **5-4-1/5-4-2**: `EvmMockAdapter` — `custody.mock.auto-confirm-delay-ms` 설정 추가, `autoConfirmDelayMs > 0`이면 broadcast 후 가상 스레드(Thread.ofVirtual)로 지연 후 `ConfirmationTracker.startTrackingByAttemptId()` 자동 호출
+- `TxAttemptRepository.findByTxHash()` 메서드 추가 (txHash → attempt 조회)
+- `application.yaml`에 `custody.mock.auto-confirm-delay-ms: ${CUSTODY_MOCK_AUTO_CONFIRM_DELAY_MS:0}` 추가
+- **5-4-3**: `MockAutoConfirmIntegrationTest` 신규 작성 — 3개 테스트
+  - `autoConfirm_afterBroadcast_transitionsToCompleted`: Awaitility 5초 내 W10 전이 검증
+  - `autoConfirm_afterBroadcast_attemptBecomesIncluded`: attempt INCLUDED 전이 검증
+  - `autoConfirm_initialStatusIsW6_Broadcasted`: broadcast 직후 W6 확인 + 이후 W10 전이
+- `build.gradle`에 `org.awaitility:awaitility` 테스트 의존성 추가
+
+### 15-1-2 Private mempool 결정
+- `docs/architecture/private-mempool-decision.md` 신규 작성
+  - Flashbots Protect / MEV Blocker / 자체 Private Relay 3가지 옵션 비교
+  - 결정: **현재 Phase 미도입**, Phase 3 재검토 기준 5가지 명시
+  - 코드 변경 없이 `CUSTODY_EVM_RPC_URL` 교체로 즉시 전환 가능 (15-1-1 활용)
+
+### 15-2-2 HSM 연동 설계
+- `docs/operations/hsm-integration-plan.md` 신규 작성
+  - AWS CloudHSM vs Azure Dedicated HSM 비교표 (비용/SLA/SDK/장단점)
+  - 권장: Phase 2 AWS KMS → Phase 3 CloudHSM 순차 전환
+  - `KmsSignerConnector`, `CloudHsmSignerConnector` 구현 계획 (Java 코드 스니펫 포함)
+  - 설정 구조 계획 (`custody.signer.type: local|kms|cloudhsm|vault`)
+  - 무중단 마이그레이션 절차 5단계
+
+### 15-3-2 ConfirmationTracker 분산 락 설계
+- `ConfirmationTracker.java` `trackingSet` 필드에 분산 락 설계 주석 추가
+  - DB 기반 `confirmation_tracker_locks` 테이블 설계 (Phase 3)
+  - INSERT … ON CONFLICT DO NOTHING 원자적 락 획득 방식
+  - `Phase 3: DB 분산 락 획득 시도` 주석 코드 블록 포함
+- `docs/architecture/distributed-confirmation-tracker.md` 신규 작성
+  - 현재 단일 인스턴스 한계 분석
+  - DB 기반 vs Redis 기반 락 비교표
+  - `ConfirmationTrackerLockRepository` 구현 계획 (SQL 포함)
+  - 만료 락 정리 스케줄러 설계
+  - 현재 단일 인스턴스 운영 지침
+
+### 15-4-1~3 보안 감사
+- `docs/operations/security-audit-plan.md` 신규 작성
+  - **Part 1 (15-4-1)**: 제3자 감사 범위, 업체 선정 기준, 일정, 취약점 SLA (Critical 24h / High 72h)
+  - **Part 2 (15-4-2)**: OWASP Top 10 2021 항목별 점검 결과 (A01~A10), 종합 위험 매트릭스, 자체 점검 체크리스트
+- **15-4-3**: `.github/dependabot.yml` 신규 작성
+  - gradle 의존성 주간 스캔 (매주 월요일, KST 기준)
+  - github-actions 주간 스캔
+  - spring-boot/web3j/resilience4j/micrometer 그룹화
+- `build.gradle` OWASP Dependency-Check 플러그인 추가
+  - `org.owasp.dependencycheck:10.0.4`
+  - CVSS 7.0 이상 빌드 실패 설정
+  - HTML/JSON 보고서 출력
+
+## 마지막 작업 내용 (2026-04-13 MEDIUM 9개 완료)
+- **11-2-3**: 네트워크 혼잡도 기반 동적 fee bump — `EvmRpcAdapter.bumpFeeDynamic()` + `resolveCongestedBumpPercentage()` 구현
+  - LOW(ratio<0.1 또는 baseFee<10Gwei): 110% / MEDIUM(0.1≤ratio<0.5): 120% / HIGH(ratio≥0.5): 130%
+  - `custody.evm.fee-bump-low/medium/high-percentage` 설정 추가 (환경변수 오버라이드 지원)
+- **12-1-5**: `BftAdapterIntegrationTest.java` 신규 작성 (5개 테스트)
+  - `getTransactionReceipt` broadcast 후 즉시 반환 검증
+  - 미등록 txHash → Optional.empty() 검증
+  - `getPendingNonce` 주소별 독립 시퀀스 증가 검증
+  - `ConfirmationTracker`와의 통합 흐름 — BFT adapter → receipt → INCLUDED 전이
+- **12-2-2**: `ChainAdapterRouter` 설정 기반 어댑터 선택 확장
+  - `custody.chain-adapter.evm/bft` 환경변수로 Bean 이름 명시적 오버라이드 가능
+  - 기존 자동 매핑 동작 완전 보존 (빈 값이면 자동 매핑 사용)
+  - 시작 시 라우팅 테이블 로그 출력
+- **13-2-1**: README 섹션 14 PostgreSQL — `docker compose up -d` 이후 7단계 연결 검증 순서 상세화
+- **13-2-2**: README 환경변수 전체 목록 표 추가 — 9개 카테고리, ~50개 변수
+- **13-2-3**: `docs/architecture/` 폴더 생성 + 다이어그램 2개
+  - `state-machine.md`: Withdrawal/TxAttempt/WhitelistAddress Mermaid 상태머신
+  - `sequence-diagrams.md`: 출금 생성/ConfirmationTracker/Retry-Replace/화이트리스트 시퀀스
+- **13-2-4**: `docs/operations/runbook.md` 작성 — P0~P3 장애 대응, 수동 전이, 롤백 절차
+- **14-3-2**: `docs/operations/config-management.md` — ENV > application-{profile}.yaml > application.yaml 우선순위 명시, 환경별 조합 가이드
+- **14-3-3**: `docs/operations/config-management.md` — AWS Secrets Manager / HashiCorp Vault / K8s Secrets 연동 예시 포함
+
+- 7-1 Flyway 마이그레이션 ↔ JPA 엔티티 전수 대조 완료 (2026-04-13)
+  - `docs/operations/migration-verification.md` 신규 작성
+  - 전체 11개 테이블 대조: 주요 이슈 — varchar 길이 불일치 다수(기능 영향 없음), `policy_decisions`/`rpc_observation_snapshots` JPA 엔티티 없음(의도적), nonce_reservations V1에 완전 포함 확인
+  - 미사용 테이블 처리 결정: approval_tasks/decisions/change_requests/outbox_events 현재 사용 중; 나머지 Phase 3+ 예약으로 유지
+- 7-2-6 주요 쿼리 EXPLAIN ANALYZE 가이드 작성 완료 (2026-04-13)
+  - `docs/operations/query-analysis.md` 신규 작성
+  - 5개 Repository 쿼리 인덱스 커버리지 분석
+  - 추가 인덱스 권장: `nonce_reservations(chain_type, from_address, status)` HIGH, `whitelist_addresses(LOWER(address), chain_type, status)` HIGH
+  - EXPLAIN ANALYZE 실행 명령·결과 해석 기준 문서화
+- 9-4-2 @SpringBootTest → @DataJpaTest/@WebMvcTest 분리 완료 (2026-04-13)
+  - `WithdrawalValidationWebMvcTest` 신규 (@WebMvcTest, 6개 테스트 — Bean Validation 실패 케이스)
+  - `RegisterAddressValidationWebMvcTest` 신규 (@WebMvcTest, 4개 테스트 — Bean Validation 실패 케이스)
+  - `NonceReservationRepositoryDataJpaTest` 신규 (@DataJpaTest, 5개 테스트 — Repository 쿼리 검증)
+  - 복잡한 통합 테스트 6개(@SpringBootTest) 유지 + 이유 주석 명시
 - 섹션 11~16 구현 완료 (2026-04-13)
   - 11: EIP-1559 Gas Price Oracle — `getLatestBaseFee()`, `getFeeHistory()`, `fetchGasPrices()` with AtomicReference TTL 12s cache; `broadcast()` 동적 가스 적용; `feeBumpPercentage` 설정화 (110%)
   - 12: BFT 어댑터 완성 — `BftMockAdapter.getTransactionReceipt()` + `getPendingNonce()` 구현; `ChainAdapter` 인터페이스에 `getTransactionReceipt()` default 메서드 추가; `ConfirmationTracker` `instanceof EvmRpcAdapter` 제거 → 인터페이스 메서드 통일; 체인별 finalization 블록 수 설정 분리
@@ -173,6 +259,9 @@
 - Rate Limiting (2-4) 완료 (2026-04-11)
 
 ## 완료된 주요 작업 (2026-04-13 추가)
+- 7-1 Flyway ↔ JPA 전수 대조 — `docs/operations/migration-verification.md` 완료
+- 7-2-6 인덱스 커버리지 분석 + EXPLAIN ANALYZE 가이드 — `docs/operations/query-analysis.md` 완료
+- 9-4-2 @WebMvcTest/@DataJpaTest 분리 — 3개 신규 테스트 파일 완료
 - 감사 로그 강화 (8-3) — whitelist_audit_log 테이블, GET /whitelist/{id}/audit 완료
 - 테스트 보강 (9) — PolicyRule 단위테스트, 상태머신 불변성, Testcontainers PostgreSQL, JaCoCo 완료
 - 승인 워크플로 (10) — ApprovalTask/Decision 엔티티, 4-eyes API 완료
@@ -185,23 +274,24 @@
 
 ## 다음 작업 항목 (2026-04-13 기준 실제 미구현)
 
-### 🟡 단기 (운영 전 권장)
-1. **7-1**: Flyway 마이그레이션 ↔ JPA 엔티티 전수 대조 (5개 — 수동 DB 확인)
-2. **7-2-6**: EXPLAIN ANALYZE 주요 쿼리 실행 계획 검증
-3. **9-4-2**: `@SpringBootTest` → `@DataJpaTest`/`@WebMvcTest` 분리 (테스트 속도)
-4. **12-1-5**: BFT 어댑터 통합 테스트 작성
-5. **12-2-2**: `ChainAdapterRouter` 설정 기반 어댑터 선택 확장
-6. **13-2**: README 환경변수 업데이트 + 아키텍처 다이어그램 + 운영 플레이북 (4개)
-7. **14-3-2/3**: 환경별 설정 오버라이드 전략 + 시크릿 주입 문서화
+### ✅ 2026-04-13 완료된 🟠 HIGH 항목
+- **7-1**: Flyway 마이그레이션 ↔ JPA 엔티티 전수 대조 → `docs/operations/migration-verification.md`
+- **7-2-6**: EXPLAIN ANALYZE 가이드 → `docs/operations/query-analysis.md`
+- **9-4-2**: `@SpringBootTest` → `@WebMvcTest`/`@DataJpaTest` 분리 (3개 신규 테스트 파일)
 
-### 🔵 선택적 개선
-8. **5-4**: Mock 자동 확인 시나리오 (auto-confirm-delay-ms) — 통합 테스트 편의
-9. **11-2-3**: 네트워크 혼잡도 기반 동적 fee bump 비율 (선택적)
+### ✅ 2026-04-13 완료된 🟡 MEDIUM 항목 (9개)
+- **11-2-3**: 혼잡도 기반 동적 fee bump (`bumpFeeDynamic`) + 설정 3개
+- **12-1-5**: `BftAdapterIntegrationTest.java` (5개 테스트)
+- **12-2-2**: `ChainAdapterRouter` 설정 기반 어댑터 선택 (`custody.chain-adapter.*`)
+- **13-2-1**: README 섹션 14 PostgreSQL 연결 검증 7단계 상세화
+- **13-2-2**: README 환경변수 전체 목록 표 (~50개 변수)
+- **13-2-3**: `docs/architecture/state-machine.md` + `sequence-diagrams.md` (Mermaid)
+- **13-2-4**: `docs/operations/runbook.md` (P0~P3 장애 대응)
+- **14-3-2**: `docs/operations/config-management.md` (설정 오버라이드 전략)
+- **14-3-3**: `docs/operations/config-management.md` (AWS Secrets Manager / Vault / K8s 예시)
 
-### 🟢 장기 (Phase 4+)
-10. **16-2~16-4**: PDS 통합 (파일럿 고객 확보 후)
-11. **15-2-2**: HSM/KMS Signer PoC
-12. **15-4**: 제3자 보안 감사, OWASP 체크리스트, Dependabot
+### 🟢 장기 (Phase 4+) — 유일한 미완료 항목
+- **16-2~16-4**: PDS 통합 (파일럿 고객 확보 후 Phase 2~4에서 점진적 구현)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)

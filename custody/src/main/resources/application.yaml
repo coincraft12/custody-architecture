@@ -112,6 +112,12 @@ custody:
   chain-finalization:
     evm: ${CUSTODY_CHAIN_FINALIZATION_EVM:0}
     bft: ${CUSTODY_CHAIN_FINALIZATION_BFT:0}
+  # 12-2-2: 체인 타입별 어댑터 Bean 이름 오버라이드 (비워두면 자동 매핑 사용)
+  # 예시: custody.chain-adapter.evm=evmRpcAdapter (RPC 모드 강제)
+  #       custody.chain-adapter.bft=bftMockAdapter (Mock 모드 강제)
+  chain-adapter:
+    evm: ${CUSTODY_CHAIN_ADAPTER_EVM:}
+    bft: ${CUSTODY_CHAIN_ADAPTER_BFT:}
   whitelist:
     default-hold-hours: ${CUSTODY_WHITELIST_HOLD_HOURS:48}
     scheduler-delay-ms: ${CUSTODY_WHITELIST_SCHEDULER_DELAY_MS:60000}
@@ -131,6 +137,12 @@ custody:
     high-risk-threshold-eth: ${CUSTODY_APPROVAL_HIGH_RISK_THRESHOLD_ETH:1.0}
     # 승인 태스크 만료 시간 (시간)
     expiry-hours: ${CUSTODY_APPROVAL_EXPIRY_HOURS:24}
+  # 5-4-2: Mock 어댑터 자동 확인 지연 시간 (ms). 0 = 비활성 (기본값).
+  # 0보다 큰 값이면 broadcast 후 해당 시간(ms) 지연 뒤 ConfirmationTracker를 통해 자동으로
+  # W7_INCLUDED → W8_SAFE_FINALIZED → W10_COMPLETED 전이를 수행한다.
+  # 통합 테스트 자동화에 유용하며, 운영 환경에서는 반드시 0으로 유지해야 한다.
+  mock:
+    auto-confirm-delay-ms: ${CUSTODY_MOCK_AUTO_CONFIRM_DELAY_MS:0}
   evm:
     rpc-url: ${CUSTODY_EVM_RPC_URL:https://ethereum-sepolia-rpc.publicnode.com}
     # 4-3-1: 폴백 RPC URL 목록 (쉼표 구분, 빈 값이면 단일 프로바이더)
@@ -142,6 +154,13 @@ custody:
     read-timeout-seconds: ${CUSTODY_EVM_READ_TIMEOUT_SECONDS:30}
     # 11-2-2: fee bump percentage for replace (EIP-1559 minimum: +10%)
     fee-bump-percentage: ${CUSTODY_EVM_FEE_BUMP_PERCENTAGE:110}
+    # 11-2-3: 네트워크 혼잡도 기반 동적 fee bump 비율
+    # LOW: baseFee < 10Gwei 또는 priorityFee/baseFee < 0.1
+    # MEDIUM: 0.1 ≤ ratio < 0.5
+    # HIGH: ratio ≥ 0.5
+    fee-bump-low-percentage: ${CUSTODY_EVM_FEE_BUMP_LOW_PERCENTAGE:110}
+    fee-bump-medium-percentage: ${CUSTODY_EVM_FEE_BUMP_MEDIUM_PERCENTAGE:120}
+    fee-bump-high-percentage: ${CUSTODY_EVM_FEE_BUMP_HIGH_PERCENTAGE:130}
     # 15-1-1: MEV protection — set CUSTODY_EVM_RPC_URL to Flashbots Protect endpoint to enable
     # Flashbots: https://rpc.flashbots.net (mainnet), https://rpc-sepolia.flashbots.net (Sepolia)
     # Leave as-is for standard mempool. Override via env var without code changes.

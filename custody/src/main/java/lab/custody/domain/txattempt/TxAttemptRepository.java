@@ -15,4 +15,7 @@ public interface TxAttemptRepository extends JpaRepository<TxAttempt, UUID> {
     List<TxAttempt> findByAttemptGroupKeyOrderByAttemptNoAsc(String attemptGroupKey);
 
     Optional<TxAttempt> findFirstByWithdrawalIdAndCanonicalTrue(UUID withdrawalId);
+
+    // 5-4-1: Mock 어댑터 자동 확인 — txHash로 attempt 조회
+    Optional<TxAttempt> findByTxHash(String txHash);
 }

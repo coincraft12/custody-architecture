@@ -49,6 +49,20 @@ public class ConfirmationTracker {
     private final int finalizationTimeoutMinutes;
 
     private final AtomicInteger activeTasks = new AtomicInteger(0);
+    /**
+     * 5-3-3: JVM 내 중복 추적 방지 Set.
+     *
+     * <p>15-3-2: 단일 인스턴스 환경에서는 이 Set으로 중복 추적이 완전히 방지된다.
+     * 다중 인스턴스(수평 확장) 환경에서는 각 인스턴스가 독립적인 Set을 보유하므로
+     * 동일 TX를 복수 인스턴스가 중복 추적할 수 있다.
+     *
+     * <p>Phase 3 분산 락 설계: DB 기반 {@code confirmation_tracker_locks} 테이블을 통한
+     * INSERT … ON CONFLICT DO NOTHING 원자적 락 획득. 인스턴스 크래시 시 TTL 만료 후
+     * 다른 인스턴스가 재획득. 설계 상세: {@code docs/architecture/distributed-confirmation-tracker.md}
+     *
+     * <p>현재 운영 지침: 수평 확장 시 {@code CUSTODY_CONFIRMATION_TRACKER_AUTO_START=false}
+     * 인스턴스에서는 추적 비활성화하고, 단일 워커 인스턴스에서만 추적 담당.
+     */
     private final Set<UUID> trackingSet = ConcurrentHashMap.newKeySet();
     private final Counter timeoutCounter;
     private final Counter finalizationTimeoutCounter;
