@@ -143,6 +143,12 @@ custody:
   # 통합 테스트 자동화에 유용하며, 운영 환경에서는 반드시 0으로 유지해야 한다.
   mock:
     auto-confirm-delay-ms: ${CUSTODY_MOCK_AUTO_CONFIRM_DELAY_MS:0}
+  tron:
+    enabled: ${CUSTODY_TRON_ENABLED:false}
+    rpc-url: ${CUSTODY_TRON_RPC_URL:https://api.nileex.io}
+    api-key: ${CUSTODY_TRON_API_KEY:}
+    # private-key: set via CUSTODY_TRON_PRIVATE_KEY env var (hex format, no 0x prefix)
+    private-key: ${CUSTODY_TRON_PRIVATE_KEY:}
   bitcoin:
     enabled: ${CUSTODY_BITCOIN_ENABLED:false}
     network: ${CUSTODY_BITCOIN_NETWORK:regtest}
