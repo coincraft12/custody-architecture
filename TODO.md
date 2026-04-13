@@ -540,3 +540,538 @@
 > - 1-2-6 (`RetryReplaceService.retry()`에서 새 nonce 예약 후 이전 예약 release 처리)
 > - 1-2-7 (`RetryReplaceService.replace()`에서 기존 committed reservation 재사용/rebind 처리)
 > - 1-2-4는 현재 DB UNIQUE 제약 + `DataIntegrityViolationException` 재시도로 부분 대응 중이며, `ON CONFLICT DO NOTHING` / `SELECT FOR UPDATE` 수준의 명시적 구현은 미완료
+
+---
+
+## 17. 🔴 ChainAdapter 인터페이스 재설계 — CRITICAL
+
+> **코드 현황 확인 (2026-04-13):**
+> - `ChainAdapter`: `broadcast(BroadcastCommand)` + `getChainType()` + `getTransactionReceipt()` (default empty)
+> - `BroadcastCommand`: `nonce`, `maxPriorityFeePerGas`, `maxFeePerGas` — EVM 전용 필드 포함
+> - `ConfirmationTracker.waitForFinalization()` line 299: `instanceof EvmRpcAdapter` 체크 여전히 존재
+> - `ChainType` enum: `{EVM, BFT}` — BITCOIN/TRON/SOLANA 미포함
+> - `Signer`: `sign(RawTransaction tx, long chainId)` — web3j 타입 직접 의존, EVM 전용
+
+### 17-0. 선행 작업 — ChainType enum 확장
+- [ ] 17-0-1. `ChainType` enum에 `BITCOIN`, `TRON`, `SOLANA` 추가
+- [ ] 17-0-2. `ChainAdapterRouter` 생성자의 하드코딩된 `EVM`/`BFT` 오버라이드 설정을 `Map<ChainType, String>` 기반으로 교체 (`custody.chain-adapter.bitcoin:`, `custody.chain-adapter.tron:` 등)
+- [ ] 17-0-3. `CreateWithdrawalRequest`의 chainType 파싱 로직에 신규 체인 타입 추가
+
+### 17-1. PreparedTx sealed interface 설계
+> `prepareSend()` → `broadcast()` 파이프라인에서 체인별로 완전히 다른 데이터 구조 필요.
+> EVM: signed hex + nonce / Bitcoin: selected UTXOs + signed raw tx + change address / Solana: serialized tx + durable nonce pubkey
+- [ ] 17-1-1. `PreparedTx` sealed interface 정의:
+  - `EvmPreparedTx(String signedHexTx, long nonce, BigInteger maxFeePerGas, BigInteger maxPriorityFeePerGas)`
+  - `BitcoinPreparedTx(List<UtxoRef> selectedUtxos, byte[] signedRawTx, String changeAddress, long feeSat)`
+  - `TronPreparedTx(byte[] signedTxBytes, long expirationMs)` — TRON 60초 만료 타임스탬프 포함
+  - `SolanaPreparedTx(byte[] serializedTx, String nonceAccountPubkey, String recentBlockhash)`
+
+### 17-2. 공통 인터페이스 재정의
+- [ ] 17-2-1. `ChainAdapter` 인터페이스 4-method로 재정의:
+  - `PreparedTx prepareSend(SendRequest)` — 체인별 선행 작업 (nonce 예약/UTXO 선택/blockhash 조회) + 서명
+  - `BroadcastResult broadcast(PreparedTx)` — sealed type 분기로 체인별 처리
+  - `TxStatusSnapshot getTxStatus(String txHash)` — 체인 조회 후 표준 상태 반환
+  - `HeadsSnapshot getHeads()` — 최신/안전/완결 헤드 조회
+  - `Set<ChainAdapterCapability> capabilities()` — 체인 기능 선언
+- [ ] 17-2-2. `SendRequest` 공통 DTO: `chainType`, `asset`, `toAddress`, `amountRaw` (최소 단위 정수), `fromWalletId`, `idempotencyKey`, `feePolicyId`
+- [ ] 17-2-3. `TxStatusSnapshot` DTO:
+  - `status`: `UNKNOWN / PENDING / INCLUDED / SAFE / FINALIZED / FAILED / DROPPED / REPLACED`
+  - `blockNumber`: `Long` (nullable — UTXO 체인은 block height, Solana는 slot, EVM은 block number)
+  - `confirmations`: `Integer` (nullable)
+  - `revertReason`: `String` (nullable — EVM reverted tx용)
+- [ ] 17-2-4. `HeadsSnapshot` DTO: `latestBlock`, `safeBlock` (nullable), `finalizedBlock` (nullable), `timestampMs`
+- [ ] 17-2-5. `ChainAdapterCapability` enum: `ACCOUNT_NONCE`, `FINALIZED_HEAD`, `REPLACE_TX`, `UTXO_MODEL`, `DURABLE_NONCE`
+
+### 17-3. Signer 인터페이스 chain-agnostic 전환
+> **코드 현황**: `Signer.sign(RawTransaction tx, long chainId)` — web3j `RawTransaction` 타입에 직접 의존.
+> Bitcoin/TRON/Solana Signer 구현 불가 상태.
+- [ ] 17-3-1. `Signer` 인터페이스 교체:
+  - `byte[] signRaw(byte[] txBytes)` — 체인이 직렬화한 바이트에 서명, 서명 바이트만 반환
+  - `String getPublicKeyHex()` — 공개키 hex (각 체인이 주소로 변환)
+  - `ChainType getChainType()` — 이 Signer가 담당하는 체인
+  - 기존 `String getAddress()` 유지 (EVM 주소용)
+  - 기존 `Optional<String> getRecoveryKeyPdsId()` 유지
+- [ ] 17-3-2. `EvmSigner` — 기존 `sign(RawTransaction, chainId)` 내부 유지하되, 외부 인터페이스는 `signRaw(byte[])` 구현 (web3j RLP 인코딩 → signRaw 위임)
+- [ ] 17-3-3. `SignerRegistry` 클래스 작성 — `(tenantId, chainType)` → `Signer` 인스턴스 라우팅 (섹션 24와 연동)
+
+### 17-4. 기존 EVM 어댑터 마이그레이션
+- [ ] 17-4-1. `EvmRpcAdapter.prepareSend()` 구현:
+  - EVM ETH 전송: nonce 예약 + fee 견적 + `RawTransaction.createEtherTransaction()` 빌드 + 서명 → `EvmPreparedTx`
+  - EVM ERC-20 전송: nonce 예약 + fee 견적 + ABI 인코딩된 `transfer()` data + `RawTransaction.createTransaction()` 빌드 + 서명 → `EvmPreparedTx` (**섹션 21과 연동**)
+- [ ] 17-4-2. `EvmRpcAdapter.broadcast(PreparedTx)` — `EvmPreparedTx` 타입 체크 + `ethSendRawTransaction()`
+- [ ] 17-4-3. `EvmRpcAdapter.getTxStatus()` — `getTransactionReceipt()` 결과를 `TxStatusSnapshot`으로 변환 (revertReason 포함)
+- [ ] 17-4-4. `EvmRpcAdapter.getHeads()` — `ethBlockNumber()` + `eth_getBlockByNumber("safe")` + `eth_getBlockByNumber("finalized")` → `HeadsSnapshot`
+- [ ] 17-4-5. 기존 `getPendingNonce()` public → package-private (또는 internal), `prepareSend()` 내부에서만 호출
+- [ ] 17-4-6. 기존 `getTransactionReceipt()` 인터페이스 메서드 제거 (getTxStatus로 완전 대체)
+
+### 17-5. ConfirmationTracker 마이그레이션
+- [ ] 17-5-1. `trackAttemptInternal()` — `adapter.getTransactionReceipt()` → `adapter.getTxStatus()` 교체
+- [ ] 17-5-2. `waitForFinalization()` 시그니처 변경: `TransactionReceipt receipt` → `TxStatusSnapshot includedStatus` (blockNumber 추출)
+- [ ] 17-5-3. **`instanceof EvmRpcAdapter` 체크 완전 제거** — `adapter.getHeads().latestBlock()`으로 교체
+- [ ] 17-5-4. `finalizationBlockCount` 하드코딩 → `FinalityPolicy` 조회로 교체 (17-6 연동)
+- [ ] 17-5-5. web3j `TransactionReceipt` import 완전 제거 검증
+
+### 17-6. FinalityPolicy 엔진
+- [ ] 17-6-1. `finality_policies` 테이블 — `chainType`, `tier(LOW/MEDIUM/HIGH)`, `minConfirmations`, `requireSafeHead`, `requireFinalizedHead`, `enabled`
+- [ ] 17-6-2. Flyway 마이그레이션 작성 (V7__finality_policy.sql)
+- [ ] 17-6-3. `FinalityPolicy` JPA 엔티티 + `FinalityPolicyRepository`
+- [ ] 17-6-4. `ConfirmationTracker` — `FinalityPolicyRepository`에서 정책 조회 후 판정
+- [ ] 17-6-5. seed 데이터 — EVM: LOW=1확인, MEDIUM=safe head, HIGH=finalized head
+- [ ] 17-6-6. seed 데이터 — Bitcoin: LOW=1확인, MEDIUM=3확인, HIGH=6확인
+- [ ] 17-6-7. seed 데이터 — TRON: LOW=1확인, MEDIUM=19확인(DPOS 기준), HIGH=19확인
+- [ ] 17-6-8. seed 데이터 — Solana: LOW=confirmed(32 votes), HIGH=finalized(~32 slots)
+
+---
+
+## 18. 🔴 ERC-20 토큰 전송 — CRITICAL
+
+> **코드 현황**: `EvmRpcAdapter.broadcast()`는 `RawTransaction.createEtherTransaction()` 전용.
+> `GAS_LIMIT = 21_000` 하드코딩. USDC/USDT 전송 불가 상태.
+> 이 섹션 없이는 EVM 기반 토큰 커스터디 자체가 불가.
+
+### 18-1. ABI 인코딩 유틸리티
+- [ ] 18-1-1. `Erc20TransferEncoder` 유틸 클래스 작성:
+  - `encodeTransfer(String toAddress, BigInteger amount)` → `String hexData` (ERC-20 `transfer(address,uint256)` ABI 인코딩)
+  - function selector: `0xa9059cbb`
+  - address padding: 32바이트 좌패딩
+  - amount padding: 32바이트 big-endian
+- [ ] 18-1-2. 단위 테스트 — USDC 100 전송 ABI 인코딩 결과값 검증 (알려진 hex와 비교)
+
+### 18-2. EvmRpcAdapter ERC-20 지원
+- [ ] 18-2-1. `prepareSend()` 내 asset 분기 로직:
+  - asset == 네이티브(ETH): `RawTransaction.createEtherTransaction()`, gasLimit=21,000
+  - asset == ERC-20: `RawTransaction.createTransaction()`, to=컨트랙트주소, value=0, data=`Erc20TransferEncoder.encodeTransfer()`, gasLimit=`supported_assets.defaultGasLimit` 조회 (섹션 21 연동)
+- [ ] 18-2-2. `SupportedAsset`에서 컨트랙트 주소 + gasLimit 조회 — `AssetRegistryService.getAsset(chainType, symbol)` 호출
+- [ ] 18-2-3. 출금 amount 단위 처리 — `amountRaw`는 토큰 최소 단위 정수 (USDC: 6 decimals, ETH: 18 decimals). `WithdrawalService` ETH→Wei 변환 (`ethToWei()`)을 asset-agnostic으로 교체
+- [ ] 18-2-4. ERC-20 전송 단위 테스트 — Mock RPC로 `eth_sendRawTransaction` 호출 시 data 필드에 올바른 ABI 인코딩 포함 검증
+- [ ] 18-2-5. ERC-20 전송 통합 테스트 — EvmMockAdapter 또는 Hardhat 로컬넷에서 실제 ERC-20 컨트랙트 배포 후 전송 검증
+
+### 18-3. 출금 amount 단위 정책 명확화
+- [ ] 18-3-1. API 스펙 문서화 — `CreateWithdrawalRequest.amount`는 항상 최소 단위 정수 (wei / satoshi / lamport 등). README + Swagger에 명시
+- [ ] 18-3-2. `WithdrawalService.ethToWei()` 제거 또는 `toMinUnit()`으로 rename — 실제로는 그냥 pass-through여야 함 (호출자가 이미 최소 단위로 전달)
+
+---
+
+## 19. 🟠 Bitcoin 어댑터 — HIGH
+
+> **전제**: 섹션 17 완료 후 진행. `ChainType.BITCOIN`, `PreparedTx` sealed interface, Signer 재설계 완료 상태.
+
+### 19-1. 의존성 및 기초
+- [ ] 19-1-1. `bitcoinj-core:0.16.x` 의존성 추가 (build.gradle)
+- [ ] 19-1-2. `BitcoinNetworkParams` 설정 빈 — `custody.bitcoin.network: mainnet|testnet|regtest` 환경변수 분기
+- [ ] 19-1-3. Bitcoin RPC 연결 설정 — `custody.bitcoin.rpc-url`, `custody.bitcoin.rpc-user`, `custody.bitcoin.rpc-password`
+- [ ] 19-1-4. Bitcoin RPC HTTP 클라이언트 — JSON-RPC 2.0 래퍼 클래스 작성 (Spring `RestClient` 기반)
+
+### 19-2. UTXO 잠금 테이블 (선행 필요)
+> UTXO 이중 사용 방지는 DB 잠금이 선행되어야 `BitcoinAdapter` 구현 가능.
+- [ ] 19-2-1. `utxo_locks` 테이블 — `id`, `txid`, `vout`, `address`, `amountSat`, `withdrawalId`, `status(LOCKED/RELEASED/EXPIRED)`, `createdAt`, `expiresAt`
+- [ ] 19-2-2. Flyway 마이그레이션 (V8__utxo_locks.sql) — `UNIQUE(txid, vout)` 제약
+- [ ] 19-2-3. `UtxoLock` JPA 엔티티 + `UtxoLockRepository`
+- [ ] 19-2-4. `UtxoLockCleaner` — 만료된 LOCKED 잠금 EXPIRED 처리 스케줄러
+
+### 19-3. BitcoinAdapter 구현
+- [ ] 19-3-1. `BitcoinAdapter implements ChainAdapter` 클래스 작성
+- [ ] 19-3-2. `prepareSend()`:
+  - `listunspent` RPC로 UTXO 목록 조회
+  - `utxo_locks` 테이블에서 이미 잠긴 UTXO 제외
+  - Largest-first UTXO 선택 (total ≥ amount + estimated_fee)
+  - `estimatesmartfee` RPC로 sat/vbyte 견적
+  - 잔돈 주소(change address) 계산: input 합계 - amount - fee
+  - **dust check**: 잔돈 < 546 sat이면 수수료에 흡수 (별도 output 생성 안 함)
+  - 선택된 UTXO `utxo_locks`에 INSERT (UNIQUE 제약으로 race condition 방지)
+  - `BitcoinSigner.signUtxos()` 호출 → `BitcoinPreparedTx`
+- [ ] 19-3-3. `broadcast()` — `sendrawtransaction` RPC 호출, 실패 시 UTXO 잠금 해제
+- [ ] 19-3-4. `getTxStatus()` — `gettransaction` RPC → confirmation 수 → `TxStatusSnapshot`
+- [ ] 19-3-5. `getHeads()` — `getblockchaininfo` → latestBlock (Bitcoin은 safe/finalized 개념 없음 → null)
+- [ ] 19-3-6. `capabilities()` — `{UTXO_MODEL, REPLACE_TX}` (RBF 지원)
+
+### 19-4. BitcoinSigner 구현
+- [ ] 19-4-1. `BitcoinSigner implements Signer` — `signRaw()` + bitcoinj `Transaction` 빌드
+- [ ] 19-4-2. 선택된 UTXO 각각 서명 — P2WPKH (bech32 `bc1...`) 기본 지원
+- [ ] 19-4-3. 서명 완료 raw tx hex 반환
+
+### 19-5. Bitcoin RBF (Replace-by-Fee)
+> stuck Bitcoin 트랜잭션 처리. EVM의 RetryReplaceService와 별도 구현.
+- [ ] 19-5-1. `BitcoinRetryService` 클래스 작성
+- [ ] 19-5-2. 동일 UTXO + 더 높은 수수료(+30% 이상) + RBF 시그널(`sequence=0xFFFFFFFD`) 재서명 후 브로드캐스트
+- [ ] 19-5-3. 원본 tx가 이미 confirm됐으면 replace 시도 차단 (getTxStatus 확인)
+- [ ] 19-5-4. `RetryReplaceService`가 `ChainType`별로 라우팅하도록 확장 (EVM → 기존 로직, BITCOIN → `BitcoinRetryService`)
+
+### 19-6. 주소 검증
+- [ ] 19-6-1. Bitcoin 주소 포맷 검증 유틸 — P2PKH(`1...`), P2SH(`3...`), bech32(`bc1q...`), Taproot(`bc1p...`) / testnet(`m/n`, `tb1...`)
+- [ ] 19-6-2. `CreateWithdrawalRequest` chainType=BITCOIN 시 Bitcoin 주소 검증 분기
+
+### 19-7. 테스트
+- [ ] 19-7-1. `BitcoinAdapter` 단위 테스트 — Mock RPC 응답으로 UTXO 선택, 수수료 계산, dust 처리 검증
+- [ ] 19-7-2. UTXO 이중 사용 방지 동시성 테스트 — 동일 UTXO에 병렬 `prepareSend()` 호출 시 UNIQUE 제약으로 차단 검증
+- [ ] 19-7-3. RBF 테스트 — regtest 환경에서 낮은 수수료 tx 브로드캐스트 후 RBF 치환 검증
+
+---
+
+## 20. 🟠 TRON 어댑터 — HIGH
+
+> USDT 거래량의 상당 부분이 TRON 네트워크(TRC-20). **전제**: 섹션 17 완료.
+
+### 20-1. TRON 기초
+- [ ] 20-1-1. TRON Java SDK (tronj) 또는 HTTP REST API 클라이언트 구현 결정 — tronj 라이브러리 유지보수 상태 확인 후 직접 HTTP 구현 고려
+- [ ] 20-1-2. TRON Full Node 연결 설정 — `custody.tron.rpc-url`, `custody.tron.api-key` (TronGrid API Key 필수)
+- [ ] 20-1-3. TRON 주소 포맷 검증 — Base58Check, 첫 글자 `T`, 34자
+
+### 20-2. TronAdapter 구현
+- [ ] 20-2-1. `TronAdapter implements ChainAdapter` 작성
+- [ ] 20-2-2. `prepareSend()`:
+  - TRX 전송: `/wallet/createtransaction` API 호출
+  - TRC-20 전송: `/wallet/triggersmartcontract` API 호출 (`transfer(address,uint256)` ABI 인코딩)
+  - **트랜잭션 만료 처리**: TRON tx는 생성 시점에서 `expiration = now + 60_000ms` 포함. `TronPreparedTx`에 `expirationMs` 저장
+  - bandwidth/energy 견적
+- [ ] 20-2-3. `broadcast()`:
+  - 트랜잭션 만료 검증: `System.currentTimeMillis() > expirationMs - 5000`이면 `prepareSend()` 재호출
+  - `/wallet/broadcasttransaction` API 호출
+  - `BANDWIDTH_ERROR` / `ENERGY_INSUFFICIENT` 에러 → `BroadcastRejectedException` (재시도 불가 타입 명시)
+- [ ] 20-2-4. `getTxStatus()` — `/wallet/gettransactionbyid` → confirmation 조회
+- [ ] 20-2-5. `getHeads()` — `/wallet/getnowblock` → latestBlock (TRON은 finalized 없음)
+- [ ] 20-2-6. `capabilities()` — `{ACCOUNT_NONCE}` (TRON은 ref_block 기반이라 nonce와 유사한 개념 있음)
+
+### 20-3. TronSigner 구현
+- [ ] 20-3-1. `TronSigner implements Signer` — secp256k1 서명 (EVM과 같은 곡선, 직렬화 방식 다름)
+- [ ] 20-3-2. TRON 트랜잭션 직렬화: protobuf `Transaction.raw_data` 해시(SHA256) → 서명
+- [ ] 20-3-3. `signRaw(byte[] rawDataBytes)` → 65바이트 서명 반환
+
+### 20-4. 테스트
+- [ ] 20-4-1. `TronAdapter` 단위 테스트 — Mock API 응답, TRC-20 ABI 인코딩 검증
+- [ ] 20-4-2. 트랜잭션 만료 처리 테스트 — 만료된 `TronPreparedTx`로 `broadcast()` 호출 시 재생성 흐름 검증
+- [ ] 20-4-3. Nile testnet 연동 통합 테스트 (optional — 환경 있을 때)
+
+---
+
+## 21. 🟡 Solana 어댑터 — MEDIUM
+
+> **전제**: 섹션 17 완료. Ed25519 키, Durable Nonce, ATA 복잡도로 인해 TRON보다 후순위.
+
+### 21-1. Solana 기초
+- [ ] 21-1-1. `solanaj` 라이브러리 또는 HTTP RPC 직접 구현 결정
+- [ ] 21-1-2. Solana RPC 연결 설정 — `custody.solana.rpc-url`, `custody.solana.ws-url` (선택)
+- [ ] 21-1-3. Solana 주소 포맷 검증 — Base58, 32바이트 공개키 (43-44자)
+
+### 21-2. Durable Nonce Account 사전 준비
+> Solana는 최근 blockhash 기반 tx가 ~2분 내 expire. 커스터디는 Durable Nonce 필수.
+- [ ] 21-2-1. Durable Nonce Account 생성 운영 절차 문서화 (`docs/operations/solana-nonce-setup.md`)
+  - 체인당 N개 nonce account 필요 (출금 동시성만큼)
+  - 각 nonce account에 최소 rent-exempt SOL 예치 필요
+- [ ] 21-2-2. `solana_nonce_accounts` 테이블 — `pubkey`, `authority`, `currentNonce`, `status(AVAILABLE/IN_USE/STALE)`, `lastUsedAt`
+- [ ] 21-2-3. `SolanaNonceAccountPool` 서비스 — 사용 가능한 nonce account 대여/반납 (DB SELECT FOR UPDATE)
+
+### 21-3. SolanaAdapter 구현
+- [ ] 21-3-1. `SolanaAdapter implements ChainAdapter` 작성
+- [ ] 21-3-2. `prepareSend()`:
+  - `SolanaNonceAccountPool`에서 nonce account 대여
+  - SOL 전송: SystemProgram.transfer instruction 빌드
+  - SPL Token 전송:
+    - 수신자 ATA 존재 확인 (`getAccountInfo`)
+    - ATA 없으면 `createAssociatedTokenAccountInstruction` 포함 (비용 ~0.002 SOL 발신자 부담)
+  - `ComputeBudgetProgram.setComputeUnitPrice()` instruction 추가 (priority fee)
+  - `AdvanceNonceAccount` instruction 첫 번째에 삽입
+  - `SolanaSigner.sign()` 호출 → `SolanaPreparedTx`
+- [ ] 21-3-3. `broadcast()` — `sendTransaction` RPC
+- [ ] 21-3-4. `getTxStatus()` — `getSignatureStatuses` → `processed/confirmed/finalized` 매핑
+- [ ] 21-3-5. `getHeads()` — `getSlot(confirmed)` + `getSlot(finalized)`
+- [ ] 21-3-6. `capabilities()` — `{DURABLE_NONCE, FINALIZED_HEAD}`
+
+### 21-4. SolanaSigner 구현
+- [ ] 21-4-1. `SolanaSigner implements Signer` — Ed25519 서명 (`TweetNaCl` 또는 BouncyCastle `Ed25519`)
+- [ ] 21-4-2. `signRaw(byte[] messageBytes)` → 64바이트 Ed25519 서명
+
+### 21-5. 테스트
+- [ ] 21-5-1. `SolanaAdapter` 단위 테스트
+- [ ] 21-5-2. ATA 미존재 시 createATA instruction 포함 검증
+- [ ] 21-5-3. Solana devnet 통합 테스트 (optional)
+
+---
+
+## 22. 🟠 자산 레지스트리 (Asset Registry) — HIGH
+
+> **이 섹션은 섹션 18(ERC-20 전송)과 직결. 섹션 18 작업 전에 완료 필요.**
+
+### 22-1. 데이터 모델
+- [ ] 22-1-1. `supported_chains` 테이블 — `chainType(PK)`, `nativeAsset`, `adapterBeanName`, `enabled`, `rpcUrlConfig`
+- [ ] 22-1-2. `supported_assets` 테이블 — `id(PK)`, `assetSymbol`, `chainType`, `contractAddress`(nullable, ERC-20/TRC-20/SPL용), `decimals`, `defaultGasLimit`(체인별 기본 가스/수수료 단위), `enabled`, `isNative`
+- [ ] 22-1-3. Flyway 마이그레이션 (V9__asset_registry.sql)
+- [ ] 22-1-4. `SupportedChain`, `SupportedAsset` JPA 엔티티 + Repository
+- [ ] 22-1-5. seed 데이터:
+  - `EVM / ETH / native / gasLimit=21000`
+  - `EVM / USDC / 0xA0b8...6eB48 / decimals=6 / gasLimit=65000`
+  - `EVM / USDT / 0xdAC1...1eC7 / decimals=6 / gasLimit=65000`
+  - `BITCOIN / BTC / native`
+  - `TRON / TRX / native`
+  - `TRON / USDT / TR7NH...64Mx / decimals=6`
+  - `SOLANA / SOL / native`
+  - `SOLANA / USDC / EPjFW...Dt1v / decimals=6`
+
+### 22-2. API
+- [ ] 22-2-1. `AssetRegistryService` — `getAsset(chainType, symbol)` / `getSupportedChains()` / `isAssetEnabled(chainType, symbol)`
+- [ ] 22-2-2. `GET /api/chains` — 지원 체인 목록
+- [ ] 22-2-3. `GET /api/chains/{chainType}/assets` — 체인별 지원 자산 목록
+- [ ] 22-2-4. `CreateWithdrawalRequest` 검증 시 `supported_assets` 조회 (미지원 체인/자산 400 반환)
+- [ ] 22-2-5. ADMIN 역할 — 체인/자산 `enabled` 토글 API (`PATCH /api/admin/assets/{id}/toggle`)
+
+---
+
+## 23. 🟠 RPC Degrade Mode — HIGH
+
+> 단일 RPC 오류가 전체 서비스 중단으로 이어지지 않도록 단계적 운영 모드 도입.
+
+### 23-1. 운영 모드 영속성 (선행 필요)
+> 재시작 후 모드가 NORMAL로 초기화되면 STOP_THE_LINE 중 재시작 시 출금이 재개된다. DB 영속 필수.
+- [ ] 23-1-1. `system_configs` 테이블 — `key(PK VARCHAR)`, `value TEXT`, `updatedAt`, `updatedBy`
+- [ ] 23-1-2. Flyway 마이그레이션 (V10__system_configs.sql)
+- [ ] 23-1-3. `SystemConfigRepository` + `SystemConfigService` — `get(key)` / `set(key, value, updatedBy)` + 감사 로그
+- [ ] 23-1-4. seed 데이터 — `rpc_operation_mode = NORMAL`
+- [ ] 23-1-5. 애플리케이션 시작 시 `system_configs`에서 모드 로드 (`@PostConstruct`)
+
+### 23-2. 운영 모드 정의 및 전환
+- [ ] 23-2-1. `RpcOperationMode` enum: `NORMAL / DEGRADED_READ / DEGRADED_WRITE / MANUAL_APPROVAL_ONLY / STOP_THE_LINE`
+- [ ] 23-2-2. `RpcHealthMonitor` — Micrometer `custody.rpc.call.total{success=false}` 카운터 기반 5분 에러율 집계
+- [ ] 23-2-3. 에러율 임계값 설정 — `custody.rpc.degrade.*` 환경변수 (DEGRADED_READ: 20%, DEGRADED_WRITE: 40%, STOP: 60%)
+- [ ] 23-2-4. 모드 자동 전환 로직 — `RpcHealthMonitor` 1분 주기 체크 + `SystemConfigService.set()` 저장
+- [ ] 23-2-5. 모드 변경 이벤트 감사 로그 기록 (`system_configs` 변경 이력)
+
+### 23-3. 모드별 동작 구현
+- [ ] 23-3-1. `DEGRADED_READ`: `FinalityPolicy` confirmation 수 2배 적용 (finalization 판정 보수적)
+- [ ] 23-3-2. `DEGRADED_WRITE`: `WithdrawalService` 고액 출금 자동 차단 — 임계 금액 이상이면 `MANUAL_APPROVAL_ONLY` 경로로 강제
+- [ ] 23-3-3. `MANUAL_APPROVAL_ONLY`: 신규 자동 브로드캐스트 중지 — 모든 출금이 4-eyes 승인 대기
+- [ ] 23-3-4. `STOP_THE_LINE`: 신규 브로드캐스트 전면 중지 + 운영자 알림 (이메일/Slack webhook)
+- [ ] 23-3-5. **STOP_THE_LINE 해제 API**: `POST /api/admin/rpc-mode/resume` — ADMIN 권한, 이유 comment 필수 + 감사 로그
+
+### 23-4. RPC Quorum
+- [ ] 23-4-1. `EvmRpcProviderPool` — finalized head 조회 시 2개 이상 RPC에 동시 질의
+- [ ] 23-4-2. 다수결: 응답 중 최댓값이 과반수면 채택, 불일치 감지 시 `DEGRADED_READ` 자동 전환
+- [ ] 23-4-3. `rpc_observation_snapshots` 테이블 — `rpcUrl`, `chainType`, `observedBlock`, `observedAt`, `snapshotType`
+- [ ] 23-4-4. Flyway 마이그레이션 (V11__rpc_observation_snapshots.sql)
+- [ ] 23-4-5. RPC 관측값 저장 스케줄러 (5분 주기, 감사용)
+
+---
+
+## 24. 🟠 멀티테넌시 (Multi-Tenancy) — HIGH
+
+> B2B 납품 제품. 고객사(tenant)별 데이터 완전 격리 필수.
+
+### 24-1. 테넌트 엔티티 (선행 필요)
+- [ ] 24-1-1. `tenants` 테이블 — `tenantId(PK UUID)`, `name`, `status(ACTIVE/SUSPENDED)`, `plan`, `createdAt`
+- [ ] 24-1-2. `tenant_members` 테이블 — `id`, `tenantId(FK)`, `userId`, `role(OPERATOR/APPROVER/ADMIN/AUDITOR)`, `createdAt`
+- [ ] 24-1-3. `tenant_api_keys` 테이블 — `id`, `tenantId(FK)`, `keyHash(UNIQUE)`, `role`, `expiresAt`, `enabled`, `createdAt`
+- [ ] 24-1-4. Flyway 마이그레이션 (V12__tenants.sql) — `tenants` 테이블 + 기본 `DEFAULT` 테넌트 insert
+
+### 24-2. 기존 엔티티 tenant_id 추가 (3단계 마이그레이션)
+> **주의**: 기존 DB에 데이터 존재. NOT NULL 바로 추가 시 Flyway 실패. 반드시 3단계로 진행.
+- [ ] 24-2-1. **1단계** Flyway 마이그레이션 (V13__add_tenant_id_nullable.sql):
+  - `withdrawals.tenant_id UUID NULL` 추가
+  - `whitelist_addresses.tenant_id UUID NULL` 추가
+  - `ledger_entries.tenant_id UUID NULL` 추가
+  - `policy_audit_logs.tenant_id UUID NULL` 추가
+  - `approval_tasks.tenant_id UUID NULL` 추가
+  - `nonce_reservations.tenant_id UUID NULL` 추가
+- [ ] 24-2-2. **2단계** 데이터 마이그레이션 SQL (V13 동일 파일 내 또는 V14):
+  - `UPDATE withdrawals SET tenant_id = (SELECT tenantId FROM tenants WHERE name = 'DEFAULT') WHERE tenant_id IS NULL`
+  - 위 패턴으로 전 테이블 기존 데이터에 DEFAULT 테넌트 할당
+- [ ] 24-2-3. **3단계** Flyway 마이그레이션 (V15__tenant_id_not_null.sql):
+  - 각 테이블 `tenant_id NOT NULL` 제약 추가
+  - `idx_withdrawals_tenant_id`, `idx_whitelist_addresses_tenant_id` 등 인덱스 추가
+
+### 24-3. API 레이어 tenant 격리
+- [ ] 24-3-1. `TenantContextHolder` — ThreadLocal 기반 현재 요청의 `tenantId` 저장
+- [ ] 24-3-2. `TenantResolutionFilter` — API Key → `tenant_api_keys` 조회 → `TenantContextHolder` 주입
+- [ ] 24-3-3. `WithdrawalService`, `WhitelistService` 등 모든 Service — 생성/조회 시 `tenantId` 필터 강제
+- [ ] 24-3-4. Cross-tenant 차단 — 리소스의 `tenantId` ≠ 요청 `tenantId` 시 403
+- [ ] 24-3-5. `@TenantIsolated` AOP 어노테이션 — Service 메서드에 적용 시 자동 tenantId 주입 + 검증
+- [ ] 24-3-6. 테넌트 격리 통합 테스트 — tenantA 출금이 tenantB 토큰으로 조회 시 빈 목록 또는 403 검증
+
+### 24-4. NonceAllocator 멀티테넌시
+> 테넌트별로 다른 signer/wallet 주소를 사용하면 nonce 공간이 분리됨.
+- [ ] 24-4-1. `NonceAllocator.reserve()` 시그니처에 `fromAddress` 명시적 전달 확인 (현재 코드 확인 필요)
+- [ ] 24-4-2. `nonce_reservations` UNIQUE 제약이 `(chainType, fromAddress, nonce)` 이미 포함 — tenant 격리 자동 적용 확인 및 테스트
+- [ ] 24-4-3. 테넌트별 주소 관리 — `tenant_wallets` 테이블 설계 (섹션 26 키 관리와 연동)
+
+### 24-5. 테넌트별 설정 분리
+- [ ] 24-5-1. `tenant_policy_sets` 테이블 — `tenantId(FK)`, 금액 한도, 화이트리스트 정책, 승인 정책
+- [ ] 24-5-2. `tenant_signer_bindings` 테이블 — `tenantId(FK)`, `chainType`, `signerType(local|kms|cloudhsm|external_api)`, `signerConfig JSON`
+- [ ] 24-5-3. `tenant_chain_configs` 테이블 — `tenantId(FK)`, `chainType`, `rpcUrlOverride`(nullable), `enabled`
+
+---
+
+## 25. 🟠 External Signer 연동 — HIGH
+
+> **전제**: 섹션 17-3 (Signer 인터페이스 chain-agnostic 전환) 완료 필수.
+
+### 25-1. SignerRegistry
+- [ ] 25-1-1. `SignerRegistry` 클래스 — `(tenantId, chainType)` → `Signer` 인스턴스 라우팅
+- [ ] 25-1-2. `tenant_signer_bindings` 테이블 (24-5-2) 조회 → signerType 분기
+- [ ] 25-1-3. `custody.signer.type: local|kms|cloudhsm|vault|external-api` 기본값 설정 (테넌트 오버라이드 없을 때)
+
+### 25-2. AWS KMS Signer
+- [ ] 25-2-1. `aws-java-sdk-kms` 의존성 추가
+- [ ] 25-2-2. `KmsSignerConnector implements Signer` — KMS `sign()` 호출
+- [ ] 25-2-3. KMS DER 서명 → EVM raw 서명 (r, s, v) 변환 — DER `SEQUENCE { INTEGER r, INTEGER s }` 파싱
+- [ ] 25-2-4. `custody.signer.kms.key-arn` 환경변수 설정
+- [ ] 25-2-5. KMS Signer 단위 테스트 (KMS Mock 사용)
+
+### 25-3. HSM Signer (설계 + stub)
+- [ ] 25-3-1. PKCS#11 JCA Provider (`SunPKCS11` 또는 BouncyCastle) 연동 설계 문서화
+- [ ] 25-3-2. `CloudHsmSignerConnector implements Signer` stub 작성 + Phase 3 TODO 주석
+- [ ] 25-3-3. HSM HA — Primary/Secondary failover 설계 문서화
+
+### 25-4. External API Signer (고객 자체 signer)
+- [ ] 25-4-1. `ExternalApiSignerConnector implements Signer`
+- [ ] 25-4-2. 서명 요청 스키마: `{chainType, txHashHex, fromAddress}` → `{signatureHex}`
+- [ ] 25-4-3. HMAC-SHA256 요청 인증 (`X-Custody-Sig` 헤더)
+- [ ] 25-4-4. `RestClient` 기반 HTTP 호출 + timeout(5s) + retry(2회) + fallback(BroadcastRejectedException)
+- [ ] 25-4-5. TLS mutual auth (mTLS) 지원 옵션 (`custody.signer.external-api.mtls-enabled`)
+
+---
+
+## 26. 🟡 Reconciliation (대사) — MEDIUM
+
+### 26-1. 대사 엔진
+- [ ] 26-1-1. `ReconciliationService` — 주소별 온체인 잔액 조회 + 내부 원장 잔액 비교
+- [ ] 26-1-2. 온체인 잔액 조회 방법 (체인별):
+  - EVM 네이티브(ETH): `eth_getBalance`
+  - **EVM ERC-20**: 컨트랙트 `balanceOf(address)` 호출 (`eth_call`) — `Erc20BalanceReader` 유틸 작성
+  - Bitcoin: `listunspent` 합산
+  - TRON TRX: REST API `/v1/accounts/{address}`
+  - TRON TRC-20: `triggersmartcontract balanceOf()`
+- [ ] 26-1-3. `reconciliation_reports` 테이블 — `runAt`, `chainType`, `assetSymbol`, `address`, `onChainBalance`, `ledgerBalance`, `status(MATCHED/MISMATCH/SKIPPED)`, `delta`, `note`
+- [ ] 26-1-4. Flyway 마이그레이션 (V16__reconciliation.sql)
+- [ ] 26-1-5. **진행 중 출금 race condition 처리**: 대사 실행 시 `W3_APPROVED` ~ `W9_SETTLING` 상태 출금 금액을 `pendingAmount`로 집계 → `onChainBalance + pendingAmount ≈ ledgerBalance` 허용 delta 적용
+- [ ] 26-1-6. `ReconciliationScheduler` — 1일 1회 새벽 3시 (운영 부하 최소 시간대) 자동 실행
+- [ ] 26-1-7. 불일치 감지 시 `MISMATCH` 레코드 + 운영자 알림 트리거 (이메일 / Slack webhook)
+
+### 26-2. 대사 API
+- [ ] 26-2-1. `GET /api/reconciliation/latest` — 최신 실행 결과 조회 (AUDITOR 이상 권한)
+- [ ] 26-2-2. `POST /api/reconciliation/run` — ADMIN 권한 수동 실행
+- [ ] 26-2-3. 불일치 건 `PATCH /api/reconciliation/{id}/note` — 수동 처리 메모 기록
+
+---
+
+## 27. 🟠 운영자 대시보드 — 프론트엔드 — HIGH
+
+> React SPA → Spring `src/main/resources/static/` 포함 → 단일 JAR 배포.
+> Grafana: 기술 모니터링 전용 유지. 대시보드: 순수 운영 UI.
+
+### 27-1. 백엔드 준비
+- [ ] 27-1-1. `dashboard_users` 테이블 — `id`, `tenantId(FK)`, `username(UNIQUE)`, `passwordHash`, `role`, `mfaSecret`(nullable), `failedLoginCount`, `lockedUntil`(nullable), `createdAt`
+- [ ] 27-1-2. Flyway 마이그레이션 (V17__dashboard_users.sql)
+- [ ] 27-1-3. 초기 admin seed — 환경변수 `CUSTODY_ADMIN_USERNAME` / `CUSTODY_ADMIN_PASSWORD` (bcrypt hash)
+- [ ] 27-1-4. Spring Security 설정 — JWT 검증 필터 + `/api/auth/**` 허용 + `GET /` `GET /assets/**` 허용 + 나머지 인증 필요
+- [ ] 27-1-5. `GET /` → `index.html` 서빙, `GET /api/**` → REST API 라우팅 (SPA fallback 설정)
+- [ ] 27-1-6. **CORS 설정** — 개발 시 `http://localhost:5173` (Vite dev server) 허용, production 프로파일에서 비활성화
+
+### 27-2. 인증 API
+- [ ] 27-2-1. `POST /api/auth/login` — username/password 검증 → JWT access token(15분) + refresh token(7일) 발급
+- [ ] 27-2-2. **로그인 실패 횟수 제한**: 5회 실패 시 15분 잠금 (`failedLoginCount`, `lockedUntil` 컬럼 사용)
+- [ ] 27-2-3. `POST /api/auth/refresh` — refresh token 검증 → 새 access token + **refresh token rotation** (구 토큰 무효화)
+- [ ] 27-2-4. `POST /api/auth/logout` — refresh token 무효화 (DB blacklist 또는 Redis)
+- [ ] 27-2-5. **JWT 키 설정** — `custody.jwt.private-key-path` / `custody.jwt.public-key-path` 환경변수 (RS256 비대칭키). HS256은 멀티 인스턴스 환경에서 비밀키 공유 문제 있음.
+
+### 27-3. 프론트엔드 프로젝트 세팅
+- [ ] 27-3-1. `dashboard/` 디렉토리에 React + TypeScript + Vite 프로젝트 초기화
+- [ ] 27-3-2. UI 컴포넌트 라이브러리 — shadcn/ui (Tailwind 기반)
+- [ ] 27-3-3. Gradle에 프론트엔드 빌드 태스크 연동 — `./gradlew build` 시 React 빌드 후 `src/main/resources/static/` 복사
+- [ ] 27-3-4. JWT 만료 자동 refresh 또는 로그인 화면 redirect
+
+### 27-4. 홈 대시보드 화면
+- [ ] 27-4-1. `GET /api/dashboard/summary` 백엔드 API — 오늘 출금 건수(상태별), 승인 대기 건수, 시스템 상태(RPC/DB), RPC 모드
+- [ ] 27-4-2. 오늘 출금 건수 카드 (PENDING/COMPLETED/FAILED)
+- [ ] 27-4-3. 승인 대기 건수 카드
+- [ ] 27-4-4. 시스템 상태 신호등 — RPC 연결 / DB / Degrade Mode (GREEN/YELLOW/RED)
+- [ ] 27-4-5. 최근 출금 5건 타임라인
+
+### 27-5. 출금 목록 화면
+- [ ] 27-5-1. `GET /api/withdrawals?status=&chainType=&asset=&page=&size=` — `Page<WithdrawalSummaryDto>` 페이징 응답
+- [ ] 27-5-2. 상태별 필터 탭, 체인/자산별 필터
+- [ ] 27-5-3. 건별 클릭 → 상태 전이 히스토리 + TxHash + 블록 익스플로러 링크 (체인별 분기)
+- [ ] 27-5-4. 실패 건 재시도 버튼 (`POST /api/withdrawals/{id}/retry`)
+
+### 27-6. 4-eyes 승인 화면
+- [ ] 27-6-1. `GET /api/approvals/pending`, `POST /api/approvals/{id}/approve`, `POST /api/approvals/{id}/reject`
+- [ ] 27-6-2. 승인 대기 목록 — withdrawalId, 요청자, 금액, 체인, 자산, 수신 주소, 요청 시각
+- [ ] 27-6-3. 승인/거절 버튼 + 코멘트 입력
+- [ ] 27-6-4. APPROVER 역할만 승인 버튼 표시
+
+### 27-7. 화이트리스트 관리 화면
+- [ ] 27-7-1. 등록 주소 목록, 신규 등록 폼, 비활성화/승격 버튼
+
+### 27-8. 시스템 / 감사 로그 화면
+- [ ] 27-8-1. `GET /api/system/status` — RPC 상태, Degrade Mode, hot wallet 잔액
+- [ ] 27-8-2. `GET /api/audit-logs` — actor/action/resourceId/timestamp 필터
+- [ ] 27-8-3. Degrade Mode 현황 + **수동 모드 전환 버튼** (`POST /api/admin/rpc-mode/resume` — ADMIN)
+
+### 27-9. 프론트엔드 공통
+- [ ] 27-9-1. 역할별 메뉴 표시 제어 (OPERATOR/APPROVER/ADMIN/AUDITOR)
+- [ ] 27-9-2. 한국어/영어 i18n 기초 설정
+- [ ] 27-9-3. 반응형 레이아웃 (1280px 이상 기준)
+- [ ] 27-9-4. E2E 테스트 — Playwright 로그인 + 출금 목록 + 승인 흐름
+
+---
+
+## 28. 🟡 Enterprise Auth (RBAC / MFA / IP Allowlist) — MEDIUM
+
+### 28-1. RBAC 강화
+- [ ] 28-1-1. 역할 4종 완전 분리 — OPERATOR(출금 생성) / APPROVER(승인) / ADMIN(설정+모드변경) / AUDITOR(읽기전용)
+- [ ] 28-1-2. 메서드 레벨 `@PreAuthorize` 전면 적용
+- [ ] 28-1-3. 역할별 API 접근 매트릭스 문서화 (`docs/operations/rbac-matrix.md`)
+
+### 28-2. MFA (TOTP)
+- [ ] 28-2-1. `POST /api/auth/mfa/setup` — TOTP 시크릿 생성 + QR 코드 URI 반환 (Google Authenticator 호환)
+- [ ] 28-2-2. 로그인 시 TOTP 코드 검증 2단계 추가
+- [ ] 28-2-3. ADMIN / APPROVER 역할 MFA 필수 강제
+
+### 28-3. IP Allowlist
+- [ ] 28-3-1. `tenant_ip_allowlists` 테이블 — `tenantId(FK)`, `cidr`, `description`, `enabled`
+- [ ] 28-3-2. Flyway 마이그레이션 (V18__ip_allowlist.sql)
+- [ ] 28-3-3. API 요청 IP allowlist 외부이면 403 반환 (TenantResolutionFilter에 통합)
+- [ ] 28-3-4. `X-Forwarded-For` 헤더 처리 — 리버스 프록시 환경에서 실제 클라이언트 IP 추출
+
+---
+
+## 29. 🟠 Hot Wallet 잔액 모니터링 — HIGH
+
+> **운영에서 가장 먼저 터지는 문제**: ETH/BTC/TRX 가스비 잔액 부족 시 모든 출금 중단.
+> 현재 Prometheus alert에 없음. 반드시 추가.
+
+- [ ] 29-1-1. `WalletBalancePoller` 스케줄러 — 5분 주기로 각 체인별 hot wallet 잔액 조회
+  - EVM: `eth_getBalance`
+  - Bitcoin: `getbalance` RPC
+  - TRON: `/v1/accounts/{address}` bandwidth/energy 포함
+- [ ] 29-1-2. Micrometer Gauge 등록 — `custody.hot_wallet.balance_wei{chainType=EVM}` 등
+- [ ] 29-1-3. Prometheus AlertRule 추가 (`monitoring/prometheus/alerts.yml`):
+  - `EvmHotWalletLowBalance`: balance < 0.1 ETH → WARNING
+  - `EvmHotWalletCriticalBalance`: balance < 0.01 ETH → CRITICAL
+  - Bitcoin, TRON 동일 패턴
+- [ ] 29-1-4. `GET /api/system/status` 응답에 hot wallet 잔액 포함 (대시보드 27-8-1 연동)
+- [ ] 29-1-5. 잔액 부족 시 `WithdrawalService` 브로드캐스트 직전 체크 — 잔액 < 최소 임계값이면 즉시 실패 (무의미한 RPC 호출 방지)
+
+---
+
+## 30. 🟠 온프레미스 납품 패키지 — HIGH
+
+### 30-1. 패키지 구성
+- [ ] 30-1-1. `docker-compose.prod.yml` — custody-app + PostgreSQL + Grafana + Prometheus
+  - **볼륨 explicit naming**: `custody_pgdata`, `custody_grafana_data`, `custody_prometheus_data` (실수로 `down -v` 시 데이터 소실 방지)
+  - **리소스 제한**: custody-app `mem_limit: 2g`, PostgreSQL `mem_limit: 4g`
+  - **health check**: `depends_on: condition: service_healthy` 적용 (PostgreSQL → custody-app 순서 보장)
+  - **로그 로테이션**: `logging.driver: json-file, max-size: 100m, max-file: 5`
+- [ ] 30-1-2. `.env.example` — 필수 환경변수 전체 + 설명 주석
+- [ ] 30-1-3. `install.sh` — Docker 설치 확인, `.env` 파일 생성 가이드, 초기 DB 마이그레이션 실행, **초기 admin 비밀번호 강제 변경 안내**
+- [ ] 30-1-4. `docs/onpremise-install-guide.md` — 요구사항, 단계별 절차, 트러블슈팅
+
+### 30-2. 보안 강화 (납품 전 필수)
+- [ ] 30-2-1. HTTPS 설정 — Let's Encrypt certbot 또는 자체 인증서 마운트 옵션
+- [ ] 30-2-2. PostgreSQL 외부 노출 차단 — docker internal network만 허용 (포트 5432 host binding 없음)
+- [ ] 30-2-3. Grafana 접근 제한 — `GF_AUTH_ANONYMOUS_ENABLED=false`, `GF_SERVER_ROOT_URL` 설정
+- [ ] 30-2-4. JWT RS256 키 쌍 생성 스크립트 (`scripts/generate-jwt-keys.sh`) + `.env.example`에 경로 항목 추가
+
+### 30-3. 버전 관리 및 업그레이드
+- [ ] 30-3-1. Flyway 자동 마이그레이션 — 업그레이드 시 `./gradlew flyway:migrate`
+- [ ] 30-3-2. `CHANGELOG.md` — 버전별 변경 내역 및 업그레이드 주의사항
+- [ ] 30-3-3. `upgrade.sh` — 새 버전 pull + 마이그레이션 실행 + 무중단 재시작 (`--no-deps --build`)
+- [ ] 30-3-4. 백업 자동화 스크립트 포함 — `scripts/backup.sh` (pg_dump → gzip → 외부 스토리지)
+

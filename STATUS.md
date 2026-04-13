@@ -4,10 +4,10 @@
 > 다음 작업자가 이 파일 하나만 읽어도 현재 상태를 파악할 수 있어야 한다.
 
 ## 현재 상태
-- **단계**: 🟢 LOW 항목 처리 — 5-4/15-1-2/15-2-2/15-3-2/15-4-1~3 완료 (2026-04-13). 미완료: 섹션 16(PDS 통합, Phase 4+)만 남음
+- **단계**: 🔴 섹션 17-28 신규 추가 (2026-04-13) — 제품 레벨 기능(멀티체인·멀티테넌시·대시보드·온프레미스) 전면 재작성. 섹션 0-16 완료, 섹션 17-28 미구현.
 - **언어**: Java / Spring Boot
 - **DB**: PostgreSQL + Flyway
-- **테스트**: 162개 + `MockAutoConfirmIntegrationTest` 3개 신규 = 165개 예상 (2026-04-13)
+- **테스트**: 165개 (2026-04-13 기준)
 - **최신 커밋**: `3fcc365`
 
 ## 마지막 작업 내용 (2026-04-13 LOW 항목 7개 완료)
@@ -290,8 +290,31 @@
 - **14-3-2**: `docs/operations/config-management.md` (설정 오버라이드 전략)
 - **14-3-3**: `docs/operations/config-management.md` (AWS Secrets Manager / Vault / K8s 예시)
 
-### 🟢 장기 (Phase 4+) — 유일한 미완료 항목
+### 🟢 장기 (Phase 4+)
 - **16-2~16-4**: PDS 통합 (파일럿 고객 확보 후 Phase 2~4에서 점진적 구현)
+
+### 🔴 신규 섹션 17-30 (2026-04-13 추가, 미구현)
+
+> 2026-04-13 전면 재작성 — 기존 설계 누락(ERC-20 전송, Signer 인터페이스, 테넌트 마이그레이션 등) 보완
+
+| 섹션 | 내용 | 우선순위 |
+|------|------|---------|
+| 17 | ChainAdapter 재설계 (PreparedTx sealed, Signer chain-agnostic, instanceof 제거) | CRITICAL |
+| 18 | **ERC-20 토큰 전송** (ABI 인코딩, asset별 gasLimit) | CRITICAL |
+| 19 | Bitcoin 어댑터 (UTXO, RBF, dust, utxo_locks) | HIGH |
+| 20 | TRON 어댑터 (TRC-20, 60s 만료, TronGrid API Key) | HIGH |
+| 21 | Solana 어댑터 (Ed25519, Durable Nonce, ATA 생성) | MEDIUM |
+| 22 | Asset Registry (defaultGasLimit 포함) | HIGH |
+| 23 | RPC Degrade Mode (DB 영속, STOP_THE_LINE 해제 API, Quorum) | HIGH |
+| 24 | Multi-tenancy (3단계 마이그레이션, NonceAllocator 분리) | HIGH |
+| 25 | External Signer (Signer 인터페이스 재설계 후 KMS/HSM/External API) | HIGH |
+| 26 | Reconciliation (ERC-20 balanceOf, race condition 처리) | MEDIUM |
+| 27 | Operator Dashboard (RS256 JWT, 로그인 실패 제한, refresh rotation) | HIGH |
+| 28 | Enterprise Auth (RBAC, MFA, IP Allowlist) | MEDIUM |
+| 29 | **Hot Wallet 잔액 모니터링** (Prometheus alert, 브로드캐스트 전 체크) | HIGH |
+| 30 | On-premises 패키지 (볼륨 명명, 리소스 제한, health check) | HIGH |
+
+**구현 순서**: 17(기반) → 18(ERC-20, CRITICAL) → 22(Asset Registry) → 24(Tenancy) → 19/20(Bitcoin/TRON) → 23/25/29(운영) → 27/28(Auth) → 21(Solana) → 26(Recon) → 30(납품)
 
 ## 참고 파일
 - `TODO.md` — 전체 작업 목록 (~243개)
