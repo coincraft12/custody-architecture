@@ -1,6 +1,7 @@
 package lab.custody.common;
 
 import lab.custody.adapter.BroadcastRejectedException;
+import lab.custody.domain.asset.AssetNotSupportedException;
 import lab.custody.orchestration.IdempotencyConflictException;
 import lab.custody.orchestration.InvalidRequestException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -55,6 +56,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BroadcastRejectedException.class)
     public ResponseEntity<ApiErrorResponse> handleBroadcastRejected(BroadcastRejectedException ex) {
         return badRequest("BAD_REQUEST", sanitizeMessage(ex.getMessage()));
+    }
+
+    // 22-3: Asset not supported → 400 ASSET_NOT_SUPPORTED
+    @ExceptionHandler(AssetNotSupportedException.class)
+    public ResponseEntity<ApiErrorResponse> handleAssetNotSupported(AssetNotSupportedException ex) {
+        return badRequest("ASSET_NOT_SUPPORTED", sanitizeMessage(ex.getMessage()));
     }
 
     // Malformed JSON → 400 BAD_REQUEST
