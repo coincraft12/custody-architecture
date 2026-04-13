@@ -2,6 +2,7 @@ package lab.custody.orchestration;
 
 import lab.custody.adapter.ChainAdapterRouter;
 import lab.custody.adapter.EvmRpcAdapter;
+import lab.custody.adapter.TxStatusSnapshot;
 import lab.custody.domain.txattempt.TxAttempt;
 import lab.custody.domain.txattempt.TxAttemptRepository;
 import lab.custody.domain.txattempt.TxAttemptStatus;
@@ -57,8 +58,8 @@ class ConfirmationTrackerTest {
                 withdrawalRepository,
                 Executors.newSingleThreadExecutor(),
                 1,   // maxTries
-                0,   // pollIntervalMs (5-1: ms 단위로 변경)
-                0,   // finalizationBlockCount (5-2: 0=즉시 확정)
+                0,   // pollIntervalMs
+                0,   // finalizationBlockCount (0=즉시 확정)
                 30,  // finalizationTimeoutMinutes
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
         );
@@ -66,8 +67,9 @@ class ConfirmationTrackerTest {
         when(txAttemptRepository.findById(attemptId)).thenReturn(Optional.of(attempt), Optional.of(attempt));
         when(withdrawalRepository.findById(withdrawalId)).thenReturn(Optional.of(withdrawal));
         when(router.resolve(ChainType.EVM)).thenReturn(rpcAdapter);
-        // 12-1-4: tracker now calls getTransactionReceipt() from ChainAdapter interface
-        when(rpcAdapter.getTransactionReceipt("0xtx-timeout")).thenReturn(Optional.empty());
+        // 17-6: tracker now calls getTxStatus() from ChainAdapter interface
+        when(rpcAdapter.getTxStatus("0xtx-timeout"))
+                .thenReturn(new TxStatusSnapshot(TxStatusSnapshot.TxStatus.PENDING, null, null, null));
         when(txAttemptRepository.save(attempt)).thenAnswer(invocation -> invocation.getArgument(0));
 
         ReflectionTestUtils.invokeMethod(tracker, "trackAttemptInternal", attemptId);

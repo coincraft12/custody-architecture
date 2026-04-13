@@ -7,6 +7,7 @@ import lab.custody.domain.withdrawal.WithdrawalRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -32,6 +33,7 @@ public class EvmMockAdapter implements ChainAdapter {
     private final long autoConfirmDelayMs;
 
     @Autowired(required = false)
+    @Lazy
     private ConfirmationTracker confirmationTracker;
 
     @Autowired(required = false)

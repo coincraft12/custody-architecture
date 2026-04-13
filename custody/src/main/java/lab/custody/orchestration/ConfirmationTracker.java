@@ -16,7 +16,7 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import org.web3j.protocol.core.methods.response.TransactionReceipt;
+import lab.custody.adapter.TxStatusSnapshot;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -202,14 +202,14 @@ public class ConfirmationTracker {
                 return;
             }
 
-            // ── Phase 1: poll until receipt arrives ──────────────────────────
-            // 12-1-4: Use ChainAdapter interface getTransactionReceipt() — no instanceof check needed
+            // ── Phase 1: poll until tx is included ──────────────────────────
+            // 17-6: Use ChainAdapter#getTxStatus() — no instanceof check needed
             int tries = 0;
             while (tries < maxTries) {
                 try {
-                    Optional<TransactionReceipt> r = adapter.getTransactionReceipt(txHash);
-                    if (r.isPresent()) {
-                        TransactionReceipt receipt = r.get();
+                    TxStatusSnapshot snapshot = adapter.getTxStatus(txHash);
+                    if (snapshot.status() != TxStatusSnapshot.TxStatus.PENDING
+                            && snapshot.status() != TxStatusSnapshot.TxStatus.UNKNOWN) {
 
                         // Mark W7_INCLUDED
                         var toUpdateAttemptOpt = txAttemptRepository.findById(attemptId);
@@ -231,7 +231,7 @@ public class ConfirmationTracker {
                                 attemptId, withdrawal.getId(), txHash);
 
                         // ── Phase 2: wait for finalization ────────────────────
-                        waitForFinalization(adapter, receipt, withdrawal);
+                        waitForFinalization(adapter, snapshot, withdrawal);
                         return;
                     }
                 } catch (Exception e) {
@@ -262,23 +262,25 @@ public class ConfirmationTracker {
     }
 
     /**
-     * 5-2-2~5-2-5: receipt 수신 후 finalizationBlockCount 블록 경과를 확인하여
+     * 5-2-2~5-2-5 / 17-6: includedStatus 수신 후 finalizationBlockCount 블록 경과를 확인하여
      * W8_SAFE_FINALIZED 전이 + LedgerService.settle() 호출.
      *
      * <p>finalizationBlockCount == 0 이면 즉시 W8로 전이한다 (mock/dev 환경 기본값).
      * finalizationTimeoutMinutes 초과 시 카운터를 증가시키고 경고 로그를 남긴다.
      *
-     * <p>12-1-4: Accepts ChainAdapter interface — no EVM-specific instanceof check.
-     * For adapters without block number support, falls back to immediate finalization.
+     * <p>17-6: instanceof EvmRpcAdapter 체크 완전 제거.
+     * 블록 번호는 {@link lab.custody.adapter.ChainAdapter#getHeads()}로 조회한다.
+     * getHeads()가 latestBlock=0을 반환하거나 includedStatus.blockNumber()가 null이면
+     * 즉시 확정(immediate finalization)으로 처리한다 (BFT / mock 동작 유지).
      */
     private void waitForFinalization(
             ChainAdapter adapter,
-            TransactionReceipt receipt,
+            TxStatusSnapshot includedStatus,
             Withdrawal withdrawal
     ) throws InterruptedException {
 
-        long receiptBlock = receipt.getBlockNumber() != null
-                ? receipt.getBlockNumber().longValue() : -1L;
+        long receiptBlock = includedStatus.blockNumber() != null
+                ? includedStatus.blockNumber() : -1L;
 
         // finalizationBlockCount == 0: 즉시 확정 처리 (mock 모드 기본값)
         if (finalizationBlockCount <= 0 || receiptBlock < 0) {
@@ -293,13 +295,11 @@ public class ConfirmationTracker {
 
         while (Instant.now().isBefore(deadline)) {
             try {
-                // 12-1-4: Use getBlockNumber() only if adapter supports it (EvmRpcAdapter)
-                // Non-EVM adapters (BFT, Mock) return -1 → immediate finalization
-                long currentBlock;
-                if (adapter instanceof lab.custody.adapter.EvmRpcAdapter rpcAdapter) {
-                    currentBlock = rpcAdapter.getBlockNumber();
-                } else {
-                    // BFT / other chains: no block-based finalization — finalize immediately
+                // 17-6: Use getHeads() — no instanceof check needed.
+                // Adapters that don't support block-based finalization return latestBlock=0.
+                long currentBlock = adapter.getHeads().latestBlock();
+                if (currentBlock <= 0) {
+                    // BFT / mock adapters: finalize immediately
                     finalizeWithdrawal(withdrawal);
                     return;
                 }

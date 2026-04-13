@@ -62,7 +62,7 @@ public interface NonceReservationRepository extends JpaRepository<NonceReservati
             @Param("fromAddress") String fromAddress);
 
     /** NonceCleaner 벌크 만료 처리 */
-    @Modifying
+    @Modifying(clearAutomatically = true)
     @Query("""
             UPDATE NonceReservation r
                SET r.status = lab.custody.domain.nonce.NonceReservationStatus.EXPIRED,
