@@ -1,11 +1,14 @@
 package lab.custody.adapter;
 
+import lab.custody.adapter.prepared.BftMockPreparedTx;
+import lab.custody.adapter.prepared.PreparedTx;
 import lab.custody.domain.withdrawal.ChainType;
 import org.springframework.stereotype.Component;
 import org.web3j.protocol.core.methods.response.TransactionReceipt;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -67,5 +70,53 @@ public class BftMockAdapter implements ChainAdapter {
     @Override
     public ChainType getChainType() {
         return ChainType.BFT;
+    }
+
+    @Override
+    public Set<ChainAdapterCapability> capabilities() {
+        return Set.of();
+    }
+
+    /**
+     * 17-7: prepareSend() — BFT mock: no real signing, just capture the from address.
+     */
+    @Override
+    public PreparedTx prepareSend(SendRequest request) {
+        return new BftMockPreparedTx(request.fromAddress());
+    }
+
+    /**
+     * 17-7: broadcast(PreparedTx) — BFT transactions are immediately finalized.
+     */
+    @Override
+    public BroadcastResult broadcast(PreparedTx prepared) {
+        String from = (prepared instanceof BftMockPreparedTx bft) ? bft.fromAddress() : "unknown";
+        String messageId = "BFT_" + UUID.randomUUID().toString().substring(0, 8);
+
+        TransactionReceipt receipt = new TransactionReceipt();
+        receipt.setTransactionHash(messageId);
+        receipt.setStatus("0x1");
+        receiptStore.put(messageId, receipt);
+
+        nonceMap.computeIfAbsent(from, k -> new AtomicLong(0)).incrementAndGet();
+        return new BroadcastResult(messageId, true);
+    }
+
+    @Override
+    public TxStatusSnapshot getTxStatus(String txHash) {
+        TransactionReceipt receipt = receiptStore.get(txHash);
+        if (receipt == null) {
+            return new TxStatusSnapshot(TxStatusSnapshot.TxStatus.UNKNOWN, null, null, null);
+        }
+        boolean success = "0x1".equals(receipt.getStatus());
+        TxStatusSnapshot.TxStatus status = success
+                ? TxStatusSnapshot.TxStatus.FINALIZED
+                : TxStatusSnapshot.TxStatus.FAILED;
+        return new TxStatusSnapshot(status, null, null, null);
+    }
+
+    @Override
+    public HeadsSnapshot getHeads() {
+        return new HeadsSnapshot(0L, null, null, System.currentTimeMillis());
     }
 }

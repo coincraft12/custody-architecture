@@ -1,6 +1,7 @@
 package lab.custody.domain.nonce;
 
 import jakarta.persistence.*;
+import lab.custody.domain.tenant.TenantContextHolder;
 import lab.custody.domain.withdrawal.ChainType;
 import lombok.*;
 
@@ -73,6 +74,9 @@ public class NonceReservation {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Column(name = "tenant_id")
+    private UUID tenantId;
+
     // ─────────────────────────── factory ───────────────────────────
 
     public static NonceReservation reserve(
@@ -89,6 +93,7 @@ public class NonceReservation {
                 .withdrawalId(withdrawalId)
                 .status(NonceReservationStatus.RESERVED)
                 .expiresAt(expiresAt)
+                .tenantId(TenantContextHolder.getOrDefault())
                 .createdAt(now)
                 .updatedAt(now)
                 .build();

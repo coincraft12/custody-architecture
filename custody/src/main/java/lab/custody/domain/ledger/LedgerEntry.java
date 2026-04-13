@@ -1,6 +1,7 @@
 package lab.custody.domain.ledger;
 
 import jakarta.persistence.*;
+import lab.custody.domain.tenant.TenantContextHolder;
 import lombok.*;
 
 import java.time.Instant;
@@ -43,6 +44,9 @@ public class LedgerEntry {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(name = "tenant_id")
+    private UUID tenantId;
+
     public static LedgerEntry reserve(UUID withdrawalId, String asset, long amount,
                                       String fromAddress, String toAddress) {
         return LedgerEntry.builder()
@@ -52,6 +56,7 @@ public class LedgerEntry {
                 .amount(amount)
                 .fromAddress(fromAddress)
                 .toAddress(toAddress)
+                .tenantId(TenantContextHolder.getOrDefault())
                 .createdAt(Instant.now())
                 .build();
     }
@@ -65,6 +70,7 @@ public class LedgerEntry {
                 .amount(amount)
                 .fromAddress(fromAddress)
                 .toAddress(toAddress)
+                .tenantId(TenantContextHolder.getOrDefault())
                 .createdAt(Instant.now())
                 .build();
     }

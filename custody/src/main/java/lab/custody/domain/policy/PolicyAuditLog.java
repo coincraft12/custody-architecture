@@ -1,6 +1,7 @@
 package lab.custody.domain.policy;
 
 import jakarta.persistence.*;
+import lab.custody.domain.tenant.TenantContextHolder;
 import lombok.*;
 
 import java.time.Instant;
@@ -32,11 +33,15 @@ public class PolicyAuditLog {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(name = "tenant_id")
+    private UUID tenantId;
+
     public static PolicyAuditLog of(UUID withdrawalId, boolean allowed, String reason) {
         return PolicyAuditLog.builder()
                 .withdrawalId(withdrawalId)
                 .allowed(allowed)
                 .reason(reason)
+                .tenantId(TenantContextHolder.getOrDefault())
                 .createdAt(Instant.now())
                 .build();
     }

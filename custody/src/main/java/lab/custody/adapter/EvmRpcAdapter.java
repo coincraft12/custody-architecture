@@ -23,12 +23,15 @@ import org.web3j.protocol.core.methods.response.EthTransaction;
 import org.web3j.protocol.core.methods.response.TransactionReceipt;
 import org.web3j.utils.Numeric;
 
+import lab.custody.adapter.prepared.PreparedTx;
+
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
@@ -461,5 +464,148 @@ public class EvmRpcAdapter implements ChainAdapter {
     private BigInteger getPendingNonceFallback(String address, Throwable t) {
         throw new IllegalStateException(
                 "EVM RPC circuit breaker is open — getPendingNonce rejected: " + t.getMessage());
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 17-3/17-5: ChainAdapter new interface methods — full implementations
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Override
+    public Set<ChainAdapterCapability> capabilities() {
+        return Set.of(
+                ChainAdapterCapability.ACCOUNT_NONCE,
+                ChainAdapterCapability.FINALIZED_HEAD,
+                ChainAdapterCapability.REPLACE_TX
+        );
+    }
+
+    /**
+     * 17-5: prepareSend() — build and sign an EIP-1559 ETH transfer.
+     * Uses the existing signing path to preserve all gas / nonce logic.
+     * ERC-20 support deferred to Section 18.
+     */
+    @Override
+    public PreparedTx prepareSend(SendRequest request) {
+        if (!isValidAddress(request.toAddress())) {
+            throw new IllegalArgumentException("Invalid EVM to-address: " + request.toAddress());
+        }
+
+        ensureConnectedChainIdMatchesConfigured();
+
+        BigInteger nonce = getPendingNonce(request.fromAddress());
+        GasPriceCache prices = fetchGasPrices();
+
+        RawTransaction rawTx = RawTransaction.createEtherTransaction(
+                configuredChainId,
+                nonce,
+                GAS_LIMIT,
+                request.toAddress(),
+                request.amountRaw(),
+                prices.maxPriorityFeePerGas(),
+                prices.maxFeePerGas()
+        );
+
+        // Preserve exact same signing output as legacy broadcast(BroadcastCommand)
+        String signedHex = signer.sign(rawTx, configuredChainId);
+
+        return new lab.custody.adapter.prepared.EvmPreparedTx(
+                signedHex,
+                nonce.longValue(),
+                prices.maxFeePerGas(),
+                prices.maxPriorityFeePerGas()
+        );
+    }
+
+    /**
+     * 17-5: broadcast(PreparedTx) — broadcast a previously-signed EVM transaction.
+     */
+    @Override
+    @CircuitBreaker(name = "evmRpc", fallbackMethod = "broadcastPreparedFallback")
+    public BroadcastResult broadcast(lab.custody.adapter.prepared.PreparedTx prepared) {
+        if (!(prepared instanceof lab.custody.adapter.prepared.EvmPreparedTx evmTx)) {
+            throw new IllegalArgumentException("EvmRpcAdapter requires EvmPreparedTx, got: "
+                    + prepared.getClass().getSimpleName());
+        }
+
+        long start = System.nanoTime();
+        boolean success = false;
+        try {
+            Web3j web3j = providerPool.primary();
+            log.debug("event=rpc.broadcast_prepared.using_provider url={}", providerPool.primaryUrl());
+
+            EthSendTransaction sent = web3j.ethSendRawTransaction(evmTx.signedHexTx()).send();
+            if (sent.hasError()) {
+                throw new BroadcastRejectedException("EVM RPC rejected transaction: " + sent.getError().getMessage());
+            }
+
+            String txHash = sent.getTransactionHash();
+            if (txHash == null || txHash.isBlank()) {
+                throw new IllegalStateException("RPC returned an empty tx hash");
+            }
+
+            success = true;
+            return new BroadcastResult(txHash, true);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Failed to execute EVM RPC request", e);
+        } finally {
+            recordRpcCall("broadcastPrepared", success, start);
+        }
+    }
+
+    /**
+     * 17-5: getTxStatus() — maps a TransactionReceipt to a TxStatusSnapshot.
+     * PENDING if no receipt, FAILED if status=0x0, INCLUDED otherwise.
+     */
+    @Override
+    public TxStatusSnapshot getTxStatus(String txHash) {
+        Optional<TransactionReceipt> receiptOpt = getReceipt(txHash);
+        if (receiptOpt.isEmpty()) {
+            return new TxStatusSnapshot(TxStatusSnapshot.TxStatus.PENDING, null, null, null);
+        }
+        TransactionReceipt receipt = receiptOpt.get();
+        Long blockNumber = receipt.getBlockNumber() != null ? receipt.getBlockNumber().longValue() : null;
+        boolean failed = receipt.getStatus() != null && receipt.getStatus().equals("0x0");
+        TxStatusSnapshot.TxStatus status = failed
+                ? TxStatusSnapshot.TxStatus.FAILED
+                : TxStatusSnapshot.TxStatus.INCLUDED;
+        String revertReason = failed ? receipt.getRevertReason() : null;
+        return new TxStatusSnapshot(status, blockNumber, null, revertReason);
+    }
+
+    /**
+     * 17-5: getHeads() — fetches latest, safe, and finalized block numbers.
+     */
+    @Override
+    public HeadsSnapshot getHeads() {
+        long latest = getBlockNumber();
+        Long safe = getNamedBlockNumber("safe");
+        Long finalized = getNamedBlockNumber("finalized");
+        return new HeadsSnapshot(latest, safe, finalized, System.currentTimeMillis());
+    }
+
+    /** Fetch a named block number ("safe" or "finalized"); returns null on any failure. */
+    private Long getNamedBlockNumber(String blockTag) {
+        try {
+            return withFallback("getNamedBlock-" + blockTag, web3j -> {
+                org.web3j.protocol.core.DefaultBlockParameter param =
+                        org.web3j.protocol.core.DefaultBlockParameter.valueOf(blockTag);
+                EthBlock response = web3j.ethGetBlockByNumber(param, false).send();
+                if (response.hasError() || response.getBlock() == null) {
+                    return null;
+                }
+                return response.getBlock().getNumber() != null
+                        ? response.getBlock().getNumber().longValue()
+                        : null;
+            });
+        } catch (Exception e) {
+            log.debug("event=rpc.get_named_block.failed tag={} error={}", blockTag, e.getMessage());
+            return null;
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private BroadcastResult broadcastPreparedFallback(lab.custody.adapter.prepared.PreparedTx prepared, Throwable t) {
+        throw new BroadcastRejectedException(
+                "EVM RPC circuit breaker is open — broadcastPrepared rejected: " + t.getMessage());
     }
 }

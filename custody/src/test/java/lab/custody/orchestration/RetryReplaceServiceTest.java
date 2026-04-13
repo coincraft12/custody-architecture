@@ -87,7 +87,7 @@ class RetryReplaceServiceTest {
         when(nonceAllocator.reserve(ChainType.EVM, "0xfrom", withdrawalId)).thenReturn(reservation);
         when(attemptService.createAttempt(withdrawalId, "0xfrom", 7L)).thenReturn(retried);
         when(router.resolve(ChainType.EVM)).thenReturn(rpcAdapter);
-        when(rpcAdapter.broadcast(any())).thenReturn(new ChainAdapter.BroadcastResult("0xtx-retry", true));
+        when(rpcAdapter.broadcast(any(ChainAdapter.BroadcastCommand.class))).thenReturn(new ChainAdapter.BroadcastResult("0xtx-retry", true));
         when(txAttemptRepository.save(any(TxAttempt.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(withdrawalRepository.save(any(Withdrawal.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(nonceAllocator.commit(reservation.getId(), retried.getId())).thenReturn(reservation);
@@ -121,7 +121,7 @@ class RetryReplaceServiceTest {
         when(router.resolve(ChainType.EVM)).thenReturn(rpcAdapter);
         when(rpcAdapter.getPendingNonce("0xfrom")).thenReturn(BigInteger.valueOf(5L));
         when(attemptService.createAttempt(withdrawalId, "0xfrom", 5L)).thenReturn(replaced);
-        when(rpcAdapter.broadcast(any())).thenReturn(new ChainAdapter.BroadcastResult("0xtx-replace", true));
+        when(rpcAdapter.broadcast(any(ChainAdapter.BroadcastCommand.class))).thenReturn(new ChainAdapter.BroadcastResult("0xtx-replace", true));
         when(txAttemptRepository.save(any(TxAttempt.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(withdrawalRepository.save(any(Withdrawal.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(nonceAllocator.rebindAttemptIfPresent(canonical.getId(), replaced.getId())).thenReturn(Optional.empty());

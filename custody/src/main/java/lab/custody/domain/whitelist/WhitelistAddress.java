@@ -1,6 +1,7 @@
 package lab.custody.domain.whitelist;
 
 import jakarta.persistence.*;
+import lab.custody.domain.tenant.TenantContextHolder;
 import lab.custody.domain.withdrawal.ChainType;
 import lombok.*;
 
@@ -84,6 +85,9 @@ public class WhitelistAddress {
     @Column(nullable = false)
     private Instant updatedAt;
 
+    @Column(name = "tenant_id")
+    private UUID tenantId;
+
     // ─────────────────────────── factory ───────────────────────────
 
     public static WhitelistAddress register(
@@ -100,6 +104,7 @@ public class WhitelistAddress {
                 .registeredBy(registeredBy)
                 .note(note)
                 .holdDurationHours(holdDurationHours)
+                .tenantId(TenantContextHolder.getOrDefault())
                 .registeredAt(now)
                 .updatedAt(now)
                 .build();

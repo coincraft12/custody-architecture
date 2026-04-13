@@ -1,6 +1,7 @@
 package lab.custody.domain.approval;
 
 import jakarta.persistence.*;
+import lab.custody.domain.tenant.TenantContextHolder;
 import lombok.*;
 
 import java.time.Instant;
@@ -66,6 +67,9 @@ public class ApprovalTask {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Column(name = "tenant_id")
+    private UUID tenantId;
+
     // ─────────────────────────── factory ───────────────────────────
 
     public static ApprovalTask create(
@@ -81,6 +85,7 @@ public class ApprovalTask {
                 .approvedCount(0)
                 .status(ApprovalTaskStatus.PENDING)
                 .expiresAt(expiresAt)
+                .tenantId(TenantContextHolder.getOrDefault())
                 .createdAt(now)
                 .updatedAt(now)
                 .build();

@@ -1,6 +1,7 @@
 package lab.custody.domain.withdrawal;
 
 import jakarta.persistence.*;
+import lab.custody.domain.tenant.TenantContextHolder;
 import lombok.*;
 
 import java.time.Instant;
@@ -50,6 +51,9 @@ public class Withdrawal {
     @Column(nullable = false)
     private ChainType chainType;
 
+    @Column(name = "tenant_id")
+    private UUID tenantId;
+
     public void transitionTo(WithdrawalStatus next) {
         // W0_POLICY_REJECTED는 어떤 상태에서든 전이 가능 (승인 거부, 만료 등)
         if (next != WithdrawalStatus.W0_POLICY_REJECTED
@@ -76,6 +80,7 @@ public class Withdrawal {
                 .asset(asset)
                 .amount(amount)
                 .status(WithdrawalStatus.W0_REQUESTED)
+                .tenantId(TenantContextHolder.getOrDefault())
                 .createdAt(now)
                 .updatedAt(now)
                 .build();

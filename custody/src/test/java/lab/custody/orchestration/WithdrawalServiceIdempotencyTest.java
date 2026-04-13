@@ -89,13 +89,13 @@ class WithdrawalServiceIdempotencyTest {
                 lab.custody.domain.txattempt.TxAttempt.created(UUID.randomUUID(), 1, "0xfrom", 0, true)
         );
         when(router.resolve(ChainType.EVM)).thenReturn(adapter);
-        when(adapter.broadcast(any())).thenReturn(new ChainAdapter.BroadcastResult("0xtx", true));
+        when(adapter.broadcast(any(ChainAdapter.BroadcastCommand.class))).thenReturn(new ChainAdapter.BroadcastResult("0xtx", true));
         when(nonceAllocator.commit(any(), any())).thenReturn(reservation);
 
         withdrawalService.createOrGet("idem-1", req);
         withdrawalService.createOrGet("idem-1", req);
 
-        verify(adapter, times(1)).broadcast(any());
+        verify(adapter, times(1)).broadcast(any(ChainAdapter.BroadcastCommand.class));
     }
 
     @Test
@@ -125,7 +125,7 @@ class WithdrawalServiceIdempotencyTest {
                 lab.custody.domain.txattempt.TxAttempt.created(UUID.randomUUID(), 1, "0xfrom", 0, true)
         );
         when(router.resolve(ChainType.EVM)).thenReturn(adapter);
-        when(adapter.broadcast(any())).thenReturn(new ChainAdapter.BroadcastResult("0xtx-race", true));
+        when(adapter.broadcast(any(ChainAdapter.BroadcastCommand.class))).thenReturn(new ChainAdapter.BroadcastResult("0xtx-race", true));
         when(nonceAllocator.commit(any(), any())).thenAnswer(invocation -> {
             UUID reservationId = invocation.getArgument(0);
             NonceReservation committed = NonceReservation.reserve(ChainType.EVM, "0xfrom", 0L, storedWithdrawal.get().getId(), null);
@@ -160,7 +160,7 @@ class WithdrawalServiceIdempotencyTest {
             assertThat(results).hasSize(parallelCalls);
             assertThat(results).extracting(Withdrawal::getId).containsOnly(storedWithdrawal.get().getId());
             assertThat(results).extracting(Withdrawal::getAmount).containsOnly(oneEthWei);
-            verify(adapter, times(1)).broadcast(any());
+            verify(adapter, times(1)).broadcast(any(ChainAdapter.BroadcastCommand.class));
             verify(attemptService, times(1)).createAttempt(any(), any(), anyLong());
         } finally {
             executor.shutdownNow();

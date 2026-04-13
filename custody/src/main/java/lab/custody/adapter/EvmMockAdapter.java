@@ -10,6 +10,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import lab.custody.adapter.prepared.EvmMockPreparedTx;
+import lab.custody.adapter.prepared.PreparedTx;
+
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -89,4 +93,70 @@ public class EvmMockAdapter implements ChainAdapter {
     public ChainType getChainType() {
         return ChainType.EVM;
     }
+
+    @Override
+    public Set<ChainAdapterCapability> capabilities() {
+        return Set.of();
+    }
+
+    /**
+     * 17-8: prepareSend() — EVM mock, captures fromAddress for auto-confirm trigger.
+     */
+    @Override
+    public PreparedTx prepareSend(SendRequest request) {
+        return new EvmMockPreparedTx(request.fromAddress(), request.toAddress());
+    }
+
+    /**
+     * 17-8: broadcast(PreparedTx) — generate a mock txHash and optionally trigger auto-confirm.
+     */
+    @Override
+    public BroadcastResult broadcast(PreparedTx prepared) {
+        String txHash = "0xEVM_MOCK_" + UUID.randomUUID().toString().substring(0, 8);
+
+        if (autoConfirmDelayMs > 0 && confirmationTracker != null && txAttemptRepository != null) {
+            triggerAutoConfirmByHash(txHash);
+        }
+
+        return new BroadcastResult(txHash, true);
+    }
+
+    /**
+     * 17-8: getTxStatus() — mock always returns FINALIZED for any tx.
+     */
+    @Override
+    public TxStatusSnapshot getTxStatus(String txHash) {
+        // EVM mock: treat any hash as immediately finalized (consistent with mock behaviour)
+        return new TxStatusSnapshot(TxStatusSnapshot.TxStatus.FINALIZED, null, null, null);
+    }
+
+    @Override
+    public HeadsSnapshot getHeads() {
+        return new HeadsSnapshot(0L, null, null, System.currentTimeMillis());
+    }
+
+    /** Auto-confirm trigger for broadcast(PreparedTx) path. */
+    private void triggerAutoConfirmByHash(String txHash) {
+        Thread.ofVirtual().start(() -> {
+            try {
+                if (autoConfirmDelayMs > 0) {
+                    Thread.sleep(autoConfirmDelayMs);
+                }
+                txAttemptRepository.findByTxHash(txHash).ifPresentOrElse(
+                        attempt -> {
+                            log.info("event=mock_auto_confirm.start attemptId={} txHash={} delayMs={}",
+                                    attempt.getId(), txHash, autoConfirmDelayMs);
+                            confirmationTracker.startTrackingByAttemptId(attempt.getId());
+                        },
+                        () -> log.warn("event=mock_auto_confirm.attempt_not_found txHash={}", txHash)
+                );
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("event=mock_auto_confirm.interrupted txHash={}", txHash);
+            } catch (Exception e) {
+                log.error("event=mock_auto_confirm.error txHash={} error={}", txHash, e.getMessage(), e);
+            }
+        });
+    }
+
 }
